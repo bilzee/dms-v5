@@ -28,18 +28,11 @@ const customJestConfig = {
   coverageReporters: ['text', 'lcov', 'html'],
   coverageDirectory: 'coverage',
   testPathIgnorePatterns: [
-    '<rootDir>/.next/', 
+    '<rootDir>/.next/',
     '<rootDir>/node_modules/',
     '<rootDir>/coverage/',
     '<rootDir>/tests/e2e/',
-    '<rootDir>/tests/unit/delivery-offline.service.test.ts',
-    '<rootDir>/tests/components/DeliveryConfirmationForm.test.tsx',
-    '<rootDir>/tests/integration/delivery-confirmation.test.ts',
-    '<rootDir>/tests/unit/delivery-media-validator.test.ts',
-    '<rootDir>/tests/regression/',
-  ],
-  transformIgnorePatterns: [
-    'node_modules/(?!(uuid|@uuid|jose|openid-client|next-auth|@prisma|prisma)/)',
+    '<rootDir>/tests/legacy-backup/',
   ],
   collectCoverage: true,
   coverageThreshold: {
@@ -53,4 +46,16 @@ const customJestConfig = {
 }
 
 // createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async
-module.exports = createJestConfig(customJestConfig)
+const createBaseConfig = createJestConfig(customJestConfig)
+
+// next/jest force-prepends `/node_modules/` to transformIgnorePatterns and only
+// APPENDS custom entries, so an allowlist for ESM-only packages (uuid@13 etc.)
+// can never take effect through the normal option. Overwrite it after the
+// config resolves. The pattern is separator-agnostic so it works on Windows.
+module.exports = async () => {
+  const config = await createBaseConfig()
+  config.transformIgnorePatterns = [
+    'node_modules[\\/](?!(uuid|@uuid|jose|openid-client|next-auth|@prisma|prisma|exceljs|pdfkit|chart\\.js)[\\/])',
+  ]
+  return config
+}

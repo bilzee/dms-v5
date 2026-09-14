@@ -189,3 +189,5 @@ docs/consulting
 /.backups/
 /audit-screenshots/
 /screenshots/
+# Playwright run artifacts
+/test-results/

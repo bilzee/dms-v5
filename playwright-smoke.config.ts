@@ -13,7 +13,7 @@ export default defineConfig({
   reporter: 'html',
   timeout: 10000, // Smoke tests should be fast
   use: {
-    baseURL: process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001',
+    baseURL: process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000',
     trace: 'on-first-retry',
   },
 
@@ -25,8 +25,8 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'pnpm run dev',
-    url: 'http://localhost:3001',
+    command: 'npm run dev',
+    url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
   },

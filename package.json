@@ -31,6 +31,9 @@
     "test:response-planning:integration": "jest tests/integration/response-planning/",
     "test:response-planning:e2e": "playwright test tests/e2e/response-planning-workflow.test.ts",
     "test:smoke": "playwright test --config=playwright-smoke.config.ts",
+    "test:api": "jest --config jest.api.config.js",
+    "test:api:watch": "jest --config jest.api.config.js --watch",
+    "db:push:test": "cross-env DATABASE_URL=postgresql://dms_dev:dev_password_change_in_prod@localhost:5435/drms_test?schema=public prisma db push --skip-generate",
     "test:smoke:headed": "playwright test --config=playwright-smoke.config.ts --headed",
     "test:smoke:story-5.1": "playwright test tests/smoke/story-5.1-donor-registration.test.ts --config=playwright-smoke.config.ts",
     "validate:pre-story": "bash scripts/validate-pre-story.sh",
@@ -41,7 +44,10 @@
     "dev:validate": "node scripts/testing/validation/development-validator.js",
     "living-tests": "node scripts/testing/living-tests/living-tests-cli-simple.js",
     "claude:dev": "set MCP_CONFIG=.mcp.dev.json && claude-code",
-    "build:production:ignore-ts": "cross-env NEXT_TYPESCRIPT_IGNORE_BUILD_ERRORS=true next build"
+    "build:production:ignore-ts": "cross-env NEXT_TYPESCRIPT_IGNORE_BUILD_ERRORS=true next build",
+    "test:services": "jest --config jest.api.config.js tests/services",
+    "test:baseline:e2e": "playwright test --config playwright.baseline.config.ts",
+    "test:baseline:all": "npm run test:unit && npm run test:api && npm run test:baseline:e2e"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1055.0",
