@@ -89,7 +89,7 @@ SERVER_PID=$!
 # Wait for server to start
 echo "   Waiting for server to start..."
 for i in {1..30}; do
-    if curl -s http://localhost:3006/api/health > /dev/null 2>&1; then
+    if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
         break
     fi
     sleep 1
@@ -106,7 +106,7 @@ API_ENDPOINTS=(
 
 API_ERRORS=0
 for endpoint in "${API_ENDPOINTS[@]}"; do
-    if curl -s -o /dev/null -w "%{http_code}" "http://localhost:3006$endpoint" | grep -q "200\|401\|404"; then
+    if curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000$endpoint" | grep -q "200\|401\|404"; then
         echo "   ✅ $endpoint - Responding"
     else
         echo "   ❌ $endpoint - Not responding"
