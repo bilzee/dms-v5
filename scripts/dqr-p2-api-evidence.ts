@@ -230,12 +230,12 @@ async function main(): Promise<void> {
     log('5. PATCH /api/v1/admin/questions/[id]/severity (COORDINATOR)', {
       status: severityResponse.status,
       questionKey: gapQuestion.questionKey,
-      severity: `${gapQuestion.severity} → ${severityBody?.data?.severity}`,
+      severity: `${gapQuestion.severity} → ${severityBody?.data?.question?.severity} (affectedCount: ${severityBody?.data?.affectedCount})`,
       structureVersion: `${versionsBeforeSeverity.structureVersion} → ${versionsAfterSeverity.structureVersion} (must be unchanged)`,
       contentVersion: `${versionsBeforeSeverity.contentVersion} → ${versionsAfterSeverity.contentVersion} (must be +1)`,
     })
     check('5', severityResponse.status === 200, `expected 200, got ${severityResponse.status}`)
-    check('5', severityBody?.data?.severity === newSeverity, 'severity must persist')
+    check('5', severityBody?.data?.question?.severity === newSeverity, 'severity must persist')
     check('5', versionsAfterSeverity.structureVersion === versionsBeforeSeverity.structureVersion, 'severity edit must NOT bump structureVersion')
     check('5', versionsAfterSeverity.contentVersion === versionsBeforeSeverity.contentVersion + 1, 'severity edit must bump contentVersion')
 

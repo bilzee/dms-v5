@@ -25,12 +25,18 @@
  * Audit rows are polymorphic (`entityType` QUESTION|SECTION) and a `reason`
  * is mandatory for structural actions (400 `reason_required` otherwise).
  *
- * Explicitly NOT here (per spec "Never in this phase"): "Recalculate All",
- * bulk severity recompute of stored assessments on severity edits.
+ * P3 — severity is a derivation rule: `setSeverity` re-derives, inside the
+ * same transaction, every ACTIVE-incident assessment of the type whose
+ * frozen snapshot contains the key (gapAnalysis + priority; snapshots and
+ * versions untouched) and returns `affectedCount`. Affected incidents are
+ * re-derived best-effort after commit via `recalculateIncidentSeverity`.
+ * A bulk "Recalculate All" surface deliberately does NOT exist — severity
+ * flows bottom-up from the registry.
  */
 
 import { AssessmentType, Prisma, Priority, Question, QuestionSection } from '@prisma/client'
 import { prisma } from '@/lib/db/client'
+import { incidentSeverityService } from '@/lib/services/incident-severity.service'
 import { ApiError } from '@/types/api'
 import {
   ASSESSMENT_TYPES,
@@ -48,7 +54,8 @@ import {
   RegistryQuestionRow,
   RapidAssessmentType,
 } from '@/lib/questions/legacy-convert'
-import { clearGapQuestionCache } from '@/lib/services/gap-analysis.service'
+import { clearGapQuestionCache, derivePriorityFromGaps } from '@/lib/services/gap-analysis.service'
+import { analyzeGaps as deriveGaps, type GapEngineSnapshotStructure } from '@/lib/questions/gap-engine'
 import {
   contentVersionSettingKey,
   getRegistryVersions,
@@ -784,16 +791,20 @@ export class QuestionRegistryService {
 
   /**
    * GAP-question severity update (coordinator/admin surface). Content bump
-   * only — severity is never frozen into snapshots, so no freeze gate and no
-   * recompute of stored assessments (that is P4, never automatic here).
+   * only — severity is never frozen into snapshots, so no freeze gate. Because
+   * severity is a derivation rule, affected assessments (ACTIVE incident,
+   * snapshot contains the key) are re-derived in the same transaction and the
+   * count is surfaced as `affectedCount`; affected incidents are re-derived
+   * best-effort after commit. Identity edits recompute nothing and bump
+   * nothing.
    */
   static async setSeverity(
     id: string,
     severity: 'CRITICAL' | 'HIGH' | 'MEDIUM',
     actorId: string,
     reason?: string
-  ): Promise<Question> {
-    const updated = await prisma.$transaction(async (tx) => {
+  ): Promise<{ question: Question; affectedCount: number }> {
+    const { question, affectedCount, affectedIncidentIds } = await prisma.$transaction(async (tx) => {
       const existing = await tx.question.findUnique({ where: { id } })
       if (!existing) {
         throw new ApiError('question_not_found', 404)
@@ -806,7 +817,7 @@ export class QuestionRegistryService {
         })
       }
       if (severity === existing.severity) {
-        return existing
+        return { question: existing, affectedCount: 0, affectedIncidentIds: [] as string[] }
       }
 
       const before = { severity: existing.severity }
@@ -828,11 +839,89 @@ export class QuestionRegistryService {
         actorId,
         reason,
       })
-      return question
+
+      const { affectedCount, affectedIncidentIds } = await QuestionRegistryService.recomputeAssessmentsForKey(
+        tx,
+        existing.assessmentType as CatalogAssessmentType,
+        existing.questionKey
+      )
+      return { question, affectedCount, affectedIncidentIds }
     })
 
     invalidateRegistryCaches()
-    return updated
+
+    // Propagate the re-derived assessment priorities to incident severity
+    // (best-effort after commit — never fails the PATCH).
+    for (const incidentId of affectedIncidentIds) {
+      try {
+        await incidentSeverityService.recalculateIncidentSeverity(incidentId)
+      } catch (error) {
+        console.error(
+          `[question-registry] post-severity-edit incident re-derivation failed for incident ${incidentId}:`,
+          error
+        )
+      }
+    }
+
+    return { question, affectedCount }
+  }
+
+  /**
+   * In-transaction recompute for a severity edit: re-derives `gapAnalysis` +
+   * `priority` of every assessment of the type whose frozen snapshot contains
+   * the key AND whose incident is ACTIVE (DRAFT assessments with a snapshot
+   * are included; offline DRAFTs have none and are naturally excluded).
+   * Registry rows are read inside the transaction AFTER the severity update,
+   * so the engine's severity ladder already sees the new value. Rows without
+   * answers (pre-data-layer) are skipped — no fabricated gaps. Snapshots and
+   * version stamps are never touched.
+   */
+  private static async recomputeAssessmentsForKey(
+    tx: Tx,
+    assessmentType: CatalogAssessmentType,
+    questionKey: string
+  ): Promise<{ affectedCount: number; affectedIncidentIds: string[] }> {
+    const candidates = await tx.rapidAssessment.findMany({
+      where: {
+        rapidAssessmentType: assessmentType as AssessmentType,
+        incident: { status: 'ACTIVE' },
+      },
+      select: { id: true, incidentId: true, answers: true, questionSnapshot: true },
+    })
+
+    const keys = new Set([questionKey])
+    const targets = candidates.filter(
+      (row) => row.incidentId !== null && snapshotHasAnyKey(row.questionSnapshot, keys)
+    )
+    if (targets.length === 0) {
+      return { affectedCount: 0, affectedIncidentIds: [] }
+    }
+
+    const registryRows = await tx.question.findMany({
+      where: { assessmentType: assessmentType as AssessmentType },
+      select: { questionKey: true, severity: true },
+    })
+
+    let affectedCount = 0
+    const incidentIds = new Set<string>()
+    for (const row of targets) {
+      if (row.answers == null) continue
+      const gapAnalysis = deriveGaps(
+        row.questionSnapshot as unknown as GapEngineSnapshotStructure,
+        row.answers as Record<string, unknown>,
+        registryRows
+      )
+      await tx.rapidAssessment.update({
+        where: { id: row.id },
+        data: {
+          gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+          priority: derivePriorityFromGaps(assessmentType as AssessmentType, gapAnalysis),
+        },
+      })
+      affectedCount += 1
+      if (row.incidentId) incidentIds.add(row.incidentId)
+    }
+    return { affectedCount, affectedIncidentIds: [...incidentIds] }
   }
 
   // ---- Section mutations ----------------------------------------------------

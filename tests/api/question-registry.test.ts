@@ -517,7 +517,7 @@ describe('P2 question registry governance', () => {
   // ---------------------------------------------------------- severity -------
 
   describe('PATCH /api/v1/admin/questions/[id]/severity — ADMIN or COORDINATOR, GAP only', () => {
-    test('COORDINATOR sets GAP severity → 200, content bump only, UPDATE_SEVERITY audit, no recompute of assessments', async () => {
+    test('COORDINATOR sets GAP severity → 200, content bump only, UPDATE_SEVERITY audit, affectedCount surfaced', async () => {
       const question = await firstActiveQuestion('FOOD', { category: 'GAP' })
       const newSeverity = question.severity === 'HIGH' ? 'CRITICAL' : 'HIGH'
       const before = await versionsOf('FOOD')
@@ -531,7 +531,8 @@ describe('P2 question registry governance', () => {
       )
       expect(response.status).toBe(200)
       const body = await jsonOf(response)
-      expect(body.data.severity).toBe(newSeverity)
+      expect(body.data.question.severity).toBe(newSeverity)
+      expect(typeof body.data.affectedCount).toBe('number')
 
       const after = await versionsOf('FOOD')
       expect(after.structureVersion).toBe(before.structureVersion)
@@ -543,6 +544,124 @@ describe('P2 question registry governance', () => {
       })
       expect(audit).not.toBeNull()
       expect((audit?.changes as { severity?: string })?.severity).toBe(newSeverity)
+    })
+
+    test('severity edit re-derives affected ACTIVE-incident assessments in-transaction (P3 derivation rule)', async () => {
+      const question = await firstActiveQuestion('FOOD', { questionKey: 'isFoodSufficient' })
+      // Deterministic starting point (earlier tests in this file may have edited it).
+      await testDb.question.update({ where: { id: question.id }, data: { severity: 'MEDIUM' } })
+
+      const entity = await createEntity()
+      const activeIncident = await createIncident({ createdBy: coordinator.id, status: 'ACTIVE' })
+      const resolvedIncident = await createIncident({ createdBy: coordinator.id, status: 'RESOLVED' })
+      const affected = await createRapidAssessment({
+        assessorId: assessor.id,
+        entityId: entity.id,
+        incidentId: activeIncident.id,
+        assessmentType: 'FOOD',
+        verificationStatus: 'VERIFIED',
+        priority: 'MEDIUM',
+        withSnapshot: true,
+        sectors: { food: { isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true } },
+      })
+      const controlResolved = await createRapidAssessment({
+        assessorId: assessor.id,
+        entityId: entity.id,
+        incidentId: resolvedIncident.id,
+        assessmentType: 'FOOD',
+        verificationStatus: 'VERIFIED',
+        priority: 'MEDIUM',
+        withSnapshot: true,
+        sectors: { food: { isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true } },
+      })
+      const controlOtherType = await createRapidAssessment({
+        assessorId: assessor.id,
+        entityId: entity.id,
+        incidentId: activeIncident.id,
+        assessmentType: 'WASH',
+        verificationStatus: 'VERIFIED',
+        withSnapshot: true,
+        sectors: { wash: { hasOpenDefecationConcerns: false } },
+      })
+
+      const before = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: affected.id } })
+      // Mirror the recompute matcher (FOOD, ACTIVE incident, snapshot contains
+      // the key, answers present) so the expected count is deterministic.
+      const candidates = await testDb.rapidAssessment.findMany({
+        where: { rapidAssessmentType: 'FOOD', incident: { status: 'ACTIVE' } },
+        select: { questionSnapshot: true, answers: true },
+      })
+      const expectedAffected = candidates.filter(
+        (row) => row.answers !== null && JSON.stringify(row.questionSnapshot).includes('"key":"isFoodSufficient"')
+      ).length
+      expect(expectedAffected).toBeGreaterThanOrEqual(1)
+
+      const beforeVersions = await versionsOf('FOOD')
+      const response = await patchSeverityRoute(
+        makeRequest('PATCH', `/api/v1/admin/questions/${question.id}/severity`, {
+          body: { severity: 'CRITICAL', reason: 'derivation-rule proof' },
+          token: tokenFor(coordinator),
+        }),
+        withParams({ id: question.id })
+      )
+      expect(response.status).toBe(200)
+      const body = await jsonOf(response)
+      expect(body.data.affectedCount).toBe(expectedAffected)
+
+      const after = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: affected.id } })
+      expect(after.priority).toBe('CRITICAL')
+      expect((after.gapAnalysis as { severity?: string } | null)?.severity).toBe('CRITICAL')
+      expect(
+        (after.gapAnalysis as { fieldSeverityMap?: Record<string, string> } | null)?.fieldSeverityMap
+          ?.isFoodSufficient
+      ).toBe('CRITICAL')
+      // Snapshots and the assessment's version stamps are untouched.
+      expect(after.structureVersion).toBe(before.structureVersion)
+      expect(after.contentVersion).toBe(before.contentVersion)
+      expect(JSON.stringify(after.questionSnapshot)).toBe(JSON.stringify(before.questionSnapshot))
+      const afterVersions = await versionsOf('FOOD')
+      expect(afterVersions.contentVersion).toBe(beforeVersions.contentVersion + 1)
+      expect(afterVersions.structureVersion).toBe(beforeVersions.structureVersion)
+
+      // Controls: non-ACTIVE incident and snapshot-without-key stay untouched.
+      const resolvedRow = await testDb.rapidAssessment.findUniqueOrThrow({
+        where: { id: controlResolved.id },
+      })
+      expect(resolvedRow.priority).toBe('MEDIUM')
+      expect(resolvedRow.gapAnalysis).toBeNull()
+      const otherTypeRow = await testDb.rapidAssessment.findUniqueOrThrow({
+        where: { id: controlOtherType.id },
+      })
+      expect(otherTypeRow.gapAnalysis).toBeNull()
+
+      // Incident severity propagates bottom-up from the re-derived priority.
+      const incidentAfter = await testDb.incident.findUniqueOrThrow({
+        where: { id: activeIncident.id },
+      })
+      expect(incidentAfter.severity).toBe('CRITICAL')
+
+      // Identity edit: no recompute, no content bump.
+      const noop = await patchSeverityRoute(
+        makeRequest('PATCH', `/api/v1/admin/questions/${question.id}/severity`, {
+          body: { severity: 'CRITICAL', reason: 'identity edit' },
+          token: tokenFor(coordinator),
+        }),
+        withParams({ id: question.id })
+      )
+      expect(noop.status).toBe(200)
+      const noopBody = await jsonOf(noop)
+      expect(noopBody.data.affectedCount).toBe(0)
+      expect((await versionsOf('FOOD')).contentVersion).toBe(afterVersions.contentVersion)
+
+      // Cleanup: downstream freeze-rule tests in this file must not see these
+      // ACTIVE-incident snapshots (structural edits would 409 question_frozen).
+      await testDb.rapidAssessment.deleteMany({
+        where: { id: { in: [affected.id, controlResolved.id, controlOtherType.id] } },
+      })
+      await testDb.incident.deleteMany({
+        where: { id: { in: [activeIncident.id, resolvedIncident.id] } },
+      })
+      await testDb.entity.deleteMany({ where: { id: entity.id } })
     })
 
     test('CONTEXT question → 400 severity_not_editable', async () => {

@@ -11,8 +11,10 @@ interface RouteParams {
 /**
  * PATCH /api/v1/admin/questions/[id]/severity — ADMIN or COORDINATOR.
  * GAP questions only, value ∈ {CRITICAL, HIGH, MEDIUM}. Content-bump only:
- * severity is derived live (never frozen into snapshots) and stored
- * assessments are NOT recomputed here (that is P4, always explicit).
+ * severity is derived live (never frozen into snapshots). Because severity is
+ * a derivation rule, the service transactionally re-derives every
+ * ACTIVE-incident assessment whose frozen snapshot contains the key; the
+ * response surfaces `{ question, affectedCount }`.
  */
 export const PATCH = withAuth(async (request: NextRequest, context, { params }: RouteParams) => {
   if (!context.roles.includes('ADMIN') && !context.roles.includes('COORDINATOR')) {
@@ -22,8 +24,8 @@ export const PATCH = withAuth(async (request: NextRequest, context, { params }: 
   try {
     const body = await request.json()
     const { severity, reason } = SeverityPatchSchema.parse(body)
-    const question = await QuestionRegistryService.setSeverity(params.id, severity, context.userId, reason)
-    return successResponse(question)
+    const result = await QuestionRegistryService.setSeverity(params.id, severity, context.userId, reason)
+    return successResponse({ question: result.question, affectedCount: result.affectedCount })
   } catch (error) {
     return handleApiError(error)
   }

@@ -5,7 +5,7 @@ import { POST as assignEntity } from '@/app/api/v1/entity-assignments/route'
 import { POST as createCommitment } from '@/app/api/v1/commitments/route'
 import { GET as verificationQueue } from '@/app/api/v1/verification/queue/assessments/route'
 import { POST as verifyAssessmentRoute } from '@/app/api/v1/assessments/[id]/verify/route'
-import { POST as recalculateSeverity } from '@/app/api/v1/admin/severity/recalculate/route'
+import { PATCH as patchSeverity } from '@/app/api/v1/admin/questions/[id]/severity/route'
 import { GET as getScoringConfig, PUT as updateScoringConfig } from '@/app/api/v1/scoring-config/route'
 import { GET as listDonors } from '@/app/api/v1/donors/route'
 import {
@@ -21,6 +21,7 @@ import {
   createDonor,
   grantPermission,
   ensureRoles,
+  ensureQuestionRegistry,
   type RoleName,
 } from '../factories'
 import { testDb, truncateTestDb } from '../helpers/test-db'
@@ -227,17 +228,35 @@ describe('P0 authorization matrix', () => {
       expect(response.status).toBe(403)
     })
 
-    test('POST admin/severity/recalculate: DONOR → 403, COORDINATOR → 200', async () => {
+    // P3: the bulk POST admin/severity/recalculate surface is deleted (the
+    // derivation rule made it structurally obsolete) — the severity matrix
+    // is asserted on the live Tier A route it replaced.
+    test('PATCH admin/questions/[id]/severity: DONOR → 403, COORDINATOR → 200', async () => {
+      await ensureQuestionRegistry()
       const donor = (await createUser({ roles: ['DONOR'] })) as AuthedUser
       const coordinator = (await createUser({ roles: ['COORDINATOR'] })) as AuthedUser
+      const question = await testDb.question.findFirst({
+        where: { category: 'GAP' },
+        orderBy: { id: 'asc' },
+      })
+      expect(question).not.toBeNull()
+      const next = question!.severity === 'HIGH' ? 'CRITICAL' : 'HIGH'
 
-      const denied = await recalculateSeverity(
-        makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(donor) })
+      const denied = await patchSeverity(
+        makeRequest('PATCH', `/api/v1/admin/questions/${question!.id}/severity`, {
+          body: { severity: next, reason: 'authz matrix probe' },
+          token: tokenFor(donor),
+        }),
+        withParams({ id: question!.id })
       )
       expect(denied.status).toBe(403)
 
-      const allowed = await recalculateSeverity(
-        makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(coordinator) })
+      const allowed = await patchSeverity(
+        makeRequest('PATCH', `/api/v1/admin/questions/${question!.id}/severity`, {
+          body: { severity: next, reason: 'authz matrix probe' },
+          token: tokenFor(coordinator),
+        }),
+        withParams({ id: question!.id })
       )
       expect(allowed.status).toBe(200)
     })

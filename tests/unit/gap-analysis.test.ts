@@ -5,18 +5,22 @@ import {
   analyzeWASHGaps,
   analyzeShelterGaps,
   analyzeSecurityGaps,
+  analyzeGapsFromSnapshot,
   derivePriorityFromGaps,
+  getGapFieldSeverity,
   clearGapQuestionCache,
 } from '@/lib/services/gap-analysis.service'
 
 /**
- * Unit — registry-driven gap analysis.
+ * Unit — registry-driven gap analysis (P3 engine wrapper).
  *
  * The ONLY mocked seam is `@/lib/db/client` (the registry question source):
- * `prisma.question.findMany` returns the catalog's real GAP questions, so the
- * code under test — field detection incl. inverted flags, severity MAX
- * roll-up, recommendation mapping, per-type caching, POPULATION early-return,
- * priority derivation — all run against the real catalog definitions.
+ * `prisma.question.findMany` returns the catalog's real questions (ALL rows of
+ * the type, regardless of category), so the code under test — wrapper
+ * structure projection, engine delegation, field detection incl. inverted
+ * flags, severity MAX roll-up, recommendation mapping, per-type caching,
+ * POPULATION-through-the-same-path, priority derivation — all run against the
+ * real catalog definitions.
  *
  * tests/setup.ts globally mocks '@prisma/client' with the const-object enums
  * (AssessmentType / Priority) the service value-imports; no DB access happens.
@@ -24,23 +28,27 @@ import {
 jest.mock('@/lib/db/client', () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { QUESTION_CATALOG } = require('@/lib/questions/registry-validation')
-  const findMany = jest.fn(async (args?: { where?: { assessmentType?: string; category?: string } }) => {
-    const type = args?.where?.assessmentType
-    const category = args?.where?.category
-    return QUESTION_CATALOG.filter((entry: any) => !type || entry.assessmentType === type)
+  const registryRowsFor = (assessmentType?: string) =>
+    QUESTION_CATALOG.filter((entry: any) => !assessmentType || entry.assessmentType === assessmentType)
       .flatMap((entry: any) =>
-        entry.sections.flatMap((section: any) =>
-          section.questions.map((question: any) => ({
+        entry.sections.flatMap((section: any, sectionIdx: number) =>
+          section.questions.map((question: any, questionIdx: number) => ({
             questionKey: question.questionKey,
+            label: question.label,
+            category: question.category,
             inverted: question.inverted ?? false,
-            severity: question.severity ?? 'LOW',
+            gapLabel: question.gapLabel ?? null,
             recommendation: question.recommendation ?? null,
-            _category: question.category,
+            severity: question.severity ?? 'LOW',
+            order: question.order ?? questionIdx + 1,
+            isActive: true,
+            section: { order: section.order ?? sectionIdx + 1, isActive: true },
           }))
         )
       )
-      .filter((row: any) => !category || row._category === category)
-  })
+  const findMany = jest.fn(async (args?: { where?: { assessmentType?: string } }) =>
+    registryRowsFor(args?.where?.assessmentType)
+  )
   return { prisma: { question: { findMany } } }
 })
 
@@ -115,8 +123,30 @@ describe('unit — gap-analysis registry analyzers', () => {
       // P1 seed policy is all-MEDIUM, so the MAX roll-up is proven with
       // synthetic registry rows: HIGH (trained staff) + MEDIUM (maternal) → HIGH
       ;(prisma.question.findMany as jest.Mock).mockImplementationOnce(async () => [
-        { questionKey: 'hasTrainedStaff', inverted: false, severity: 'HIGH', recommendation: null },
-        { questionKey: 'hasMaternalChildServices', inverted: false, severity: 'MEDIUM', recommendation: null },
+        {
+          questionKey: 'hasTrainedStaff',
+          label: 'Trained Staff',
+          category: 'GAP',
+          inverted: false,
+          gapLabel: 'No trained staff',
+          recommendation: null,
+          severity: 'HIGH',
+          order: 3,
+          isActive: true,
+          section: { order: 1, isActive: true },
+        },
+        {
+          questionKey: 'hasMaternalChildServices',
+          label: 'Maternal Services',
+          category: 'GAP',
+          inverted: false,
+          gapLabel: 'No maternal services',
+          recommendation: null,
+          severity: 'MEDIUM',
+          order: 6,
+          isActive: true,
+          section: { order: 1, isActive: true },
+        },
       ])
       const result = await analyzeHealthGaps({
         ...ALL_GOOD_HEALTH,
@@ -131,6 +161,49 @@ describe('unit — gap-analysis registry analyzers', () => {
         hasMaternalChildServices: false,
       })
       expect(mediumOnly.severity).toBe('MEDIUM')
+    })
+
+    test('deactivated registry rows still resolve severity through the ladder', async () => {
+      // The registry row for hasTrainedStaff is INACTIVE (removed from new
+      // forms) but still lives in the table: the ladder keeps resolving it
+      // for stored snapshots. The structure only offers active questions, so
+      // the engine never fabricates a row — proven via analyzeGapsFromSnapshot.
+      ;(prisma.question.findMany as jest.Mock).mockImplementationOnce(async () => [
+        {
+          questionKey: 'hasTrainedStaff',
+          label: 'Trained Staff',
+          category: 'GAP',
+          inverted: false,
+          gapLabel: 'No trained staff',
+          recommendation: null,
+          severity: 'HIGH',
+          order: 3,
+          isActive: false,
+          section: { order: 1, isActive: true },
+        },
+      ])
+      const snapshot = {
+        sections: [
+          {
+            order: 1,
+            questions: [
+              {
+                key: 'hasTrainedStaff',
+                label: 'Trained Staff',
+                category: 'GAP',
+                inverted: false,
+                gapLabel: 'No trained staff',
+                recommendation: null,
+                order: 3,
+              },
+            ],
+          },
+        ],
+      }
+      const result = await analyzeGapsFromSnapshot('HEALTH', snapshot, { hasTrainedStaff: false })
+      expect(result.gapFields).toEqual(['hasTrainedStaff'])
+      expect(result.severity).toBe('HIGH')
+      expect(result.rows[0].source).toBe('registry')
     })
   })
 
@@ -250,8 +323,86 @@ describe('unit — gap-analysis registry analyzers', () => {
     })
   })
 
+  describe('engine extensions on the stored shape', () => {
+    test('rows expose the per-question truth table (registry ladder source)', async () => {
+      const result = await analyzeHealthGaps(ALL_GOOD_HEALTH)
+      expect(result.rows).toHaveLength(6)
+      expect(result.rows.map((row) => row.key)).toEqual([
+        'hasFunctionalClinic',
+        'hasEmergencyServices',
+        'hasTrainedStaff',
+        'hasMedicineSupply',
+        'hasMedicalSupplies',
+        'hasMaternalChildServices',
+      ])
+      for (const row of result.rows) {
+        expect(row.source).toBe('registry')
+        expect(row.severity).toBe('MEDIUM')
+        expect(row.unanswered).toBe(false)
+        expect(typeof row.label).toBe('string')
+      }
+      expect(result.unanswered).toEqual([])
+    })
+
+    test('missing answers are flagged, never scored as gaps', async () => {
+      const result = await analyzeHealthGaps({}) // nothing answered
+      expect(result.hasGap).toBe(false)
+      expect(result.gapFields).toEqual([])
+      expect(result.severity).toBe('LOW')
+      expect(result.unanswered).toHaveLength(6)
+      expect(result.rows.every((row) => row.unanswered)).toBe(true)
+    })
+
+    test('partial answers → only the answered gap triggers; the rest are unanswered', async () => {
+      const partial = await analyzeFoodGaps({ isFoodSufficient: false })
+      expect(partial.gapFields).toEqual(['isFoodSufficient'])
+      expect(partial.unanswered).toEqual(['hasRegularMealAccess', 'hasInfantNutrition'])
+    })
+
+    test('getGapFieldSeverity resolves from the registry (MEDIUM if unknown)', async () => {
+      expect(await getGapFieldSeverity('HEALTH', 'hasFunctionalClinic')).toBe('MEDIUM')
+      expect(await getGapFieldSeverity('HEALTH', 'noSuchQuestion')).toBe('MEDIUM')
+    })
+
+    test('getGapFieldSeverity returns the actual severity, isActive-agnostic', async () => {
+      ;(prisma.question.findMany as jest.Mock).mockImplementationOnce(async () => [
+        {
+          questionKey: 'hasTrainedStaff',
+          label: 'Trained staff',
+          category: 'GAP',
+          inverted: false,
+          gapLabel: null,
+          recommendation: null,
+          severity: 'CRITICAL',
+          order: 3,
+          isActive: false, // deactivated rows still resolve (ladder semantics)
+          section: { order: 1, isActive: true },
+        },
+      ])
+      expect(await getGapFieldSeverity('HEALTH', 'hasTrainedStaff')).toBe('CRITICAL')
+    })
+
+    test('getGapFieldSeverity normalizes non-gap severities (UNCLASSIFIED → MEDIUM)', async () => {
+      ;(prisma.question.findMany as jest.Mock).mockImplementationOnce(async () => [
+        {
+          questionKey: 'hasTrainedStaff',
+          label: 'Trained staff',
+          category: 'GAP',
+          inverted: false,
+          gapLabel: null,
+          recommendation: null,
+          severity: 'UNCLASSIFIED',
+          order: 3,
+          isActive: true,
+          section: { order: 1, isActive: true },
+        },
+      ])
+      expect(await getGapFieldSeverity('HEALTH', 'hasTrainedStaff')).toBe('MEDIUM')
+    })
+  })
+
   describe('POPULATION (context-only type)', () => {
-    test('analyzes to LOW with no gaps and never queries the registry', async () => {
+    test('derives LOW through the same engine path (zero GAP questions)', async () => {
       const result = await analyzeGaps('POPULATION', {
         totalPopulation: 5000,
         numberLivesLost: 3,
@@ -259,16 +410,29 @@ describe('unit — gap-analysis registry analyzers', () => {
       expect(result.hasGap).toBe(false)
       expect(result.gapFields).toEqual([])
       expect(result.severity).toBe('LOW')
-      expect(prisma.question.findMany).not.toHaveBeenCalled()
+      expect(result.rows).toEqual([])
+      // No special-casing: POPULATION loads the registry like any other type.
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(1)
     })
 
     test('derivePriorityFromGaps always yields LOW for POPULATION', () => {
-      expect(derivePriorityFromGaps('POPULATION', { hasGap: true, gapFields: ['x'], severity: 'CRITICAL', recommendations: [] })).toBe('LOW')
+      expect(derivePriorityFromGaps('POPULATION', { hasGap: true, gapFields: ['x'], severity: 'CRITICAL', recommendations: [] } as never)).toBe('LOW')
     })
 
     test('derivePriorityFromGaps passes the gap severity through for gap types', async () => {
       ;(prisma.question.findMany as jest.Mock).mockImplementationOnce(async () => [
-        { questionKey: 'hasFunctionalClinic', inverted: false, severity: 'CRITICAL', recommendation: null },
+        {
+          questionKey: 'hasFunctionalClinic',
+          label: 'Functional Clinic',
+          category: 'GAP',
+          inverted: false,
+          gapLabel: 'No functional clinic',
+          recommendation: null,
+          severity: 'CRITICAL',
+          order: 1,
+          isActive: true,
+          section: { order: 1, isActive: true },
+        },
       ])
       const analysis = await analyzeHealthGaps({ ...ALL_GOOD_HEALTH, hasFunctionalClinic: false })
       expect(analysis.severity).toBe('CRITICAL')
@@ -277,7 +441,7 @@ describe('unit — gap-analysis registry analyzers', () => {
   })
 
   describe('registry query caching', () => {
-    test('GAP questions are queried once per type and cached across analyses', async () => {
+    test('the registry view is queried once per type and cached across analyses', async () => {
       await analyzeHealthGaps(ALL_DIRE_HEALTH)
       expect(prisma.question.findMany).toHaveBeenCalledTimes(1)
 

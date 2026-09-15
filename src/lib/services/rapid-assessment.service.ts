@@ -13,9 +13,11 @@ import {
 } from '@/lib/validation/rapid-assessment'
 import {
   analyzeGaps,
+  analyzeGapsFromSnapshot,
   derivePriorityFromGaps,
   GapAnalysis
 } from '@/lib/services/gap-analysis.service'
+import type { GapEngineSnapshotStructure } from '@/lib/questions/gap-engine'
 import {
   toAnswers,
   fromAnswers,
@@ -126,8 +128,9 @@ export class RapidAssessmentService {
       contentVersion: questionSnapshot.contentVersion,
     }
 
-    // Derive gap analysis + priority from the registry (priority replaces client input)
-    const gapAnalysis = await analyzeGaps(type, answers)
+    // Derive gap analysis + priority through the engine, against the snapshot
+    // this assessment just froze (priority replaces client input)
+    const gapAnalysis = await analyzeGapsFromSnapshot(type, questionSnapshot, answers)
     const priority = derivePriorityFromGaps(type, gapAnalysis)
 
     const rapidAssessment = await prisma.rapidAssessment.create({
@@ -409,7 +412,7 @@ export class RapidAssessmentService {
       if (snapshotQuestionCount(snapshot) === 0) {
         throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
       }
-      const gapAnalysis = await analyzeGaps(assessmentType, mergedAnswers)
+      const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, mergedAnswers)
       answersUpdate = mergedAnswers as unknown as Prisma.InputJsonValue
       versionsUpdate = {
         structureVersion: snapshot.structureVersion,
@@ -542,7 +545,7 @@ export class RapidAssessmentService {
     try {
       const assessment = await prisma.rapidAssessment.findUnique({
         where: { id: assessmentId },
-        select: { rapidAssessmentType: true, answers: true, incidentId: true }
+        select: { rapidAssessmentType: true, answers: true, questionSnapshot: true, incidentId: true }
       })
       if (!assessment) {
         console.warn(`Assessment ${assessmentId} not found for gap analysis`)
@@ -556,10 +559,17 @@ export class RapidAssessmentService {
         return
       }
 
-      const gapAnalysis = await analyzeGaps(
-        assessment.rapidAssessmentType,
-        (assessment.answers ?? {}) as Record<string, unknown>
-      )
+      // Derive against the snapshot the assessment was answered against when
+      // one is frozen (the engine resolves severities from the live registry,
+      // regardless of isActive); rows predating snapshots fall back to the
+      // current registry snapshot.
+      const storedSnapshot = assessment.questionSnapshot as unknown as
+        | GapEngineSnapshotStructure
+        | null
+      const answers = (assessment.answers ?? {}) as Record<string, unknown>
+      const gapAnalysis = storedSnapshot
+        ? await analyzeGapsFromSnapshot(assessment.rapidAssessmentType, storedSnapshot, answers)
+        : await analyzeGaps(assessment.rapidAssessmentType, answers)
       const priority = derivePriorityFromGaps(assessment.rapidAssessmentType, gapAnalysis)
 
       await prisma.rapidAssessment.update({
@@ -581,62 +591,6 @@ export class RapidAssessmentService {
       console.log(`Gap analysis calculated for assessment ${assessmentId} (${assessment.rapidAssessmentType})`)
     } catch (error) {
       console.error(`[RapidAssessmentService] triggerGapAnalysis failed for ${assessmentId}:`, error)
-      throw error
-    }
-  }
-
-  /**
-   * Updates all historical assessments to have correct priorities based on gap analysis severity
-   */
-  static async updateAllHistoricalAssessmentPriorities(): Promise<{ updated: number; failed: number; total: number }> {
-    try {
-      console.log('Starting historical assessment priority update...')
-
-      const allAssessments = await prisma.rapidAssessment.findMany({
-        select: { id: true, rapidAssessmentType: true, answers: true }
-      })
-
-      console.log(`Found ${allAssessments.length} assessments to process`)
-
-      let updatedCount = 0
-      let failedCount = 0
-
-      for (const assessment of allAssessments) {
-        try {
-          if (assessment.answers == null) {
-            // Rows predating the answers data layer have no answers to analyze.
-            continue
-          }
-          const gapAnalysis = await analyzeGaps(
-            assessment.rapidAssessmentType,
-            (assessment.answers ?? {}) as Record<string, unknown>
-          )
-          const priority = derivePriorityFromGaps(assessment.rapidAssessmentType, gapAnalysis)
-
-          await prisma.rapidAssessment.update({
-            where: { id: assessment.id },
-            data: {
-              gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
-              priority
-            }
-          })
-          console.log(`Updated assessment ${assessment.id} (${assessment.rapidAssessmentType}) - Priority: ${priority}`)
-          updatedCount++
-        } catch (error) {
-          console.error(`Failed to update assessment ${assessment.id}:`, error)
-          failedCount++
-        }
-      }
-
-      console.log(`Historical assessment priority update completed. Updated: ${updatedCount}, Failed: ${failedCount}, Total: ${allAssessments.length}`)
-
-      return {
-        updated: updatedCount,
-        failed: failedCount,
-        total: allAssessments.length
-      }
-    } catch (error) {
-      console.error('Error updating historical assessment priorities:', error)
       throw error
     }
   }

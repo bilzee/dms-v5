@@ -1,29 +1,42 @@
 /**
- * Gap Analysis Service — Dynamic Question Registry edition.
+ * Gap Analysis Service — Dynamic Question Registry edition (P3 engine wrapper).
  *
- * Replaces the per-type hardcoded analyzers and the GapFieldSeverity lookup
- * table with the `Question` registry: gap detection, per-field severity,
- * assessment severity and recommendations are all derived from the active
- * GAP questions for the assessment type.
+ * All derivation is delegated to the pure engine
+ * (`src/lib/questions/gap-engine.ts`): the snapshot structure defines which
+ * questions are GAP questions (and their inverted semantics / presentation
+ * text), while the live registry rows — regardless of `isActive` — resolve
+ * each key's severity through the ladder (registry → snapshot → MEDIUM).
+ * There is one evaluation path for every assessment type; POPULATION simply
+ * has zero GAP questions and therefore derives LOW.
  *
- * Behavior parity with the legacy analyzers:
- * - Non-inverted GAP booleans indicate a gap when falsy (false/undefined).
- * - Inverted GAP booleans (hasOpenDefecationConcerns, areOvercrowded,
- *   gbvCasesReported) indicate a gap when true.
- * - Assessment severity = MAX(severity of gapped questions), LOW when no gaps.
- * - Recommendations = the gapped questions' registry `recommendation`, in
- *   registry order.
- *
- * The stored `gapAnalysis` JSON shape is unchanged:
- * `{ hasGap, gapFields, severity, recommendations, fieldSeverityMap? }`.
+ * Stored `gapAnalysis` JSON keeps the legacy keys
+ * (`hasGap`, `gapFields`, `severity`, `recommendations`, `fieldSeverityMap`)
+ * and adds the engine's `rows` (per-question truth table with the ladder
+ * `source`) and `unanswered` (keys never answered — flagged, never scored).
  */
 
 import { AssessmentType, Priority } from '@prisma/client'
 import { prisma } from '@/lib/db/client'
-import { deriveGapAnalysisFromQuestions } from '@/lib/questions/gap-derivation'
+import {
+  analyzeGaps as runEngine,
+  normalizeGapSeverity,
+  type GapEngineRegistryRow,
+  type GapEngineResult,
+  type GapEngineSnapshotStructure,
+} from '@/lib/questions/gap-engine'
 
 type FieldSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
 type FieldSeverityMap = Record<string, FieldSeverity>
+
+export interface GapAnalysisRow {
+  key: string
+  label: string
+  gapLabel: string | null
+  severity: FieldSeverity
+  source: 'registry' | 'snapshot' | 'unmapped'
+  recommendation: string | null
+  unanswered: boolean
+}
 
 export interface GapAnalysis {
   hasGap: boolean;
@@ -31,6 +44,8 @@ export interface GapAnalysis {
   severity: Priority;
   recommendations: string[];
   fieldSeverityMap?: FieldSeverityMap;
+  rows: GapAnalysisRow[];
+  unanswered: string[];
 }
 
 // Legacy per-type result aliases (shape-identical; kept for existing consumers).
@@ -43,90 +58,153 @@ export type SecurityGapAnalysis = GapAnalysis;
 /** Assessment types that carry GAP questions. POPULATION is context-only. */
 const GAP_ASSESSMENT_TYPES = new Set<AssessmentType>(['HEALTH', 'FOOD', 'WASH', 'SHELTER', 'SECURITY'])
 
-interface GapQuestionMeta {
-  questionKey: string
-  inverted: boolean
-  severity: Priority
-  recommendation: string | null
+interface RegistryView {
+  /** Active-registry projection (the snapshot a NEW assessment would freeze). */
+  structure: GapEngineSnapshotStructure
+  /** ALL rows of the type, regardless of `isActive` — the severity ladder. */
+  registryRows: GapEngineRegistryRow[]
 }
 
 /**
- * Short-lived cache of GAP question metadata per assessment type so a single
- * dashboard render does not re-query the registry per assessment.
+ * Short-lived per-type cache of the registry view so a single dashboard render
+ * does not re-query the registry per assessment.
  */
-let gapQuestionCache = new Map<AssessmentType, GapQuestionMeta[]>()
-let gapQuestionCacheTimestamp = 0
-const GAP_QUESTION_CACHE_DURATION_MS = 30 * 1000
+let registryViewCache = new Map<AssessmentType, RegistryView>()
+let registryViewCacheTimestamp = 0
+const REGISTRY_VIEW_CACHE_DURATION_MS = 30 * 1000
 
 function clearGapQuestionCache(): void {
-  gapQuestionCache = new Map()
-  gapQuestionCacheTimestamp = 0
+  registryViewCache = new Map()
+  registryViewCacheTimestamp = 0
 }
 
-async function getGapQuestions(assessmentType: AssessmentType): Promise<GapQuestionMeta[]> {
+async function loadRegistryView(assessmentType: AssessmentType): Promise<RegistryView> {
   const now = Date.now()
-  if (now - gapQuestionCacheTimestamp < GAP_QUESTION_CACHE_DURATION_MS && gapQuestionCache.has(assessmentType)) {
-    return gapQuestionCache.get(assessmentType)!
+  if (
+    now - registryViewCacheTimestamp < REGISTRY_VIEW_CACHE_DURATION_MS &&
+    registryViewCache.has(assessmentType)
+  ) {
+    return registryViewCache.get(assessmentType)!
   }
 
-  const questions = await prisma.question.findMany({
-    where: {
-      assessmentType,
-      category: 'GAP',
-      isActive: true,
-    },
+  // One query for both engine inputs: every row of the type (the ladder does
+  // not care about isActive), with section ordering for the structure.
+  const rows = await prisma.question.findMany({
+    where: { assessmentType },
     orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }],
     select: {
       questionKey: true,
+      label: true,
+      category: true,
       inverted: true,
-      severity: true,
+      gapLabel: true,
       recommendation: true,
+      severity: true,
+      order: true,
+      isActive: true,
+      section: { select: { order: true, isActive: true } },
     },
   })
 
-  const meta = questions.map((q) => ({
-    questionKey: q.questionKey,
-    inverted: q.inverted,
-    severity: q.severity,
-    recommendation: q.recommendation,
+  // Active-registry structure (mirrors QuestionRegistryService.getQuestionSet:
+  // active sections with their active questions, section order → question order).
+  const sections = new Map<number, {
+    order: number
+    questions: Array<{
+      key: string
+      label: string
+      category: string
+      inverted: boolean
+      gapLabel: string | null
+      recommendation: string | null
+      order: number
+    }>
+  }>()
+  for (const row of rows) {
+    if (!row.isActive || !row.section?.isActive) continue
+    const sectionOrder = row.section.order
+    const bucket = sections.get(sectionOrder) ?? { order: sectionOrder, questions: [] }
+    bucket.questions.push({
+      key: row.questionKey,
+      label: row.label,
+      category: row.category,
+      inverted: row.inverted,
+      gapLabel: row.gapLabel,
+      recommendation: row.recommendation,
+      order: row.order,
+    })
+    sections.set(sectionOrder, bucket)
+  }
+  const structure: GapEngineSnapshotStructure = {
+    sections: [...sections.keys()]
+      .sort((a, b) => a - b)
+      .map((order) => ({ order, questions: sections.get(order)!.questions })),
+  }
+
+  const registryRows: GapEngineRegistryRow[] = rows.map((row) => ({
+    questionKey: row.questionKey,
+    severity: row.severity,
   }))
 
-  if (now - gapQuestionCacheTimestamp >= GAP_QUESTION_CACHE_DURATION_MS) {
-    gapQuestionCache = new Map()
+  if (now - registryViewCacheTimestamp >= REGISTRY_VIEW_CACHE_DURATION_MS) {
+    registryViewCache = new Map()
   }
-  gapQuestionCache.set(assessmentType, meta)
-  gapQuestionCacheTimestamp = now
+  const view = { structure, registryRows }
+  registryViewCache.set(assessmentType, view)
+  registryViewCacheTimestamp = now
+  return view
+}
 
-  return meta
+function toGapAnalysis(result: GapEngineResult): GapAnalysis {
+  return {
+    hasGap: result.hasGap,
+    gapFields: result.gapFields,
+    severity: result.severity as Priority,
+    recommendations: result.recommendations,
+    fieldSeverityMap: result.fieldSeverityMap,
+    rows: result.rows,
+    unanswered: result.unanswered,
+  }
 }
 
 /**
- * Evaluates gap questions against an answers map (or legacy typed payload —
- * the keys are identical) and derives the stored gapAnalysis JSON.
+ * Evaluates the CURRENT registry snapshot against an answers map (or legacy
+ * typed payload — the keys are identical). Used by readers without a stored
+ * snapshot (dashboard fallbacks) and by tests.
  */
 export async function analyzeGaps(
   assessmentType: AssessmentType,
   answers: Record<string, unknown> | null | undefined
 ): Promise<GapAnalysis> {
-  if (!GAP_ASSESSMENT_TYPES.has(assessmentType)) {
-    return { hasGap: false, gapFields: [], severity: Priority.LOW, recommendations: [] }
-  }
-
-  const source = answers ?? {}
-  let questions: GapQuestionMeta[]
+  let view: RegistryView
   try {
-    questions = await getGapQuestions(assessmentType)
+    view = await loadRegistryView(assessmentType)
   } catch (error) {
-    console.error(`[gap-analysis] Failed to load GAP questions for ${assessmentType}:`, error)
+    console.error(`[gap-analysis] Failed to load registry view for ${assessmentType}:`, error)
     throw error
   }
+  return toGapAnalysis(runEngine(view.structure, answers ?? {}, view.registryRows))
+}
 
-  return deriveGapAnalysisFromQuestions(questions, source) as GapAnalysis
+/**
+ * Re-derives an assessment's gap analysis from the snapshot it was answered
+ * against (the live `QuestionSnapshot` for fresh writes, or the stored
+ * `RapidAssessment.questionSnapshot` JSON for re-derivation), resolving
+ * severities against ALL live registry rows of the type.
+ */
+export async function analyzeGapsFromSnapshot(
+  assessmentType: AssessmentType,
+  snapshotStructure: GapEngineSnapshotStructure | null | undefined,
+  answers: Record<string, unknown> | null | undefined
+): Promise<GapAnalysis> {
+  const { registryRows } = await loadRegistryView(assessmentType)
+  return toGapAnalysis(runEngine(snapshotStructure, answers ?? {}, registryRows))
 }
 
 /**
  * Derives the assessment priority from gap analysis. POPULATION assessments
- * are context-only and always derive LOW.
+ * are context-only and always derive LOW (the engine returns LOW for a type
+ * with zero GAP questions, so the contract holds trivially).
  */
 export function derivePriorityFromGaps(assessmentType: AssessmentType, gapAnalysis: GapAnalysis): Priority {
   if (!GAP_ASSESSMENT_TYPES.has(assessmentType)) {
@@ -158,18 +236,23 @@ export async function analyzeSecurityGaps(data: any): Promise<SecurityGapAnalysi
 
 export { clearGapQuestionCache }
 
-/** Cached registry lookup of a single GAP field's severity (MEDIUM if unknown). */
+/**
+ * Cached registry lookup of a single GAP field's severity (MEDIUM if unknown).
+ * Resolves against all live rows — a deactivated row still resolves, matching
+ * the engine's ladder (unknown/UNCLASSIFIED severities normalize to MEDIUM).
+ */
 export async function getGapFieldSeverity(
   assessmentType: AssessmentType,
   questionKey: string
 ): Promise<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'> {
-  const questions = await getGapQuestions(assessmentType)
-  const question = questions.find((q) => q.questionKey === questionKey)
-  return question ? (question.severity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW') : 'MEDIUM'
+  const { registryRows } = await loadRegistryView(assessmentType)
+  const row = registryRows.find((r) => r.questionKey === questionKey)
+  return row ? normalizeGapSeverity(row.severity) : 'MEDIUM'
 }
 
 export default {
   analyzeGaps,
+  analyzeGapsFromSnapshot,
   derivePriorityFromGaps,
   analyzeHealthGaps,
   analyzeFoodGaps,

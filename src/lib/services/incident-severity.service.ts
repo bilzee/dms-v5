@@ -132,27 +132,6 @@ class IncidentSeverityService {
     ]
   }
 
-  async recalculateAll(): Promise<{ total: number; results: Array<{ id: string; oldSeverity: Priority; newSeverity: Priority }> }> {
-    const incidents = await db.incident.findMany({
-      select: { id: true, severity: true },
-    })
-
-    const results: Array<{ id: string; oldSeverity: Priority; newSeverity: Priority }> = []
-
-    for (const incident of incidents) {
-      const newSeverity = await this.recalculateIncidentSeverity(incident.id)
-      if (newSeverity !== incident.severity) {
-        results.push({
-          id: incident.id,
-          oldSeverity: incident.severity,
-          newSeverity,
-        })
-      }
-    }
-
-    return { total: incidents.length, results }
-  }
-
   async recalculateIncidentSeverity(incidentId: string): Promise<Priority> {
     const computed = await this.computeIncidentSeverity(incidentId)
     const severity: Priority = computed || 'UNCLASSIFIED'

@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import { seedQuestions } from './seed-questions'
 import { toAnswers, buildQuestionSnapshot, RapidAssessmentType } from '../src/lib/questions/legacy-convert'
 import { getRegistryVersions, RegistryVersions } from '../src/lib/questions/registry-versions'
-import { deriveGapAnalysisFromQuestions } from '../src/lib/questions/gap-derivation'
+import { analyzeGaps as deriveGapAnalysis } from '../src/lib/questions/gap-engine'
 
 const prisma = new PrismaClient()
 
@@ -747,12 +747,16 @@ async function main() {
         ? buildQuestionSnapshot(registryQuestions.filter((q) => q.assessmentType === assessmentType), versions)
         : null
 
-    // Derive gap analysis + priority from the registry questions
-    const gapAnalysis = deriveGapAnalysisFromQuestions(
-      questions.filter((q) => q.category === 'GAP'),
-      answers as Record<string, unknown>
+    // Derive gap analysis + priority through the pure gap engine: the frozen
+    // snapshot defines the GAP structure; the live registry rows resolve each
+    // key's severity. POPULATION has zero GAP questions and derives LOW via
+    // the same rule (no special-casing).
+    const gapAnalysis = deriveGapAnalysis(
+      questionSnapshot,
+      answers as Record<string, unknown>,
+      questions.map((q) => ({ questionKey: q.questionKey, severity: q.severity }))
     )
-    const derivedPriority = assessmentType === 'POPULATION' ? 'LOW' : gapAnalysis.severity
+    const derivedPriority = gapAnalysis.severity
 
     const { status, priority, ...assessmentData } = assessment as Record<string, unknown> & { status?: unknown; priority?: unknown }
     await prisma.rapidAssessment.create({

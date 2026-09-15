@@ -1,6 +1,9 @@
-import { POST as recalculateSeverity } from '@/app/api/v1/admin/severity/recalculate/route'
 import { GET as syncPull } from '@/app/api/v1/sync/pull/route'
 import { POST as syncBatch } from '@/app/api/v1/sync/batch/route'
+import { incidentSeverityService } from '@/lib/services/incident-severity.service'
+import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
+import { existsSync } from 'fs'
+import { join } from 'path'
 import { makeRequest, tokenFor, type AuthedUser } from '../helpers/api'
 import {
   createUser,
@@ -20,6 +23,11 @@ import { testDb, truncateTestDb } from '../helpers/test-db'
  *   UNCLASSIFIED priorities are ignored; fallback = preliminary thresholds
  *   (within a tier the minimums are OR-ed: CRITICAL lives≥101|injured≥501|
  *   displaced≥5001, HIGH ≥11|≥51|≥501, MEDIUM ≥1|≥1|≥1); else UNCLASSIFIED.
+ *
+ * P3: the bulk `POST /admin/severity/recalculate` endpoint is deleted —
+ * severity flows bottom-up from the registry, so the tests drive
+ * `incidentSeverityService.recalculateIncidentSeverity(incidentId)` directly
+ * (exactly what the assessment/registry mutation paths call today).
  */
 
 describe('P0 incident severity pipeline', () => {
@@ -33,6 +41,26 @@ describe('P0 incident severity pipeline', () => {
   afterAll(async () => {
     await truncateTestDb()
     await testDb.$disconnect()
+  })
+
+  test('bulk severity-recalculate surfaces are gone (404 through the router)', async () => {
+    // A missing App Router file IS the router-level 404: if either handler
+    // file existed again, the endpoint would be live.
+    const recalculateRoute = join(
+      process.cwd(), 'src/app/api/v1/admin/severity/recalculate/route.ts'
+    )
+    const updatePrioritiesRoute = join(
+      process.cwd(), 'src/app/api/v1/rapid-assessments/update-priorities/route.ts'
+    )
+    expect(existsSync(recalculateRoute)).toBe(false)
+    expect(existsSync(updatePrioritiesRoute)).toBe(false)
+    // Casts: the members were deleted, so a typed access would not compile
+    // once tests join the type-check boundary.
+    expect((incidentSeverityService as unknown as Record<string, unknown>).recalculateAll).toBeUndefined()
+    expect(
+      (RapidAssessmentService as unknown as Record<string, unknown>)
+        .updateAllHistoricalAssessmentPriorities
+    ).toBeUndefined()
   })
 
   test('max across verified assessments wins (CRITICAL beats LOW)', async () => {
@@ -58,10 +86,7 @@ describe('P0 incident severity pipeline', () => {
       priority: 'CRITICAL',
     })
 
-    const response = await recalculateSeverity(
-      makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(coordinator) })
-    )
-    expect(response.status).toBe(200)
+    await incidentSeverityService.recalculateIncidentSeverity(incident.id)
 
     const stored = await testDb.incident.findUnique({ where: { id: incident.id } })
     expect(stored!.severity).toBe('CRITICAL')
@@ -92,9 +117,7 @@ describe('P0 incident severity pipeline', () => {
       rapidAssessmentDate: now,
     })
 
-    await recalculateSeverity(
-      makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(coordinator) })
-    )
+    await incidentSeverityService.recalculateIncidentSeverity(incident.id)
 
     const stored = await testDb.incident.findUnique({ where: { id: incident.id } })
     expect(stored!.severity).toBe('MEDIUM')
@@ -114,9 +137,7 @@ describe('P0 incident severity pipeline', () => {
       priority: 'CRITICAL',
     })
 
-    await recalculateSeverity(
-      makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(coordinator) })
-    )
+    await incidentSeverityService.recalculateIncidentSeverity(incident.id)
 
     const stored = await testDb.incident.findUnique({ where: { id: incident.id } })
     expect(stored!.severity).toBe('UNCLASSIFIED')
@@ -142,37 +163,12 @@ describe('P0 incident severity pipeline', () => {
         numberDisplaced: displaced,
       })
 
-      await recalculateSeverity(
-        makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(coordinator) })
-      )
+      await incidentSeverityService.recalculateIncidentSeverity(incident.id)
 
       const stored = await testDb.incident.findUnique({ where: { id: incident.id } })
       expect(stored!.severity).toBe(expected)
     }
   )
-
-  test('recalculate response reports changed incidents', async () => {
-    const incident = await createIncident({ createdBy: coordinator.id, severity: 'LOW' })
-    const assessor = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
-    const entity = await createEntity()
-    await createRapidAssessment({
-      assessorId: assessor.id,
-      entityId: entity.id,
-      incidentId: incident.id,
-      assessmentType: 'SECURITY',
-      verificationStatus: 'AUTO_VERIFIED',
-      priority: 'HIGH',
-    })
-
-    const response = await recalculateSeverity(
-      makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(coordinator) })
-    )
-    expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body.data.total).toBeGreaterThanOrEqual(1)
-    const changed = body.data.results.find((r: { id: string }) => r.id === incident.id)
-    expect(changed).toMatchObject({ oldSeverity: 'LOW', newSeverity: 'HIGH' })
-  })
 
   test('verified assessments outrank preliminary thresholds', async () => {
     const assessor = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
@@ -193,9 +189,7 @@ describe('P0 incident severity pipeline', () => {
       priority: 'LOW',
     })
 
-    await recalculateSeverity(
-      makeRequest('POST', '/api/v1/admin/severity/recalculate', { token: tokenFor(coordinator) })
-    )
+    await incidentSeverityService.recalculateIncidentSeverity(incident.id)
 
     const stored = await testDb.incident.findUnique({ where: { id: incident.id } })
     expect(stored!.severity).toBe('LOW')

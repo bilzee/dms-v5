@@ -1,0 +1,42 @@
+DQR P3 recompute evidence run mu37y694
+DATABASE_URL: postgresql://dms_dev:***@localhost:5435/drms_test?schema=public
+Seeded question registry (was empty).
+
+[setup]
+  coordinatorId: 35d83099-4cd3-4349-a642-bcd8bfa64038
+  gapQuestion: hasEmergencyServices (baseline severity reset to MEDIUM; was MEDIUM)
+  affectedAssessmentId: 60c7e260-a175-46a2-9ba5-212589d73de6
+  affectedDraftAssessmentId: fdad3bed-a42d-4064-be80-28be640a86b5
+  before: {"priority":"MEDIUM","gapSeverity":"MEDIUM","snapshotHasKey":true}
+
+[1. PATCH /api/v1/admin/questions/[id]/severity → CRITICAL]
+  status: 200
+  affectedCount: 2
+  affectedRow: {"priority":"MEDIUM → CRITICAL","gapSeverity":"MEDIUM → CRITICAL","fieldSeverity":"CRITICAL","rowSource":"registry","structureVersion":"1 → 1 (must be unchanged)","contentVersion":"1 → 1 (must be unchanged)","snapshotIdentical":true}
+  draftRowWithSnapshot: {"priority":"CRITICAL","gapSeverity":"CRITICAL"}
+  registryContentVersion: 1 → 2 (must be +1)
+
+[2. controls (RESOLVED incident / snapshot without K)]
+  resolvedIncidentRow: {"priority":"MEDIUM","gapSeverity":"MEDIUM"}
+  snapshotWithoutKeyRow: {"priority":"MEDIUM","gapSeverity":"MEDIUM"}
+
+[3. incident propagation]
+  incidentSeverity: CRITICAL
+
+[4. idempotent re-derivation]
+  engineTwiceByteIdentical: true
+  storedMatchesReDerivation: true
+  severity: CRITICAL
+
+[5. no-op severity PATCH (same value)]
+  status: 200
+  affectedCount: 0
+  registryContentVersion: 2 → 2 (must be unchanged)
+
+[6. deleted endpoints + dead service methods]
+  POST /api/v1/admin/severity/recalculate: 404 (route file gone)
+  POST /api/v1/rapid-assessments/update-priorities: 404 (route file gone)
+  incidentSeverityServiceRecalculateAll: undefined
+  updateAllHistoricalAssessmentPriorities: undefined
+
+ALL CHECKS PASSED
