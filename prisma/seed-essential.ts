@@ -1,5 +1,6 @@
-import { PrismaClient, Priority, AssessmentType, RoleName, ReportType } from '@prisma/client';
+import { PrismaClient, RoleName, ReportType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { seedQuestions } from './seed-questions';
 
 const prisma = new PrismaClient();
 
@@ -150,45 +151,16 @@ async function main() {
   }
 
   // ========================================
-  // 5. GAP FIELD SEVERITIES
+  // 5. QUESTION REGISTRY (Dynamic Question Registry — shared with prisma/seed.ts)
   // ========================================
-  console.log('Creating gap field severity configurations...');
+  console.log('Seeding question registry...');
 
-  const gapFieldSeverities = [
-    { fieldName: 'hasFunctionalClinic', assessmentType: AssessmentType.HEALTH, severity: Priority.MEDIUM, displayName: 'Functional Health Clinic', description: 'Gap if no functional health clinic facility available' },
-    { fieldName: 'hasEmergencyServices', assessmentType: AssessmentType.HEALTH, severity: Priority.MEDIUM, displayName: 'Emergency Health Services', description: 'Gap if emergency health services are not available' },
-    { fieldName: 'hasTrainedStaff', assessmentType: AssessmentType.HEALTH, severity: Priority.MEDIUM, displayName: 'Trained Health Staff', description: 'Gap if insufficient trained health personnel' },
-    { fieldName: 'hasMedicineSupply', assessmentType: AssessmentType.HEALTH, severity: Priority.MEDIUM, displayName: 'Medicine Supply', description: 'Gap if essential medicine supply is unavailable' },
-    { fieldName: 'hasMedicalSupplies', assessmentType: AssessmentType.HEALTH, severity: Priority.MEDIUM, displayName: 'Medical Supplies', description: 'Gap if critical medical supplies are unavailable' },
-    { fieldName: 'hasMaternalChildServices', assessmentType: AssessmentType.HEALTH, severity: Priority.MEDIUM, displayName: 'Maternal and Child Health Services', description: 'Gap if maternal and child health services are not available' },
-    { fieldName: 'isWaterSufficient', assessmentType: AssessmentType.WASH, severity: Priority.MEDIUM, displayName: 'Water Sufficiency', description: 'Gap if water supply is insufficient for population needs' },
-    { fieldName: 'hasCleanWaterAccess', assessmentType: AssessmentType.WASH, severity: Priority.MEDIUM, displayName: 'Clean Water Access', description: 'Gap if population lacks access to clean drinking water' },
-    { fieldName: 'areLatrinesSufficient', assessmentType: AssessmentType.WASH, severity: Priority.MEDIUM, displayName: 'Latrine Sufficiency', description: 'Gap if sanitation facilities are insufficient' },
-    { fieldName: 'hasHandwashingFacilities', assessmentType: AssessmentType.WASH, severity: Priority.MEDIUM, displayName: 'Handwashing Facilities', description: 'Gap if handwashing facilities are not available' },
-    { fieldName: 'hasOpenDefecationConcerns', assessmentType: AssessmentType.WASH, severity: Priority.MEDIUM, displayName: 'Open Defecation Concerns', description: 'Gap if open defecation issues are present' },
-    { fieldName: 'areSheltersSufficient', assessmentType: AssessmentType.SHELTER, severity: Priority.MEDIUM, displayName: 'Shelter Sufficiency', description: 'Gap if emergency shelter is insufficient' },
-    { fieldName: 'hasSafeStructures', assessmentType: AssessmentType.SHELTER, severity: Priority.MEDIUM, displayName: 'Safe Shelter Structures', description: 'Gap if shelter structures are not safe' },
-    { fieldName: 'areOvercrowded', assessmentType: AssessmentType.SHELTER, severity: Priority.MEDIUM, displayName: 'Shelter Overcrowding', description: 'Gap if shelters are overcrowded' },
-    { fieldName: 'provideWeatherProtection', assessmentType: AssessmentType.SHELTER, severity: Priority.MEDIUM, displayName: 'Weather Protection', description: 'Gap if shelters do not provide adequate weather protection' },
-    { fieldName: 'isFoodSufficient', assessmentType: AssessmentType.FOOD, severity: Priority.MEDIUM, displayName: 'Food Sufficiency', description: 'Gap if food supply is insufficient for population needs' },
-    { fieldName: 'hasRegularMealAccess', assessmentType: AssessmentType.FOOD, severity: Priority.MEDIUM, displayName: 'Regular Meal Access', description: 'Gap if population lacks access to regular meals' },
-    { fieldName: 'hasInfantNutrition', assessmentType: AssessmentType.FOOD, severity: Priority.MEDIUM, displayName: 'Infant Nutrition', description: 'Gap if infant/child nutrition services are unavailable' },
-    { fieldName: 'isSafeFromViolence', assessmentType: AssessmentType.SECURITY, severity: Priority.MEDIUM, displayName: 'Safety from Violence', description: 'Gap if population is not safe from violence' },
-    { fieldName: 'gbvCasesReported', assessmentType: AssessmentType.SECURITY, severity: Priority.MEDIUM, displayName: 'GBV Cases Reported', description: 'Gap if gender-based violence cases are reported' },
-    { fieldName: 'hasSecurityPresence', assessmentType: AssessmentType.SECURITY, severity: Priority.MEDIUM, displayName: 'Security Presence', description: 'Gap if security personnel presence is insufficient' },
-    { fieldName: 'hasProtectionReportingMechanism', assessmentType: AssessmentType.SECURITY, severity: Priority.MEDIUM, displayName: 'Protection Reporting Mechanism', description: 'Gap if protection reporting mechanisms are unavailable' },
-    { fieldName: 'vulnerableGroupsHaveAccess', assessmentType: AssessmentType.SECURITY, severity: Priority.MEDIUM, displayName: 'Vulnerable Groups Access', description: 'Gap if vulnerable groups lack access to protection services' },
-    { fieldName: 'hasLighting', assessmentType: AssessmentType.SECURITY, severity: Priority.MEDIUM, displayName: 'Security Lighting', description: 'Gap if adequate security lighting is not available' },
-  ];
-
-  for (const s of gapFieldSeverities) {
-    await prisma.gapFieldSeverity.upsert({
-      where: { unique_field_assessment: { fieldName: s.fieldName, assessmentType: s.assessmentType } },
-      update: { severity: s.severity, displayName: s.displayName, description: s.description, isActive: true },
-      create: { ...s, createdBy: admin.id, updatedBy: admin.id },
-    });
-  }
-  console.log(`✅ ${gapFieldSeverities.length} gap field severities configured`);
+  const questionSeedResult = await seedQuestions(prisma);
+  console.log(
+    `✅ Question registry: ${questionSeedResult.questions} questions ` +
+    `(${questionSeedResult.created} created, ${questionSeedResult.updated} updated, ` +
+    `${questionSeedResult.unchanged} unchanged) across ${questionSeedResult.sections} sections`
+  );
 
   // ========================================
   // 6. REPORT TEMPLATES
@@ -427,7 +399,7 @@ async function main() {
   console.log('   - Admin user: admin@drms.local / Admin@123456');
   console.log('   - 5 roles with full permission assignments');
   console.log('   - 20 permissions');
-  console.log('   - 24 gap field severities (HEALTH: 6, WASH: 5, SHELTER: 4, FOOD: 3, SECURITY: 6)');
+  console.log('   - 55-question registry (24 GAP / 31 CONTEXT) across 6 assessment types');
   console.log('   - 6 report templates');
   console.log('   - 27 Borno State LGAs with coordinates');
   console.log('   - 9 default system settings');

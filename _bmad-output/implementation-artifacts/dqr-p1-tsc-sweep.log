@@ -1,0 +1,33 @@
+
+> disaster-response-management-system@0.1.0 type-check
+> tsc --noEmit
+
+prisma/seed-questions.ts(282,38): error TS2322: Type '{ id: string; questionKey: string; assessmentType: SeedableAssessmentType; sectionId: string; questionType: "BOOLEAN" | "NUMBER" | "SINGLE_CHOICE" | "MULTI_SELECT" | "TEXT_LONG"; ... 13 more ...; isActive: boolean; }' is not assignable to type '(Without<QuestionCreateInput, QuestionUncheckedCreateInput> & QuestionUncheckedCreateInput) | (Without<...> & QuestionCreateInput)'.
+  Type '{ id: string; questionKey: string; assessmentType: SeedableAssessmentType; sectionId: string; questionType: "BOOLEAN" | "NUMBER" | "SINGLE_CHOICE" | "MULTI_SELECT" | "TEXT_LONG"; ... 13 more ...; isActive: boolean; }' is not assignable to type 'Without<QuestionCreateInput, QuestionUncheckedCreateInput> & QuestionUncheckedCreateInput'.
+    Type '{ id: string; questionKey: string; assessmentType: SeedableAssessmentType; sectionId: string; questionType: "BOOLEAN" | "NUMBER" | "SINGLE_CHOICE" | "MULTI_SELECT" | "TEXT_LONG"; ... 13 more ...; isActive: boolean; }' is not assignable to type 'QuestionUncheckedCreateInput'.
+      Types of property 'options' are incompatible.
+        Type 'QuestionOptionDef[] | undefined' is not assignable to type 'NullableJsonNullValueInput | InputJsonValue | undefined'.
+          Type 'QuestionOptionDef[]' is not assignable to type 'NullableJsonNullValueInput | InputJsonValue | undefined'.
+            Type 'QuestionOptionDef[]' is not assignable to type 'InputJsonObject'.
+              Index signature for type 'string' is missing in type 'QuestionOptionDef[]'.
+prisma/seed-questions.ts(314,11): error TS2322: Type '{ version: { increment: number; }; id: string; questionKey: string; assessmentType: SeedableAssessmentType; sectionId: string; questionType: "BOOLEAN" | "NUMBER" | "SINGLE_CHOICE" | "MULTI_SELECT" | "TEXT_LONG"; ... 13 more ...; isActive: boolean; }' is not assignable to type '(Without<QuestionUpdateInput, QuestionUncheckedUpdateInput> & QuestionUncheckedUpdateInput) | (Without<...> & QuestionUpdateInput)'.
+  Type '{ version: { increment: number; }; id: string; questionKey: string; assessmentType: SeedableAssessmentType; sectionId: string; questionType: "BOOLEAN" | "NUMBER" | "SINGLE_CHOICE" | "MULTI_SELECT" | "TEXT_LONG"; ... 13 more ...; isActive: boolean; }' is not assignable to type 'Without<QuestionUpdateInput, QuestionUncheckedUpdateInput> & QuestionUncheckedUpdateInput'.
+    Type '{ version: { increment: number; }; id: string; questionKey: string; assessmentType: SeedableAssessmentType; sectionId: string; questionType: "BOOLEAN" | "NUMBER" | "SINGLE_CHOICE" | "MULTI_SELECT" | "TEXT_LONG"; ... 13 more ...; isActive: boolean; }' is not assignable to type 'QuestionUncheckedUpdateInput'.
+      Types of property 'options' are incompatible.
+        Type 'QuestionOptionDef[] | undefined' is not assignable to type 'NullableJsonNullValueInput | InputJsonValue | undefined'.
+          Type 'QuestionOptionDef[]' is not assignable to type 'NullableJsonNullValueInput | InputJsonValue | undefined'.
+            Type 'QuestionOptionDef[]' is not assignable to type 'InputJsonObject'.
+              Index signature for type 'string' is missing in type 'QuestionOptionDef[]'.
+src/app/api/v1/gap-field-severities/[id]/route.ts(45,35): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/app/api/v1/gap-field-severities/[id]/route.ts(103,40): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/app/api/v1/gap-field-severities/[id]/route.ts(115,39): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/app/api/v1/gap-field-severities/[id]/route.ts(222,40): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/app/api/v1/gap-field-severities/[id]/route.ts(234,43): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/app/api/v1/gap-field-severities/route.ts(87,36): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/app/api/v1/gap-field-severities/route.ts(137,35): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/app/api/v1/gap-field-severities/route.ts(153,35): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/lib/services/gap-field-severity.service.ts(47,35): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/lib/services/gap-field-severity.service.ts(69,35): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/lib/services/gap-field-severity.service.ts(95,32): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/lib/services/gap-field-severity.service.ts(243,14): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.
+src/lib/services/gap-field-severity.service.ts(269,33): error TS2339: Property 'gapFieldSeverity' does not exist on type 'PrismaClient<PrismaClientOptions, never, DefaultArgs>'.

@@ -1,5 +1,9 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, Question } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { seedQuestions } from './seed-questions'
+import { toAnswers, buildQuestionSnapshot, RapidAssessmentType } from '../src/lib/questions/legacy-convert'
+import { getRegistryVersions, RegistryVersions } from '../src/lib/questions/registry-versions'
+import { deriveGapAnalysisFromQuestions } from '../src/lib/questions/gap-derivation'
 
 const prisma = new PrismaClient()
 
@@ -578,9 +582,87 @@ async function main() {
     },
   })
 
+  // Seed the Dynamic Question Registry (idempotent — re-runs are no-ops)
+  console.log('❓ Seeding question registry...')
+  const questionSeedResult = await seedQuestions(prisma)
+  console.log(
+    `❓ Question registry: ${questionSeedResult.questions} questions ` +
+    `(${questionSeedResult.created} created, ${questionSeedResult.updated} updated, ` +
+    `${questionSeedResult.unchanged} unchanged) across ${questionSeedResult.sections} sections`
+  )
+
+  // Load the freshly seeded registry questions (registry order) for snapshots
+  const registryQuestions = await prisma.question.findMany({
+    where: { isActive: true },
+    orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }],
+    include: {
+      section: {
+        select: { sectionKey: true, title: true, description: true, category: true, order: true },
+      },
+    },
+  })
+  const questionsByType = new Map<string, Question[]>()
+  for (const question of registryQuestions) {
+    const list = questionsByType.get(question.assessmentType) ?? []
+    list.push(question)
+    questionsByType.set(question.assessmentType, list)
+  }
+
   // Create sample rapid assessments for verification workflow testing
   console.log('📋 Creating sample rapid assessments for verification testing...')
   
+  // Typed payloads preserve the exact values of the legacy per-type seed rows
+  // (legacy seedIdx formulas: HEALTH=0, WASH=1, SHELTER=2, FOOD=3, SECURITY=4).
+  const sampleTypedPayloads: Record<string, Record<string, unknown>> = {
+    HEALTH: {
+      hasFunctionalClinic: true,
+      hasEmergencyServices: false,
+      numberHealthFacilities: 2,
+      healthFacilityType: 'Primary Health Center',
+      qualifiedHealthWorkers: 5,
+      hasTrainedStaff: true,
+      hasMedicineSupply: false,
+      hasMedicalSupplies: true,
+      hasMaternalChildServices: true,
+      commonHealthIssues: ['Malaria', 'Diarrhea', 'Respiratory infections'],
+    },
+    WASH: {
+      waterSource: ['Well', 'Borehole', 'River'],
+      isWaterSufficient: false,
+      hasCleanWaterAccess: true,
+      functionalLatrinesAvailable: 5,
+      areLatrinesSufficient: true,
+      hasHandwashingFacilities: false,
+      hasOpenDefecationConcerns: false,
+    },
+    SHELTER: {
+      areSheltersSufficient: true,
+      hasSafeStructures: true,
+      shelterTypes: ['Tents', 'Temporary shelters', 'Public buildings'],
+      requiredShelterType: ['Tents', 'Emergency shelters'],
+      numberSheltersRequired: 35,
+      areOvercrowded: false,
+      provideWeatherProtection: true,
+    },
+    FOOD: {
+      isFoodSufficient: false,
+      hasRegularMealAccess: false,
+      hasInfantNutrition: false,
+      foodSource: ['Market', 'Food aid', 'Local farming'],
+      availableFoodDurationDays: 24,
+      additionalFoodRequiredPersons: 85,
+      additionalFoodRequiredHouseholds: 17,
+    },
+    SECURITY: {
+      isSafeFromViolence: false,
+      gbvCasesReported: false,
+      hasSecurityPresence: true,
+      hasProtectionReportingMechanism: true,
+      vulnerableGroupsHaveAccess: true,
+      hasLighting: true,
+    },
+  }
+
   const sampleAssessments = [
     {
       rapidAssessmentType: 'HEALTH',
@@ -651,79 +733,39 @@ async function main() {
 
   for (let seedIdx = 0; seedIdx < sampleAssessments.length; seedIdx++) {
     const assessment = sampleAssessments[seedIdx]
-    const createdAssessment = await prisma.rapidAssessment.create({
-      data: assessment as any
-    })
+    const assessmentType = assessment.rapidAssessmentType as RapidAssessmentType
 
-    // Create corresponding assessment detail records with deterministic seed values based on index
-    if (assessment.rapidAssessmentType === 'HEALTH') {
-      await prisma.healthAssessment.create({
-        data: {
-          rapidAssessmentId: createdAssessment.id,
-          hasFunctionalClinic: seedIdx % 2 === 0,
-          hasEmergencyServices: seedIdx % 3 !== 0,
-          numberHealthFacilities: seedIdx + 2,
-          healthFacilityType: 'Primary Health Center',
-          qualifiedHealthWorkers: seedIdx * 3 + 5,
-          hasTrainedStaff: seedIdx % 2 === 0,
-          hasMedicineSupply: seedIdx % 3 !== 0,
-          hasMedicalSupplies: seedIdx % 2 === 0,
-          hasMaternalChildServices: seedIdx % 2 === 0,
-          commonHealthIssues: JSON.stringify(['Malaria', 'Diarrhea', 'Respiratory infections'])
-        }
-      })
-    } else if (assessment.rapidAssessmentType === 'FOOD') {
-      await prisma.foodAssessment.create({
-        data: {
-          rapidAssessmentId: createdAssessment.id,
-          isFoodSufficient: seedIdx % 3 !== 0,
-          hasRegularMealAccess: seedIdx % 2 === 0,
-          hasInfantNutrition: seedIdx % 2 === 0,
-          foodSource: JSON.stringify(['Market', 'Food aid', 'Local farming']),
-          availableFoodDurationDays: seedIdx * 7 + 3,
-          additionalFoodRequiredPersons: seedIdx * 25 + 10,
-          additionalFoodRequiredHouseholds: seedIdx * 5 + 2
-        }
-      })
-    } else if (assessment.rapidAssessmentType === 'WASH') {
-      await prisma.wASHAssessment.create({
-        data: {
-          rapidAssessmentId: createdAssessment.id,
-          waterSource: JSON.stringify(['Well', 'Borehole', 'River']),
-          isWaterSufficient: seedIdx % 2 === 0,
-          hasCleanWaterAccess: seedIdx % 3 !== 0,
-          functionalLatrinesAvailable: seedIdx * 2 + 3,
-          areLatrinesSufficient: seedIdx % 3 !== 0,
-          hasHandwashingFacilities: seedIdx % 2 === 0,
-          hasOpenDefecationConcerns: seedIdx % 3 === 0
-        }
-      })
-    } else if (assessment.rapidAssessmentType === 'SHELTER') {
-      await prisma.shelterAssessment.create({
-        data: {
-          rapidAssessmentId: createdAssessment.id,
-          areSheltersSufficient: seedIdx % 3 !== 0,
-          hasSafeStructures: seedIdx % 2 === 0,
-          shelterTypes: JSON.stringify(['Tents', 'Temporary shelters', 'Public buildings']),
-          requiredShelterType: JSON.stringify(['Tents', 'Emergency shelters']),
-          numberSheltersRequired: seedIdx * 10 + 15,
-          areOvercrowded: seedIdx % 3 === 1,
-          provideWeatherProtection: seedIdx % 3 !== 0
-        }
-      })
-    } else if (assessment.rapidAssessmentType === 'SECURITY') {
-      await prisma.securityAssessment.create({
-        data: {
-          rapidAssessmentId: createdAssessment.id,
-          isSafeFromViolence: seedIdx % 4 !== 0,
-          gbvCasesReported: seedIdx % 5 === 0,
-          hasSecurityPresence: seedIdx % 2 === 0,
-          hasProtectionReportingMechanism: seedIdx % 3 !== 0,
-          vulnerableGroupsHaveAccess: seedIdx % 2 === 0,
-          hasLighting: seedIdx % 2 === 0
-        }
-      })
-    }
+    // Convert the typed payload to the canonical answers map and freeze the
+    // question snapshot from the live registry (version counters come from
+    // the SystemSetting rows the registry seed just initialized).
+    const answers = toAnswers(assessmentType, sampleTypedPayloads[assessmentType] ?? {})
+    const questions = (questionsByType.get(assessmentType) ?? []) as Question[]
+    const versions: RegistryVersions | null =
+      questions.length > 0 ? await getRegistryVersions(prisma, assessmentType) : null
+    const questionSnapshot =
+      versions !== null
+        ? buildQuestionSnapshot(registryQuestions.filter((q) => q.assessmentType === assessmentType), versions)
+        : null
+
+    // Derive gap analysis + priority from the registry questions
+    const gapAnalysis = deriveGapAnalysisFromQuestions(
+      questions.filter((q) => q.category === 'GAP'),
+      answers as Record<string, unknown>
+    )
+    const derivedPriority = assessmentType === 'POPULATION' ? 'LOW' : gapAnalysis.severity
+
+    const { status, priority, ...assessmentData } = assessment as Record<string, unknown> & { status?: unknown; priority?: unknown }
+    await prisma.rapidAssessment.create({
+      data: {
+        ...(assessmentData as any),
+        priority: derivedPriority as any,
+        answers: answers as any,
+        structureVersion: versions?.structureVersion ?? null,
+        contentVersion: versions?.contentVersion ?? null,
+        questionSnapshot: questionSnapshot as any,
+        gapAnalysis: gapAnalysis as any,
+      }
+    })
   }
 
   // Create sample donor commitments for testing Story 4.3
@@ -909,67 +951,7 @@ async function main() {
   console.log('💰 Created 4 sample donor commitments for testing Story 4.3')
   console.log('🏢 Created donor organization for testing Story 5.1')
 
-  // Create Gap Field Severities - all start as MEDIUM
-  console.log('🎯 Creating gap field severities...')
-  
-  const gapFieldSeverities = [
-    // Health Assessment Fields
-    { fieldName: 'hasFunctionalClinic', assessmentType: 'HEALTH', displayName: 'Functional Clinic', description: 'Availability of functional medical clinic' },
-    { fieldName: 'hasEmergencyServices', assessmentType: 'HEALTH', displayName: 'Emergency Services', description: 'Emergency medical response capability' },
-    { fieldName: 'hasTrainedStaff', assessmentType: 'HEALTH', displayName: 'Trained Medical Staff', description: 'Availability of trained medical personnel' },
-    { fieldName: 'hasMedicineSupply', assessmentType: 'HEALTH', displayName: 'Medicine Supply', description: 'Adequate supply of essential medicines' },
-    { fieldName: 'hasMedicalSupplies', assessmentType: 'HEALTH', displayName: 'Medical Supplies', description: 'Availability of medical equipment and supplies' },
-    { fieldName: 'hasMaternalChildServices', assessmentType: 'HEALTH', displayName: 'Maternal & Child Services', description: 'Specialized maternal and child health services' },
-
-    // Food Security Assessment Fields  
-    { fieldName: 'isFoodSufficient', assessmentType: 'FOOD', displayName: 'Food Sufficiency', description: 'Adequate food supply for population needs' },
-    { fieldName: 'hasRegularMealAccess', assessmentType: 'FOOD', displayName: 'Regular Meal Access', description: 'Consistent access to regular meals' },
-    { fieldName: 'hasInfantNutrition', assessmentType: 'FOOD', displayName: 'Infant Nutrition', description: 'Specialized nutrition for infants and children' },
-
-    // WASH Assessment Fields
-    { fieldName: 'isWaterSufficient', assessmentType: 'WASH', displayName: 'Water Sufficiency', description: 'Adequate water supply for basic needs' },
-    { fieldName: 'hasCleanWaterAccess', assessmentType: 'WASH', displayName: 'Clean Water Access', description: 'Access to safe, clean drinking water' },
-    { fieldName: 'areLatrinesSufficient', assessmentType: 'WASH', displayName: 'Latrine Sufficiency', description: 'Adequate sanitation facilities' },
-    { fieldName: 'hasHandwashingFacilities', assessmentType: 'WASH', displayName: 'Handwashing Facilities', description: 'Available handwashing stations with soap' },
-    { fieldName: 'hasOpenDefecationConcerns', assessmentType: 'WASH', displayName: 'Open Defecation Concerns', description: 'Issues with open defecation practices' },
-
-    // Shelter Assessment Fields
-    { fieldName: 'areSheltersSufficient', assessmentType: 'SHELTER', displayName: 'Shelter Sufficiency', description: 'Adequate shelter capacity for displaced population' },
-    { fieldName: 'hasSafeStructures', assessmentType: 'SHELTER', displayName: 'Safe Structures', description: 'Structurally safe and secure shelter buildings' },
-    { fieldName: 'areOvercrowded', assessmentType: 'SHELTER', displayName: 'Overcrowding Issues', description: 'Overcrowding in available shelters' },
-    { fieldName: 'provideWeatherProtection', assessmentType: 'SHELTER', displayName: 'Weather Protection', description: 'Adequate protection from weather conditions' },
-
-    // Security Assessment Fields
-    { fieldName: 'isSafeFromViolence', assessmentType: 'SECURITY', displayName: 'Safety from Violence', description: 'Protection from violence and conflict' },
-    { fieldName: 'gbvCasesReported', assessmentType: 'SECURITY', displayName: 'GBV Cases Reported', description: 'Reports of gender-based violence cases' },
-    { fieldName: 'hasSecurityPresence', assessmentType: 'SECURITY', displayName: 'Security Presence', description: 'Adequate security personnel deployment' },
-    { fieldName: 'hasProtectionReportingMechanism', assessmentType: 'SECURITY', displayName: 'Protection Reporting', description: 'Mechanisms for reporting protection concerns' },
-    { fieldName: 'vulnerableGroupsHaveAccess', assessmentType: 'SECURITY', displayName: 'Vulnerable Groups Access', description: 'Priority access for vulnerable populations' },
-    { fieldName: 'hasLighting', assessmentType: 'SECURITY', displayName: 'Adequate Lighting', description: 'Sufficient lighting in high-risk areas' }
-  ] as const
-
-  for (const field of gapFieldSeverities) {
-    await prisma.gapFieldSeverity.upsert({
-      where: {
-        unique_field_assessment: {
-          fieldName: field.fieldName,
-          assessmentType: field.assessmentType
-        }
-      },
-      update: {},
-      create: {
-        fieldName: field.fieldName,
-        assessmentType: field.assessmentType,
-        severity: 'MEDIUM', // All start as MEDIUM per requirements
-        displayName: field.displayName,
-        description: field.description,
-        isActive: true,
-        createdBy: coordinatorUser.id
-      }
-    })
-  }
-
-  console.log('✅ Created gap field severities (all set to MEDIUM)')
+  console.log('✅ Question registry seeded (GapFieldSeverity table removed in DQR P1 — severities now live on Question.severity)')
 }
 
 main()

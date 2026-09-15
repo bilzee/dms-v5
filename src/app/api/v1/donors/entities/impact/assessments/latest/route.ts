@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuth } from '@/lib/auth/middleware';
 import { prisma } from '@/lib/db/client';
 import { AssessmentType } from '@prisma/client';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
 import { handleApiError } from '@/lib/api/response'
 
 export const GET = withAuth(async (request: NextRequest, context) => {
@@ -84,7 +85,17 @@ export const GET = withAuth(async (request: NextRequest, context) => {
           ...whereClause,
           rapidAssessmentType: category
         },
-        include: {
+        select: {
+          id: true,
+          rapidAssessmentType: true,
+          rapidAssessmentDate: true,
+          verificationStatus: true,
+          priority: true,
+          location: true,
+          coordinates: true,
+          createdAt: true,
+          updatedAt: true,
+          answers: true,
           assessor: {
             select: {
               id: true,
@@ -99,13 +110,7 @@ export const GET = withAuth(async (request: NextRequest, context) => {
               type: true,
               location: true
             }
-          },
-          healthAssessment: category === 'HEALTH',
-          foodAssessment: category === 'FOOD',
-          washAssessment: category === 'WASH',
-          shelterAssessment: category === 'SHELTER',
-          securityAssessment: category === 'SECURITY',
-          populationAssessment: category === 'POPULATION'
+          }
         },
         orderBy: { rapidAssessmentDate: 'desc' },
         take: limit
@@ -114,29 +119,11 @@ export const GET = withAuth(async (request: NextRequest, context) => {
       // Process assessments with summary calculations
       const processedAssessments = await Promise.all(
         assessments.map(async (assessment) => {
-          // Get type-specific assessment data
-          let typeSpecificData = {};
-          
-          switch (assessment.rapidAssessmentType) {
-            case 'HEALTH':
-              typeSpecificData = assessment.healthAssessment || {};
-              break;
-            case 'FOOD':
-              typeSpecificData = assessment.foodAssessment || {};
-              break;
-            case 'WASH':
-              typeSpecificData = assessment.washAssessment || {};
-              break;
-            case 'SHELTER':
-              typeSpecificData = assessment.shelterAssessment || {};
-              break;
-            case 'SECURITY':
-              typeSpecificData = assessment.securityAssessment || {};
-              break;
-            case 'POPULATION':
-              typeSpecificData = assessment.populationAssessment || {};
-              break;
-          }
+          // Hydrate the legacy typed payload from the canonical answers map
+          const typeSpecificData = fromAnswers(
+            assessment.rapidAssessmentType as RapidAssessmentType,
+            (assessment.answers ?? {}) as RapidAssessmentAnswers
+          );
 
           // Calculate assessment summary
           const summary = await calculateAssessmentSummary(assessment.rapidAssessmentType, typeSpecificData);

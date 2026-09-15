@@ -7,6 +7,7 @@ import {
   AssessmentTypeSchema,
   VerificationStatusSchema
 } from '@/lib/validation/entity-insights';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
 import { handleApiError } from '@/lib/api/response'
 
 interface RouteParams {
@@ -85,13 +86,7 @@ export const GET = withAuth(async (request: NextRequest, context, { params }: Ro
                     name: true,
                     type: true
                   }
-                },
-                healthAssessment: true,
-                foodAssessment: true,
-                washAssessment: true,
-                shelterAssessment: true,
-                securityAssessment: true,
-                populationAssessment: true
+                }
               },
               orderBy: { rapidAssessmentDate: 'desc' }
             }
@@ -119,41 +114,11 @@ export const GET = withAuth(async (request: NextRequest, context, { params }: Ro
     // Process assessment data including type-specific data
     const processedAssessments = await Promise.all(
       paginatedAssessments.map(async (assessment) => {
-        // Get type-specific assessment data
-        let typeSpecificData = {};
-        
-        switch (assessment.rapidAssessmentType) {
-          case 'HEALTH':
-            if (assessment.healthAssessment) {
-              typeSpecificData = assessment.healthAssessment;
-            }
-            break;
-          case 'FOOD':
-            if (assessment.foodAssessment) {
-              typeSpecificData = assessment.foodAssessment;
-            }
-            break;
-          case 'WASH':
-            if (assessment.washAssessment) {
-              typeSpecificData = assessment.washAssessment;
-            }
-            break;
-          case 'SHELTER':
-            if (assessment.shelterAssessment) {
-              typeSpecificData = assessment.shelterAssessment;
-            }
-            break;
-          case 'SECURITY':
-            if (assessment.securityAssessment) {
-              typeSpecificData = assessment.securityAssessment;
-            }
-            break;
-          case 'POPULATION':
-            if (assessment.populationAssessment) {
-              typeSpecificData = assessment.populationAssessment;
-            }
-            break;
-        }
+        // Hydrate the legacy typed payload from the canonical answers map
+        const typeSpecificData = fromAnswers(
+          assessment.rapidAssessmentType as RapidAssessmentType,
+          (assessment.answers ?? {}) as RapidAssessmentAnswers
+        );
 
         return {
           id: assessment.id,

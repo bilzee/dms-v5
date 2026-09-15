@@ -7,6 +7,7 @@ import {
   LatestAssessmentsResponseSchema,
   AssessmentTypeSchema
 } from '@/lib/validation/entity-insights';
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert';
 import { handleApiError } from '@/lib/api/response'
 
 export const GET = withAuth(async (request: NextRequest, context, nextContext) => {
@@ -84,7 +85,15 @@ export const GET = withAuth(async (request: NextRequest, context, nextContext) =
             ...whereClause,
             rapidAssessmentType: type
           },
-          include: {
+          select: {
+            id: true,
+            rapidAssessmentType: true,
+            rapidAssessmentDate: true,
+            verificationStatus: true,
+            location: true,
+            coordinates: true,
+            priority: true,
+            answers: true,
             assessor: {
               select: {
                 id: true,
@@ -98,13 +107,7 @@ export const GET = withAuth(async (request: NextRequest, context, nextContext) =
                 name: true,
                 type: true
               }
-            },
-            healthAssessment: true,
-            foodAssessment: true,
-            washAssessment: true,
-            shelterAssessment: true,
-            securityAssessment: true,
-            populationAssessment: true
+            }
           },
           orderBy: { rapidAssessmentDate: 'desc' }
         });
@@ -113,29 +116,11 @@ export const GET = withAuth(async (request: NextRequest, context, nextContext) =
           return null;
         }
 
-        // Get type-specific assessment data
-        let typeSpecificData = {};
-        
-        switch (latestAssessment.rapidAssessmentType) {
-          case 'HEALTH':
-            typeSpecificData = latestAssessment.healthAssessment || {};
-            break;
-          case 'FOOD':
-            typeSpecificData = latestAssessment.foodAssessment || {};
-            break;
-          case 'WASH':
-            typeSpecificData = latestAssessment.washAssessment || {};
-            break;
-          case 'SHELTER':
-            typeSpecificData = latestAssessment.shelterAssessment || {};
-            break;
-          case 'SECURITY':
-            typeSpecificData = latestAssessment.securityAssessment || {};
-            break;
-          case 'POPULATION':
-            typeSpecificData = latestAssessment.populationAssessment || {};
-            break;
-        }
+        // Hydrate the legacy typed payload from the canonical answers map
+        const typeSpecificData = fromAnswers(
+          type,
+          (latestAssessment.answers ?? {}) as RapidAssessmentAnswers
+        );
 
         // Calculate assessment summary and gap analysis
         const summary = await calculateAssessmentSummary(type, typeSpecificData);

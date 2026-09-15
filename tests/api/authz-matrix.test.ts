@@ -5,7 +5,6 @@ import { POST as assignEntity } from '@/app/api/v1/entity-assignments/route'
 import { POST as createCommitment } from '@/app/api/v1/commitments/route'
 import { GET as verificationQueue } from '@/app/api/v1/verification/queue/assessments/route'
 import { POST as verifyAssessmentRoute } from '@/app/api/v1/assessments/[id]/verify/route'
-import { POST as gapFieldCreate } from '@/app/api/v1/gap-field-severities/route'
 import { POST as recalculateSeverity } from '@/app/api/v1/admin/severity/recalculate/route'
 import { GET as getScoringConfig, PUT as updateScoringConfig } from '@/app/api/v1/scoring-config/route'
 import { GET as listDonors } from '@/app/api/v1/donors/route'
@@ -226,30 +225,6 @@ describe('P0 authorization matrix', () => {
         withParams({ id: 'some-id' })
       )
       expect(response.status).toBe(403)
-    })
-
-    test('POST gap-field-severities: COORDINATOR → 403, ADMIN → 201', async () => {
-      const coordinator = (await createUser({ roles: ['COORDINATOR'] })) as AuthedUser
-      const admin = (await createUser({ roles: ['ADMIN'] })) as AuthedUser
-      const body = {
-        fieldName: `authz-field-${Date.now()}`,
-        assessmentType: 'HEALTH',
-        severity: 'HIGH',
-        displayName: 'Authz Field',
-      }
-
-      const denied = await gapFieldCreate(
-        makeRequest('POST', '/api/v1/gap-field-severities', { body, token: tokenFor(coordinator) })
-      )
-      expect(denied.status).toBe(403)
-
-      const allowed = await gapFieldCreate(
-        makeRequest('POST', '/api/v1/gap-field-severities', {
-          body: { ...body, fieldName: `${body.fieldName}-admin` },
-          token: tokenFor(admin),
-        })
-      )
-      expect(allowed.status).toBe(201)
     })
 
     test('POST admin/severity/recalculate: DONOR → 403, COORDINATOR → 200', async () => {

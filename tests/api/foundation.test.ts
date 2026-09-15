@@ -111,13 +111,14 @@ describe('API suite foundation', () => {
       include: {
         entity: true,
         incident: true,
-        populationAssessment: true,
         responses: true,
       },
     })
     expect(persisted?.entityId).toBe(entity.id)
     expect(persisted?.incidentId).toBe(incident.id)
-    expect(persisted?.populationAssessment?.totalPopulation).toBe(500)
+    // Typed payloads now persist in the canonical answers map (question registry)
+    expect(persisted?.answers).toMatchObject({ totalPopulation: 500, totalHouseholds: 100 })
+    expect(persisted?.answers).toMatchObject({ numberLivesLost: 2, numberInjured: 12 })
     expect(persisted?.responses.map((r) => r.id)).toContain(response.id)
 
     const preliminaryPersisted = await testDb.preliminaryAssessment.findUnique({

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { AssessmentType } from '@prisma/client';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
 
 interface ExportRequest {
   format: 'pdf' | 'csv';
@@ -21,13 +22,16 @@ interface AssessmentForExport {
   rapidAssessmentDate: Date;
   verificationStatus: string;
   assessor?: { name: string } | null;
-  healthAssessment?: Record<string, unknown> | null;
-  foodAssessment?: Record<string, unknown> | null;
-  washAssessment?: Record<string, unknown> | null;
-  shelterAssessment?: Record<string, unknown> | null;
-  securityAssessment?: Record<string, unknown> | null;
-  populationAssessment?: Record<string, unknown> | null;
+  answers?: Record<string, unknown> | null;
   gapAnalysis?: Record<string, unknown> | null;
+}
+
+// Hydrates the legacy typed payload view from the canonical answers map
+function answersData(assessment: AssessmentForExport): Record<string, unknown> | null {
+  return fromAnswers(
+    assessment.rapidAssessmentType as RapidAssessmentType,
+    (assessment.answers ?? {}) as RapidAssessmentAnswers
+  ) as Record<string, unknown>;
 }
 
 export interface Entity {
@@ -400,7 +404,7 @@ function extractKeyMetrics(assessment: AssessmentForExport): string {
 
   switch (type) {
     case 'HEALTH':
-      data = assessment.healthAssessment;
+      data = answersData(assessment);
       if (data) {
         if (data.numberHealthFacilities) metrics.push(`Facilities: ${data.numberHealthFacilities}`);
         if (data.qualifiedHealthWorkers) metrics.push(`Staff: ${data.qualifiedHealthWorkers}`);
@@ -410,7 +414,7 @@ function extractKeyMetrics(assessment: AssessmentForExport): string {
       break;
 
     case 'FOOD':
-      data = assessment.foodAssessment;
+      data = answersData(assessment);
       if (data) {
         metrics.push(data.isFoodSufficient ? 'Food: Sufficient' : 'Food: Insufficient');
         metrics.push(data.hasRegularMealAccess ? 'Meals: Regular' : 'Meals: Irregular');
@@ -419,7 +423,7 @@ function extractKeyMetrics(assessment: AssessmentForExport): string {
       break;
 
     case 'WASH':
-      data = assessment.washAssessment;
+      data = answersData(assessment);
       if (data) {
         metrics.push(data.isWaterSufficient ? 'Water: Sufficient' : 'Water: Insufficient');
         metrics.push(data.hasCleanWaterAccess ? 'Clean Water: Yes' : 'Clean Water: No');
@@ -428,7 +432,7 @@ function extractKeyMetrics(assessment: AssessmentForExport): string {
       break;
 
     case 'SHELTER':
-      data = assessment.shelterAssessment;
+      data = answersData(assessment);
       if (data) {
         metrics.push(data.areSheltersSufficient ? 'Shelter: Sufficient' : 'Shelter: Insufficient');
         metrics.push(data.hasSafeStructures ? 'Safety: Yes' : 'Safety: No');
@@ -437,7 +441,7 @@ function extractKeyMetrics(assessment: AssessmentForExport): string {
       break;
 
     case 'SECURITY':
-      data = assessment.securityAssessment;
+      data = answersData(assessment);
       if (data) {
         metrics.push(data.isSafeFromViolence ? 'Safety: Yes' : 'Safety: No');
         metrics.push(data.hasSecurityPresence ? 'Security: Yes' : 'Security: No');
@@ -446,7 +450,7 @@ function extractKeyMetrics(assessment: AssessmentForExport): string {
       break;
 
     case 'POPULATION':
-      data = assessment.populationAssessment;
+      data = answersData(assessment);
       if (data) {
         if (data.totalPopulation) metrics.push(`Population: ${data.totalPopulation}`);
         if (data.totalHouseholds) metrics.push(`Households: ${data.totalHouseholds}`);
@@ -469,7 +473,7 @@ function extractGaps(assessment: AssessmentForExport): string {
 
   switch (type) {
     case 'HEALTH':
-      data = assessment.healthAssessment;
+      data = answersData(assessment);
       if (data) {
         if (!data.hasFunctionalClinic) gaps.push('No functional clinic');
         if (!data.hasMedicineSupply) gaps.push('No medicine supply');
@@ -478,7 +482,7 @@ function extractGaps(assessment: AssessmentForExport): string {
       break;
 
     case 'FOOD':
-      data = assessment.foodAssessment;
+      data = answersData(assessment);
       if (data) {
         if (!data.isFoodSufficient) gaps.push('Insufficient food');
         if (!data.hasRegularMealAccess) gaps.push('Irregular meal access');
@@ -487,7 +491,7 @@ function extractGaps(assessment: AssessmentForExport): string {
       break;
 
     case 'WASH':
-      data = assessment.washAssessment;
+      data = answersData(assessment);
       if (data) {
         if (!data.isWaterSufficient) gaps.push('Insufficient water');
         if (!data.hasCleanWaterAccess) gaps.push('No clean water access');
@@ -496,7 +500,7 @@ function extractGaps(assessment: AssessmentForExport): string {
       break;
 
     case 'SHELTER':
-      data = assessment.shelterAssessment;
+      data = answersData(assessment);
       if (data) {
         if (!data.areSheltersSufficient) gaps.push('Insufficient shelter');
         if (!data.hasSafeStructures) gaps.push('No safe structures');
@@ -505,7 +509,7 @@ function extractGaps(assessment: AssessmentForExport): string {
       break;
 
     case 'SECURITY':
-      data = assessment.securityAssessment;
+      data = answersData(assessment);
       if (data) {
         if (!data.isSafeFromViolence) gaps.push('Safety concerns');
         if (!data.hasSecurityPresence) gaps.push('No security presence');

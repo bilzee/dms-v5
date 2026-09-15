@@ -7,6 +7,7 @@ import {
   createEntity,
   createIncident,
   createEntityAssignment,
+  ensureQuestionRegistry,
 } from '../factories'
 import { testDb, truncateTestDb } from '../helpers/test-db'
 
@@ -48,6 +49,8 @@ describe('P0 assessment create → queue → verify cascade', () => {
 
   beforeAll(async () => {
     await truncateTestDb()
+    // The service create path requires active registry questions (answers layer)
+    await ensureQuestionRegistry()
     assessor = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
     coordinator = (await createUser({ roles: ['COORDINATOR'] })) as AuthedUser
     entity = await createEntity()
@@ -77,13 +80,20 @@ describe('P0 assessment create → queue → verify cascade', () => {
 
     const stored = await testDb.rapidAssessment.findUnique({
       where: { id: body.data.id },
-      include: { healthAssessment: true },
     })
     expect(stored).not.toBeNull()
     expect(stored!.verificationStatus).toBe('SUBMITTED')
     expect(stored!.verifiedAt).toBeNull()
-    expect(stored!.healthAssessment).not.toBeNull()
-    expect(stored!.healthAssessment!.commonHealthIssues).toContain('Cholera')
+
+    // Typed payload persisted as the canonical answers map (registry data layer)
+    const answers = (stored!.answers ?? {}) as Record<string, unknown>
+    expect(answers.commonHealthIssues).toContain('Cholera')
+    expect(answers.hasFunctionalClinic).toBe(false)
+
+    // Structure-only snapshot stamped with the registry version counters
+    expect(stored!.questionSnapshot).not.toBeNull()
+    expect(stored!.structureVersion).toBe(1)
+    expect(stored!.contentVersion).toBe(1)
 
     // Gap analysis runs on create and derives priority from its severity
     expect(stored!.gapAnalysis).not.toBeNull()

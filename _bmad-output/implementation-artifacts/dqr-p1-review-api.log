@@ -1,0 +1,322 @@
+
+> disaster-response-management-system@0.1.0 test:api
+> jest --config jest.api.config.js
+
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+PASS api tests/api/severity-and-sync.test.ts (15.641 s)
+PASS api tests/api/authz-matrix.test.ts (8.569 s)
+PASS api tests/api/security-characterization.test.ts (8.496 s)
+  ● Console
+
+    console.error
+      Update rapid assessment error: Error: Not authorized to update this assessment
+          at Function.update (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\rapid-assessment.service.ts:407:13)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\rapid-assessments\[id]\route.ts:105:26
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\security-characterization.test.ts:116:24)
+
+    [0m [90m 121 |[39m       [36mreturn[39m [33mNextResponse[39m[33m.[39mjson(response[33m,[39m { status[33m:[39m [35m200[39m })
+     [90m 122 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 123 |[39m       console[33m.[39merror([32m'Update rapid assessment error:'[39m[33m,[39m error)
+     [90m     |[39m               [31m[1m^[22m[39m
+     [90m 124 |[39m       
+     [90m 125 |[39m       [36mif[39m (error [36minstanceof[39m [33mError[39m [33m&&[39m error[33m.[39mmessage[33m.[39mincludes([32m'not found'[39m)) {
+     [90m 126 |[39m         [36mreturn[39m [33mNextResponse[39m[33m.[39mjson([0m
+
+      at error (src/app/api/v1/rapid-assessments/[id]/route.ts:123:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/security-characterization.test.ts:116:24)
+
+    console.error
+      Delete rapid assessment error: Error: Not authorized to delete this assessment
+          at Function.delete (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\rapid-assessment.service.ts:495:13)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\rapid-assessments\[id]\route.ts:177:7
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\security-characterization.test.ts:157:24)
+
+    [0m [90m 190 |[39m       )
+     [90m 191 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 192 |[39m       console[33m.[39merror([32m'Delete rapid assessment error:'[39m[33m,[39m error)
+     [90m     |[39m               [31m[1m^[22m[39m
+     [90m 193 |[39m       
+     [90m 194 |[39m       [36mif[39m (error [36minstanceof[39m [33mError[39m [33m&&[39m error[33m.[39mmessage[33m.[39mincludes([32m'not found'[39m)) {
+     [90m 195 |[39m         [36mreturn[39m [33mNextResponse[39m[33m.[39mjson([0m
+
+      at error (src/app/api/v1/rapid-assessments/[id]/route.ts:192:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/security-characterization.test.ts:157:24)
+
+PASS api tests/api/assessment-verify-cascade.test.ts (7.179 s)
+  ● Console
+
+    console.log
+      Gap analysis calculated for assessment ed0eb1b4-d14c-4fdb-b02a-b9f5084364e9 (HEALTH)
+
+      at Function.log [as triggerGapAnalysis] (src/lib/services/rapid-assessment.service.ts:599:15)
+
+    console.error
+      Assessment verification error: Error: Cannot verify assessment with status: VERIFIED
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\assessments\[id]\verify\route.ts:57:15
+          at Proxy._transactionWithCallback (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:722:18)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\assessments\[id]\verify\route.ts:39:20
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\assessment-verify-cascade.test.ts:192:22)
+
+    [0m [90m 150 |[39m
+     [90m 151 |[39m   } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 152 |[39m     console[33m.[39merror([32m'Assessment verification error:'[39m[33m,[39m error)[33m;[39m
+     [90m     |[39m             [31m[1m^[22m[39m
+     [90m 153 |[39m
+     [90m 154 |[39m     [36mif[39m (error [36minstanceof[39m z[33m.[39m[33mZodError[39m) {
+     [90m 155 |[39m       [36mreturn[39m [33mNextResponse[39m[33m.[39mjson({[0m
+
+      at error (src/app/api/v1/assessments/[id]/verify/route.ts:152:13)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/assessment-verify-cascade.test.ts:192:22)
+
+    console.error
+      Assessment verification error: Error: Assessment not found
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\assessments\[id]\verify\route.ts:52:15
+          at Proxy._transactionWithCallback (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:722:18)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\assessments\[id]\verify\route.ts:39:20
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\assessment-verify-cascade.test.ts:203:22)
+
+    [0m [90m 150 |[39m
+     [90m 151 |[39m   } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 152 |[39m     console[33m.[39merror([32m'Assessment verification error:'[39m[33m,[39m error)[33m;[39m
+     [90m     |[39m             [31m[1m^[22m[39m
+     [90m 153 |[39m
+     [90m 154 |[39m     [36mif[39m (error [36minstanceof[39m z[33m.[39m[33mZodError[39m) {
+     [90m 155 |[39m       [36mreturn[39m [33mNextResponse[39m[33m.[39mjson({[0m
+
+      at error (src/app/api/v1/assessments/[id]/verify/route.ts:152:13)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/assessment-verify-cascade.test.ts:203:22)
+
+PASS api tests/api/incidents.test.ts (6.713 s)
+  ● Console
+
+    console.error
+      Create incident from assessment error: Error: Assessment not found
+          at Function.createFromAssessment (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\incident.service.ts:46:13)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\incidents\from-assessment\route.ts:27:22
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\incidents.test.ts:250:24)
+
+    [0m [90m 47 |[39m       )
+     [90m 48 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 49 |[39m       console[33m.[39merror([32m'Create incident from assessment error:'[39m[33m,[39m error)
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 50 |[39m       
+     [90m 51 |[39m       [36mif[39m (error [36minstanceof[39m [33mError[39m) {
+     [90m 52 |[39m         [36mif[39m (error[33m.[39mmessage[33m.[39mincludes([32m'not found'[39m)) {[0m
+
+      at error (src/app/api/v1/incidents/from-assessment/route.ts:49:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/incidents.test.ts:250:24)
+
+PASS api tests/api/response-lifecycle.test.ts (6.847 s)
+  ● Console
+
+    console.log
+      🔍 Auto-approval check: {
+        entityId: '850a1296-fe31-48ec-952f-30a21f03f041',
+        entityFound: true,
+        autoApproveEnabled: false,
+        metadata: null,
+        hasConfig: false
+      }
+
+      at Function.log [as confirmDelivery] (src/lib/services/response.service.ts:530:13)
+
+    console.error
+      ❌ Confirm delivery error: Error: Only planned responses can have delivery confirmed
+          at Function.confirmDelivery (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\response.service.ts:514:13)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\responses\[id]\deliver\route.ts:52:24
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\response-lifecycle.test.ts:214:24)
+
+    [0m [90m 84 |[39m       [36mreturn[39m [33mNextResponse[39m[33m.[39mjson(responseData[33m,[39m { status[33m:[39m [35m200[39m })
+     [90m 85 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 86 |[39m       console[33m.[39merror([32m'❌ Confirm delivery error:'[39m[33m,[39m error)
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 87 |[39m       console[33m.[39merror([32m'❌ Error details:'[39m[33m,[39m {
+     [90m 88 |[39m         message[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mmessage [33m:[39m [32m'Unknown error'[39m[33m,[39m
+     [90m 89 |[39m         stack[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mstack [33m:[39m [32m'No stack'[39m[33m,[39m[0m
+
+      at error (src/app/api/v1/responses/[id]/deliver/route.ts:86:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/response-lifecycle.test.ts:214:24)
+
+    console.error
+      ❌ Error details: {
+        message: 'Only planned responses can have delivery confirmed',
+        stack: 'Error: Only planned responses can have delivery confirmed\n' +
+          '    at Function.confirmDelivery (B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\lib\\services\\response.service.ts:514:13)\n' +
+          '    at B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\app\\api\\v1\\responses\\[id]\\deliver\\route.ts:52:24\n' +
+          '    at B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\lib\\auth\\middleware.ts:63:14\n' +
+          '    at Object.<anonymous> (B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\tests\\api\\response-lifecycle.test.ts:214:24)',
+        userId: 'a03c622b-6f88-4b87-8bb4-1d17f134660c',
+        id: '5f8a9d70-ea7d-4467-9fc7-8fe15ff74e30'
+      }
+
+    [0m [90m 85 |[39m     } [36mcatch[39m (error) {
+     [90m 86 |[39m       console[33m.[39merror([32m'❌ Confirm delivery error:'[39m[33m,[39m error)
+    [31m[1m>[22m[39m[90m 87 |[39m       console[33m.[39merror([32m'❌ Error details:'[39m[33m,[39m {
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 88 |[39m         message[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mmessage [33m:[39m [32m'Unknown error'[39m[33m,[39m
+     [90m 89 |[39m         stack[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mstack [33m:[39m [32m'No stack'[39m[33m,[39m
+     [90m 90 |[39m         userId[33m:[39m context[33m.[39muserId[33m,[39m[0m
+
+      at error (src/app/api/v1/responses/[id]/deliver/route.ts:87:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/response-lifecycle.test.ts:214:24)
+
+    console.error
+      ❌ Confirm delivery error: Error: User is not assigned to this entity
+          at Function.validateEntityAssignment (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\response.service.ts:812:13)
+          at Function.getResponseById (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\response.service.ts:277:5)
+          at Function.confirmDelivery (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\response.service.ts:510:30)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\responses\[id]\deliver\route.ts:52:24
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\response-lifecycle.test.ts:249:24)
+
+    [0m [90m 84 |[39m       [36mreturn[39m [33mNextResponse[39m[33m.[39mjson(responseData[33m,[39m { status[33m:[39m [35m200[39m })
+     [90m 85 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 86 |[39m       console[33m.[39merror([32m'❌ Confirm delivery error:'[39m[33m,[39m error)
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 87 |[39m       console[33m.[39merror([32m'❌ Error details:'[39m[33m,[39m {
+     [90m 88 |[39m         message[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mmessage [33m:[39m [32m'Unknown error'[39m[33m,[39m
+     [90m 89 |[39m         stack[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mstack [33m:[39m [32m'No stack'[39m[33m,[39m[0m
+
+      at error (src/app/api/v1/responses/[id]/deliver/route.ts:86:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/response-lifecycle.test.ts:249:24)
+
+    console.error
+      ❌ Error details: {
+        message: 'User is not assigned to this entity',
+        stack: 'Error: User is not assigned to this entity\n' +
+          '    at Function.validateEntityAssignment (B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\lib\\services\\response.service.ts:812:13)\n' +
+          '    at Function.getResponseById (B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\lib\\services\\response.service.ts:277:5)\n' +
+          '    at Function.confirmDelivery (B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\lib\\services\\response.service.ts:510:30)\n' +
+          '    at B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\app\\api\\v1\\responses\\[id]\\deliver\\route.ts:52:24\n' +
+          '    at B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\src\\lib\\auth\\middleware.ts:63:14\n' +
+          '    at Object.<anonymous> (B:\\Dev\\Claude Code\\dms-v4-bmad-v6\\tests\\api\\response-lifecycle.test.ts:249:24)',
+        userId: 'c6056ba4-e900-4a9b-a47a-8993fa2344ae',
+        id: 'be305295-e2cd-429a-9992-903abf2b1c08'
+      }
+
+    [0m [90m 85 |[39m     } [36mcatch[39m (error) {
+     [90m 86 |[39m       console[33m.[39merror([32m'❌ Confirm delivery error:'[39m[33m,[39m error)
+    [31m[1m>[22m[39m[90m 87 |[39m       console[33m.[39merror([32m'❌ Error details:'[39m[33m,[39m {
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 88 |[39m         message[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mmessage [33m:[39m [32m'Unknown error'[39m[33m,[39m
+     [90m 89 |[39m         stack[33m:[39m error [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mstack [33m:[39m [32m'No stack'[39m[33m,[39m
+     [90m 90 |[39m         userId[33m:[39m context[33m.[39muserId[33m,[39m[0m
+
+      at error (src/app/api/v1/responses/[id]/deliver/route.ts:87:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/response-lifecycle.test.ts:249:24)
+
+    console.error
+      [ActionSignalService] evaluateAndGenerate error: PrismaClientValidationError: 
+      Invalid `tx.rapidAssessment.findFirst()` invocation in
+      B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\action-signal.service.ts:289:58
+      
+        286 
+        287 const verifiedAt = verifiedResponse?.updatedAt || new Date();
+        288 
+      → 289 const hasReassessment = await tx.rapidAssessment.findFirst({
+              where: {
+                entityId: "850a1296-fe31-48ec-952f-30a21f03f041",
+                incidentId: undefined,
+                rapidAssessmentType: "LOGISTICS",
+                                     ~~~~~~~~~~~
+                verificationStatus: {
+                  in: [
+                    "SUBMITTED",
+                    "VERIFIED",
+                    "AUTO_VERIFIED"
+                  ]
+                },
+                createdAt: {
+                  gte: new Date("2026-09-15T12:25:10.977Z")
+                }
+              }
+            })
+      
+      Invalid value for argument `rapidAssessmentType`. Expected AssessmentType.
+          at Nn (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\core\errorRendering\throwValidationException.ts:45:9)
+          at ei.throwValidationException [as handleRequestError] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:202:7)
+          at ei.handleRequestError [as handleAndLogRequestError] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:174:12)
+          at ei.handleAndLogRequestError [as request] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:143:12)
+          at a (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:833:24)
+          at Function.handleResponseTrigger (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\action-signal.service.ts:289:33)
+          at Function.evaluateAndGenerate (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\action-signal.service.ts:66:11)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\responses\[id]\verify\route.ts:95:7
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\response-lifecycle.test.ts:285:24) {
+        clientVersion: '6.18.0'
+      }
+
+    [0m [90m 72 |[39m       }
+     [90m 73 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 74 |[39m       console[33m.[39merror([32m'[ActionSignalService] evaluateAndGenerate error:'[39m[33m,[39m error)[33m;[39m
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 75 |[39m     }
+     [90m 76 |[39m   }
+     [90m 77 |[39m[0m
+
+      at Function.error [as evaluateAndGenerate] (src/lib/services/action-signal.service.ts:74:15)
+      at src/app/api/v1/responses/[id]/verify/route.ts:95:7
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/response-lifecycle.test.ts:285:24)
+
+PASS api tests/api/auth-routes.test.ts (6.817 s)
+  ● Console
+
+    console.error
+      Login error: Error: Account is deactivated
+          at Function.authenticate (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\service.ts:134:13)
+          at POST (B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\auth\login\route.ts:23:24)
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\auth-routes.test.ts:63:24)
+
+    [0m [90m 67 |[39m     })
+     [90m 68 |[39m   } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 69 |[39m     console[33m.[39merror([32m'Login error:'[39m[33m,[39m error)
+     [90m    |[39m             [31m[1m^[22m[39m
+     [90m 70 |[39m     [36mreturn[39m handleApiError(error)
+     [90m 71 |[39m   }
+     [90m 72 |[39m }[0m
+
+      at error (src/app/api/v1/auth/login/route.ts:69:13)
+      at Object.<anonymous> (tests/api/auth-routes.test.ts:63:24)
+
+    console.error
+      Login error: Error: Account is locked
+          at Function.authenticate (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\service.ts:138:13)
+          at POST (B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\auth\login\route.ts:23:24)
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\auth-routes.test.ts:74:24)
+
+    [0m [90m 67 |[39m     })
+     [90m 68 |[39m   } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 69 |[39m     console[33m.[39merror([32m'Login error:'[39m[33m,[39m error)
+     [90m    |[39m             [31m[1m^[22m[39m
+     [90m 70 |[39m     [36mreturn[39m handleApiError(error)
+     [90m 71 |[39m   }
+     [90m 72 |[39m }[0m
+
+      at error (src/app/api/v1/auth/login/route.ts:69:13)
+      at Object.<anonymous> (tests/api/auth-routes.test.ts:74:24)
+
+PASS api tests/api/foundation.test.ts (6.737 s)
+PASS api tests/services/scoring-config.test.ts (6.247 s)
+PASS api tests/services/auth-token.test.ts
+
+Test Suites: 10 passed, 10 total
+Tests:       109 passed, 109 total
+Snapshots:   0 total
+Time:        73.968 s, estimated 85 s
+Ran all test suites.

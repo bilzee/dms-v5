@@ -57,13 +57,12 @@ export const POST = withAuth(async (request: NextRequest, context, { params }: R
           include: {
             rapidAssessments: {
               where: { verificationStatus: 'VERIFIED' },
-              include: {
-                healthAssessment: true,
-                foodAssessment: true,
-                washAssessment: true,
-                shelterAssessment: true,
-                securityAssessment: true,
-                populationAssessment: true,
+              select: {
+                id: true,
+                rapidAssessmentType: true,
+                rapidAssessmentDate: true,
+                verificationStatus: true,
+                answers: true,
                 assessor: {
                   select: {
                     name: true,

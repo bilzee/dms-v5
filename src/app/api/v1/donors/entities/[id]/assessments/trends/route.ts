@@ -7,7 +7,13 @@ import {
   AssessmentTrendsResponseSchema,
   AssessmentTypeSchema
 } from '@/lib/validation/entity-insights';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
 import { handleApiError } from '@/lib/api/response'
+
+// Hydrates the legacy typed payload view from the canonical answers map
+function assessmentDataOf(type: AssessmentType, assessment: any): any {
+  return fromAnswers(type as RapidAssessmentType, (assessment.answers ?? {}) as RapidAssessmentAnswers);
+}
 
 interface RouteParams {
   params: { id: string }
@@ -113,13 +119,9 @@ export const GET = withAuth(async (request: NextRequest, context, { params }: Ro
               lte: endDate
             }
           },
-          include: {
-            healthAssessment: type === 'HEALTH',
-            foodAssessment: type === 'FOOD',
-            washAssessment: type === 'WASH',
-            shelterAssessment: type === 'SHELTER',
-            securityAssessment: type === 'SECURITY',
-            populationAssessment: type === 'POPULATION'
+          select: {
+            answers: true,
+            rapidAssessmentDate: true
           },
           orderBy: { rapidAssessmentDate: 'asc' }
         });
@@ -304,7 +306,7 @@ function calculateAssessmentScore(type: AssessmentType, assessment: any): number
   try {
     switch (type) {
       case 'HEALTH':
-        const health = assessment.healthAssessment;
+        const health = assessmentDataOf(type, assessment);
         if (health) {
           totalScore += health.hasFunctionalClinic ? 20 : 0;
           totalScore += health.hasEmergencyServices ? 20 : 0;
@@ -316,7 +318,7 @@ function calculateAssessmentScore(type: AssessmentType, assessment: any): number
         break;
 
       case 'FOOD':
-        const food = assessment.foodAssessment;
+        const food = assessmentDataOf(type, assessment);
         if (food) {
           totalScore += food.isFoodSufficient ? 33 : 0;
           totalScore += food.hasRegularMealAccess ? 33 : 0;
@@ -326,7 +328,7 @@ function calculateAssessmentScore(type: AssessmentType, assessment: any): number
         break;
 
       case 'WASH':
-        const wash = assessment.washAssessment;
+        const wash = assessmentDataOf(type, assessment);
         if (wash) {
           totalScore += wash.isWaterSufficient ? 25 : 0;
           totalScore += wash.hasCleanWaterAccess ? 25 : 0;
@@ -337,7 +339,7 @@ function calculateAssessmentScore(type: AssessmentType, assessment: any): number
         break;
 
       case 'SHELTER':
-        const shelter = assessment.shelterAssessment;
+        const shelter = assessmentDataOf(type, assessment);
         if (shelter) {
           totalScore += shelter.areSheltersSufficient ? 25 : 0;
           totalScore += shelter.hasSafeStructures ? 25 : 0;
@@ -348,7 +350,7 @@ function calculateAssessmentScore(type: AssessmentType, assessment: any): number
         break;
 
       case 'SECURITY':
-        const security = assessment.securityAssessment;
+        const security = assessmentDataOf(type, assessment);
         if (security) {
           totalScore += security.isSafeFromViolence ? 25 : 0;
           totalScore += security.hasSecurityPresence ? 25 : 0;
@@ -377,7 +379,7 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
   try {
     switch (type) {
       case 'HEALTH':
-        const health = assessment.healthAssessment;
+        const health = assessmentDataOf(type, assessment);
         if (health) {
           if (!health.hasFunctionalClinic) gapCount++;
           if (!health.hasMedicineSupply) gapCount++;
@@ -388,7 +390,7 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
         break;
 
       case 'FOOD':
-        const food = assessment.foodAssessment;
+        const food = assessmentDataOf(type, assessment);
         if (food) {
           if (!food.isFoodSufficient) gapCount++;
           if (!food.hasRegularMealAccess) gapCount++;
@@ -397,7 +399,7 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
         break;
 
       case 'WASH':
-        const wash = assessment.washAssessment;
+        const wash = assessmentDataOf(type, assessment);
         if (wash) {
           if (!wash.isWaterSufficient) gapCount++;
           if (!wash.hasCleanWaterAccess) gapCount++;
@@ -407,7 +409,7 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
         break;
 
       case 'SHELTER':
-        const shelter = assessment.shelterAssessment;
+        const shelter = assessmentDataOf(type, assessment);
         if (shelter) {
           if (!shelter.areSheltersSufficient) gapCount++;
           if (!shelter.hasSafeStructures) gapCount++;
@@ -417,7 +419,7 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
         break;
 
       case 'SECURITY':
-        const security = assessment.securityAssessment;
+        const security = assessmentDataOf(type, assessment);
         if (security) {
           if (!security.isSafeFromViolence) gapCount++;
           if (!security.hasSecurityPresence) gapCount++;

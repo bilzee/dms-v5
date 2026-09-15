@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, CheckCircle, AlertTriangle, Clock, FileText, MapPin } from '@/lib/icons'
 import { apiGet } from '@/lib/api'
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert'
 
 interface Assessment {
   id: string
@@ -37,6 +38,7 @@ interface Assessment {
     recommendations: string[]
   } | null
   incidentId: string
+  answers?: Record<string, unknown> | null
   healthAssessment?: {
     rapidAssessmentId: string
     hasFunctionalClinic: boolean
@@ -48,12 +50,12 @@ interface Assessment {
     hasMedicineSupply: boolean
     hasMedicalSupplies: boolean
     hasMaternalChildServices: boolean
-    commonHealthIssues: string
+    commonHealthIssues: string[]
     additionalHealthDetails: string
   }
   washAssessment?: {
     rapidAssessmentId: string
-    waterSource: string
+    waterSource: string[]
     isWaterSufficient: boolean
     hasCleanWaterAccess: boolean
     functionalLatrinesAvailable: number
@@ -67,7 +69,7 @@ interface Assessment {
     isFoodSufficient: boolean
     hasRegularMealAccess: boolean
     hasInfantNutrition: boolean
-    foodSource: string
+    foodSource: string[]
     availableFoodDurationDays: number
     additionalFoodRequiredPersons: number
     additionalFoodRequiredHouseholds: number
@@ -77,8 +79,8 @@ interface Assessment {
     rapidAssessmentId: string
     areSheltersSufficient: boolean
     hasSafeStructures: boolean
-    shelterTypes: string
-    requiredShelterType: string
+    shelterTypes: string[]
+    requiredShelterType: string[]
     numberSheltersRequired: number
     areOvercrowded: boolean
     provideWeatherProtection: boolean
@@ -121,7 +123,27 @@ export default function AssessmentDetailsPage() {
         if (!result.success) {
           throw new Error(result.error || 'Assessment not found')
         }
-        setAssessment(result.data)
+        // Hydrate the legacy typed payload view from the canonical answers map
+        const data = result.data as Assessment
+        const typedPropByType: Record<string, 'healthAssessment' | 'washAssessment' | 'foodAssessment' | 'shelterAssessment' | 'securityAssessment'> = {
+          HEALTH: 'healthAssessment',
+          WASH: 'washAssessment',
+          FOOD: 'foodAssessment',
+          SHELTER: 'shelterAssessment',
+          SECURITY: 'securityAssessment',
+        }
+        const typedProp = typedPropByType[data.rapidAssessmentType]
+        setAssessment(
+          typedProp
+            ? {
+                ...data,
+                [typedProp]: fromAnswers(
+                  data.rapidAssessmentType as RapidAssessmentType,
+                  (data.answers ?? {}) as RapidAssessmentAnswers
+                ),
+              }
+            : data
+        )
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load assessment')
       } finally {
@@ -325,10 +347,10 @@ export default function AssessmentDetailsPage() {
                 </p>
               </div>
             </div>
-            {assessment.healthAssessment.commonHealthIssues && assessment.healthAssessment.commonHealthIssues !== '[]' && (
+            {assessment.healthAssessment.commonHealthIssues && assessment.healthAssessment.commonHealthIssues.length > 0 && (
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Common Health Issues</label>
-                <p className="text-sm">{JSON.parse(assessment.healthAssessment.commonHealthIssues).join(', ')}</p>
+                <p className="text-sm">{assessment.healthAssessment.commonHealthIssues.join(', ')}</p>
               </div>
             )}
             {assessment.healthAssessment.additionalHealthDetails && (
@@ -350,7 +372,7 @@ export default function AssessmentDetailsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Water Sources</label>
-                <p className="font-semibold">{JSON.parse(assessment.washAssessment.waterSource).join(', ')}</p>
+                <p className="font-semibold">{assessment.washAssessment.waterSource.join(', ')}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Water Sufficient</label>
@@ -424,7 +446,7 @@ export default function AssessmentDetailsPage() {
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Food Sources</label>
-                <p className="font-semibold">{JSON.parse(assessment.foodAssessment.foodSource).join(', ')}</p>
+                <p className="font-semibold">{assessment.foodAssessment.foodSource.join(', ')}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Food Duration (Days)</label>
@@ -466,11 +488,11 @@ export default function AssessmentDetailsPage() {
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Current Shelter Types</label>
-                <p className="font-semibold">{JSON.parse(assessment.shelterAssessment.shelterTypes).join(', ')}</p>
+                <p className="font-semibold">{assessment.shelterAssessment.shelterTypes.join(', ')}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Required Shelter Types</label>
-                <p className="font-semibold">{JSON.parse(assessment.shelterAssessment.requiredShelterType).join(', ')}</p>
+                <p className="font-semibold">{assessment.shelterAssessment.requiredShelterType.join(', ')}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Shelters Required</label>

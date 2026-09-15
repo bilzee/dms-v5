@@ -25,37 +25,36 @@ async function testRelationships() {
       console.log(`   - ${a.rapidAssessmentType} for ${a.entity.name} → ${a.incident.type} (${a.incident.id})`);
     });
     
-    // Test 2: Get population impact for flood incident
-    const floodPopulation = await prisma.populationAssessment.findMany({
+    // Test 2: Get population impact for flood incident (answers JSON layer)
+    const floodAssessments = await prisma.rapidAssessment.findMany({
       where: {
-        rapidAssessment: {
-          incidentId: 'incident-flood-001'
-        }
+        incidentId: 'incident-flood-001',
+        rapidAssessmentType: 'POPULATION'
       },
       include: {
-        rapidAssessment: {
-          select: {
-            rapidAssessmentType: true,
-            entity: { select: { name: true } }
-          }
-        }
+        entity: { select: { name: true } }
       }
     });
     
-    const totalPopulation = floodPopulation.reduce((sum, p) => sum + (p.totalPopulation || 0), 0);
-    console.log(`🌊 Flood incident population impact: ${totalPopulation} people across ${floodPopulation.length} assessments`);
+    const totalPopulation = floodAssessments.reduce(
+      (sum, a) => sum + ((a.answers && a.answers.totalPopulation) || 0),
+      0
+    );
+    console.log(`🌊 Flood incident population impact: ${totalPopulation} people across ${floodAssessments.length} assessments`);
     
-    // Test 3: Get population impact for drought incident  
-    const droughtPopulation = await prisma.populationAssessment.findMany({
+    // Test 3: Get population impact for drought incident (answers JSON layer)
+    const droughtAssessments = await prisma.rapidAssessment.findMany({
       where: {
-        rapidAssessment: {
-          incidentId: 'incident-drought-001'
-        }
+        incidentId: 'incident-drought-001',
+        rapidAssessmentType: 'POPULATION'
       }
     });
     
-    const droughtTotal = droughtPopulation.reduce((sum, p) => sum + (p.totalPopulation || 0), 0);
-    console.log(`🌵 Drought incident population impact: ${droughtTotal} people across ${droughtPopulation.length} assessments`);
+    const droughtTotal = droughtAssessments.reduce(
+      (sum, a) => sum + ((a.answers && a.answers.totalPopulation) || 0),
+      0
+    );
+    console.log(`🌵 Drought incident population impact: ${droughtTotal} people across ${droughtAssessments.length} assessments`);
     
     console.log('✅ Relationship testing completed!');
     

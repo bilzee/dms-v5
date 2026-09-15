@@ -2,14 +2,11 @@ import { RapidAssessment, AssessmentType, Priority, SyncStatus, VerificationStat
 
 export { AssessmentType, Priority, SyncStatus, VerificationStatus }
 
-// Type for assessments with their specific data included
+// Type for assessments with their specific data included.
+// Type-specific answers now live in the canonical `answers` map on
+// RapidAssessment and are hydrated via `fromAnswers`
+// (see src/lib/questions/legacy-convert.ts).
 export interface RapidAssessmentWithData extends RapidAssessment {
-  healthAssessment?: HealthAssessment
-  populationAssessment?: PopulationAssessment
-  foodAssessment?: FoodAssessment
-  washAssessment?: WASHAssessment
-  shelterAssessment?: ShelterAssessment
-  securityAssessment?: SecurityAssessment
   assessor?: {
     id: string
     name: string

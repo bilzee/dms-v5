@@ -194,6 +194,22 @@ jest.mock('react-hook-form', () => ({
 
 // Mock Prisma
 jest.mock('@prisma/client', () => ({
+  // Prisma 6 const-object enums (string-valued, matching the generated client)
+  AssessmentType: {
+    HEALTH: 'HEALTH',
+    WASH: 'WASH',
+    SHELTER: 'SHELTER',
+    FOOD: 'FOOD',
+    SECURITY: 'SECURITY',
+    POPULATION: 'POPULATION',
+  },
+  Priority: {
+    CRITICAL: 'CRITICAL',
+    HIGH: 'HIGH',
+    MEDIUM: 'MEDIUM',
+    LOW: 'LOW',
+    UNCLASSIFIED: 'UNCLASSIFIED',
+  },
   PrismaClient: jest.fn().mockImplementation(() => ({
     $transaction: jest.fn(),
     rapidAssessment: {
@@ -204,29 +220,27 @@ jest.mock('@prisma/client', () => ({
       delete: jest.fn(),
       count: jest.fn(),
     },
-    healthAssessment: {
+    // Question registry (dynamic-question-registry data layer)
+    question: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      upsert: jest.fn(),
+      count: jest.fn(),
     },
-    populationAssessment: {
-      create: jest.fn(),
-      update: jest.fn(),
+    questionSection: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
     },
-    foodAssessment: {
+    questionAuditLog: {
       create: jest.fn(),
-      update: jest.fn(),
     },
-    washAssessment: {
-      create: jest.fn(),
-      update: jest.fn(),
-    },
-    shelterAssessment: {
-      create: jest.fn(),
-      update: jest.fn(),
-    },
-    securityAssessment: {
-      create: jest.fn(),
-      update: jest.fn(),
+    systemSetting: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
     },
   })),
 }));

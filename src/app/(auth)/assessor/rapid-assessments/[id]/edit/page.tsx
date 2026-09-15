@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ArrowLeft, AlertTriangle, CheckCircle, Save } from '@/lib/icons'
 import { apiGet, apiPut } from '@/lib/api'
-import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert'
 
 // Import assessment forms
 import { 
@@ -85,8 +85,29 @@ function EditAssessmentContent() {
             setError('Only rejected assessments can be edited.')
             return
           }
-          
-          setAssessment(assessmentData)
+
+          // Hydrate the legacy typed payload the forms read (e.g.
+          // initialData.healthAssessment) from the canonical answers map.
+          const typedPropByType: Record<string, string> = {
+            HEALTH: 'healthAssessment',
+            POPULATION: 'populationAssessment',
+            FOOD: 'foodAssessment',
+            WASH: 'washAssessment',
+            SHELTER: 'shelterAssessment',
+            SECURITY: 'securityAssessment',
+          }
+          const typedProp = typedPropByType[assessmentData.rapidAssessmentType]
+          setAssessment({
+            ...assessmentData,
+            ...(typedProp
+              ? {
+                  [typedProp]: fromAnswers(
+                    assessmentData.rapidAssessmentType as RapidAssessmentType,
+                    (assessmentData.answers ?? {}) as RapidAssessmentAnswers
+                  ),
+                }
+              : {}),
+          })
         } else {
           setError('Failed to load assessment')
         }

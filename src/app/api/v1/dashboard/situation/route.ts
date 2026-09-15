@@ -9,12 +9,14 @@ import {
   analyzeWASHGaps,
   analyzeShelterGaps,
   analyzeSecurityGaps,
+  getGapFieldSeverity,
   type HealthGapAnalysis,
   type FoodGapAnalysis,
   type WASHGapAnalysis,
   type ShelterGapAnalysis,
   type SecurityGapAnalysis
 } from '@/lib/services/gap-analysis.service';
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert';
 import { handleApiError } from '@/lib/api/response'
 
 // Rate limiting implementation
@@ -192,7 +194,7 @@ export interface HealthAssessmentData {
   hasMedicineSupply: boolean;
   hasMedicalSupplies: boolean;
   hasMaternalChildServices: boolean;
-  commonHealthIssues: string;
+  commonHealthIssues: string[];
   additionalHealthDetails?: any;
   rapidAssessmentDate: Date;
   verificationStatus: string;
@@ -204,7 +206,7 @@ export interface FoodAssessmentData {
   isFoodSufficient: boolean;
   hasRegularMealAccess: boolean;
   hasInfantNutrition: boolean;
-  foodSource: string;
+  foodSource: string[];
   availableFoodDurationDays: number;
   additionalFoodRequiredPersons: number;
   additionalFoodRequiredHouseholds: number;
@@ -216,7 +218,7 @@ export interface FoodAssessmentData {
 
 export interface WASHAssessmentData {
   rapidAssessmentId: string;
-  waterSource: string;
+  waterSource: string[];
   isWaterSufficient: boolean;
   hasCleanWaterAccess: boolean;
   functionalLatrinesAvailable: number;
@@ -233,8 +235,8 @@ export interface ShelterAssessmentData {
   rapidAssessmentId: string;
   areSheltersSufficient: boolean;
   hasSafeStructures: boolean;
-  shelterTypes: string;
-  requiredShelterType: string;
+  shelterTypes: string[];
+  requiredShelterType: string[];
   numberSheltersRequired: number;
   areOvercrowded: boolean;
   provideWeatherProtection: boolean;
@@ -493,9 +495,7 @@ async function getPopulationImpact(incidentId: string): Promise<PopulationImpact
         some: {
           incidentId: incidentId,
           verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-          populationAssessment: {
-            isNot: null
-          }
+          rapidAssessmentType: 'POPULATION',
         },
       },
       isActive: true,
@@ -508,37 +508,36 @@ async function getPopulationImpact(incidentId: string): Promise<PopulationImpact
   // Then fetch only the latest population assessment for each entity
   const latestPopulationAssessments = await Promise.all(
     entitiesWithPopulationAssessments.map(async (entity) => {
-      return prisma.populationAssessment.findFirst({
+      return prisma.rapidAssessment.findFirst({
         where: {
-          rapidAssessment: {
-            entityId: entity.id,
-            incidentId: incidentId,
-            verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-          },
+          entityId: entity.id,
+          incidentId: incidentId,
+          verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
+          rapidAssessmentType: 'POPULATION',
         },
-        include: {
-          rapidAssessment: {
-            select: {
-              id: true,
-              entityId: true,
-              rapidAssessmentDate: true,
-            },
-          },
+        select: {
+          id: true,
+          entityId: true,
+          rapidAssessmentDate: true,
+          answers: true,
         },
         orderBy: {
-          rapidAssessment: {
-            rapidAssessmentDate: 'desc',
-          },
+          rapidAssessmentDate: 'desc',
         },
       });
     })
   );
 
-  // Filter out null results and ensure we have unique assessments per entity
-  const populationData = latestPopulationAssessments.filter(
-    (assessment): assessment is NonNullable<typeof assessment> => 
-      assessment !== null
-  );
+  // Filter out null results and hydrate the legacy population payload from answers
+  const populationData = latestPopulationAssessments
+    .filter(
+      (assessment): assessment is NonNullable<typeof assessment> =>
+        assessment !== null
+    )
+    .map((assessment) => ({
+      payload: fromAnswers('POPULATION', (assessment.answers ?? {}) as RapidAssessmentAnswers),
+      rapidAssessmentDate: assessment.rapidAssessmentDate,
+    }));
 
   type PopulationAggregation = {
     totalPopulation: number;
@@ -559,23 +558,23 @@ async function getPopulationImpact(incidentId: string): Promise<PopulationImpact
 
   const populationAggregation: PopulationAggregation = populationData.reduce<PopulationAggregation>(
     (acc, assessment) => ({
-      totalPopulation: acc.totalPopulation + (assessment.totalPopulation || 0),
-      totalHouseholds: acc.totalHouseholds + (assessment.totalHouseholds || 0),
-      populationMale: acc.populationMale + (assessment.populationMale || 0),
-      populationFemale: acc.populationFemale + (assessment.populationFemale || 0),
-      under5: acc.under5 + (assessment.populationUnder5 || 0),
-      elderly: acc.elderly + (assessment.elderlyPersons || 0),
-      pwd: acc.pwd + (assessment.personWithDisability || 0),
-      pregnantWomen: acc.pregnantWomen + (assessment.pregnantWomen || 0),
-      lactatingMothers: acc.lactatingMothers + (assessment.lactatingMothers || 0),
-      separatedChildren: acc.separatedChildren + (assessment.separatedChildren || 0),
-      populationLivesLost: acc.populationLivesLost + (assessment.numberLivesLost || 0),
-      populationInjured: acc.populationInjured + (assessment.numberInjured || 0),
+      totalPopulation: acc.totalPopulation + Number(assessment.payload.totalPopulation || 0),
+      totalHouseholds: acc.totalHouseholds + Number(assessment.payload.totalHouseholds || 0),
+      populationMale: acc.populationMale + Number(assessment.payload.populationMale || 0),
+      populationFemale: acc.populationFemale + Number(assessment.payload.populationFemale || 0),
+      under5: acc.under5 + Number(assessment.payload.populationUnder5 || 0),
+      elderly: acc.elderly + Number(assessment.payload.elderlyPersons || 0),
+      pwd: acc.pwd + Number(assessment.payload.personWithDisability || 0),
+      pregnantWomen: acc.pregnantWomen + Number(assessment.payload.pregnantWomen || 0),
+      lactatingMothers: acc.lactatingMothers + Number(assessment.payload.lactatingMothers || 0),
+      separatedChildren: acc.separatedChildren + Number(assessment.payload.separatedChildren || 0),
+      populationLivesLost: acc.populationLivesLost + Number(assessment.payload.numberLivesLost || 0),
+      populationInjured: acc.populationInjured + Number(assessment.payload.numberInjured || 0),
       populationCount: acc.populationCount + 1,
-      latestDate: acc.latestDate && assessment.rapidAssessment?.rapidAssessmentDate ? 
-        (new Date(assessment.rapidAssessment.rapidAssessmentDate) > new Date(acc.latestDate) ? 
-          assessment.rapidAssessment.rapidAssessmentDate.toISOString() : acc.latestDate) : 
-        (assessment.rapidAssessment?.rapidAssessmentDate?.toISOString() || acc.latestDate),
+      latestDate: acc.latestDate && assessment.rapidAssessmentDate ? 
+        (new Date(assessment.rapidAssessmentDate) > new Date(acc.latestDate) ? 
+          assessment.rapidAssessmentDate.toISOString() : acc.latestDate) : 
+        (assessment.rapidAssessmentDate?.toISOString() || acc.latestDate),
     }),
     {
       totalPopulation: 0,
@@ -1008,61 +1007,75 @@ async function getAggregatedAssessments(incidentId: string): Promise<AggregatedA
   };
 }
 
-// Individual assessment fetchers
-async function getLatestHealthAssessment(entityId: string, incidentId?: string): Promise<(HealthAssessmentData & { gapAnalysis: HealthGapAnalysis }) | null> {
-  const assessment = await prisma.healthAssessment.findFirst({
+// Individual assessment fetchers — all types now live on RapidAssessment.answers,
+// hydrated back to the legacy typed shape via the registry converter.
+interface LatestTypedAssessment {
+  id: string;
+  rapidAssessmentDate: Date;
+  verificationStatus: string;
+  assessorName: string | null;
+  assessorNameFallback: string | null;
+  answers: RapidAssessmentAnswers;
+  gapAnalysis: unknown;
+}
+
+async function findLatestTypedAssessment(
+  entityId: string,
+  incidentId: string | undefined,
+  assessmentType: 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY' | 'POPULATION'
+): Promise<LatestTypedAssessment | null> {
+  const assessment = await prisma.rapidAssessment.findFirst({
     where: {
-      rapidAssessment: {
-        entityId: entityId,
-        incidentId: incidentId,
-        verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-      },
+      entityId,
+      incidentId,
+      rapidAssessmentType: assessmentType,
+      verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
     },
-    include: {
-      rapidAssessment: {
+    select: {
+      id: true,
+      answers: true,
+      gapAnalysis: true,
+      rapidAssessmentDate: true,
+      verificationStatus: true,
+      assessorName: true,
+      assessor: {
         select: {
-          id: true,
-          rapidAssessmentDate: true,
-          verificationStatus: true,
-          assessorName: true,
-          gapAnalysis: true,
-          priority: true,
-          assessor: {
-            select: {
-              name: true,
-            },
-          },
+          name: true,
         },
       },
     },
     orderBy: {
-      rapidAssessment: {
-        rapidAssessmentDate: 'desc',
-      },
+      rapidAssessmentDate: 'desc',
     },
   });
 
   if (!assessment) return null;
 
-  const data = {
-    rapidAssessmentId: assessment.rapidAssessmentId,
-    hasFunctionalClinic: assessment.hasFunctionalClinic,
-    hasEmergencyServices: assessment.hasEmergencyServices,
-    numberHealthFacilities: assessment.numberHealthFacilities,
-    healthFacilityType: assessment.healthFacilityType,
-    qualifiedHealthWorkers: assessment.qualifiedHealthWorkers,
-    hasTrainedStaff: assessment.hasTrainedStaff,
-    hasMedicineSupply: assessment.hasMedicineSupply,
-    hasMedicalSupplies: assessment.hasMedicalSupplies,
-    hasMaternalChildServices: assessment.hasMaternalChildServices,
-    commonHealthIssues: assessment.commonHealthIssues,
-    additionalHealthDetails: assessment.additionalHealthDetails,
-    rapidAssessmentDate: assessment.rapidAssessment.rapidAssessmentDate,
-    verificationStatus: assessment.rapidAssessment.verificationStatus,
-    assessorName: assessment.rapidAssessment.assessorName || assessment.rapidAssessment.assessor?.name || 'Unknown',
+  return {
+    id: assessment.id,
+    rapidAssessmentDate: assessment.rapidAssessmentDate,
+    verificationStatus: assessment.verificationStatus,
+    assessorName: assessment.assessorName,
+    assessorNameFallback: assessment.assessor?.name ?? null,
+    answers: (assessment.answers ?? {}) as RapidAssessmentAnswers,
+    gapAnalysis: assessment.gapAnalysis,
+  };
+}
+
+async function getLatestHealthAssessment(entityId: string, incidentId?: string): Promise<(HealthAssessmentData & { gapAnalysis: HealthGapAnalysis }) | null> {
+  const assessment = await findLatestTypedAssessment(entityId, incidentId, 'HEALTH');
+  if (!assessment) return null;
+
+  const payload = fromAnswers('HEALTH', assessment.answers) as unknown as HealthAssessmentData;
+  const data: HealthAssessmentData = {
+    ...payload,
+    rapidAssessmentId: assessment.id,
+    rapidAssessmentDate: assessment.rapidAssessmentDate,
+    verificationStatus: assessment.verificationStatus,
+    assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.rapidAssessment.gapAnalysis as unknown as HealthGapAnalysis;
+  const storedGapAnalysis = assessment.gapAnalysis as unknown as HealthGapAnalysis;
   const gapAnalysis = storedGapAnalysis ?? await analyzeHealthGaps(data);
 
   return {
@@ -1072,56 +1085,19 @@ async function getLatestHealthAssessment(entityId: string, incidentId?: string):
 }
 
 async function getLatestFoodAssessment(entityId: string, incidentId?: string): Promise<(FoodAssessmentData & { gapAnalysis: FoodGapAnalysis }) | null> {
-  const assessment = await prisma.foodAssessment.findFirst({
-    where: {
-      rapidAssessment: {
-        entityId: entityId,
-        incidentId: incidentId,
-        verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-      },
-    },
-    include: {
-      rapidAssessment: {
-        select: {
-          id: true,
-          rapidAssessmentDate: true,
-          verificationStatus: true,
-          assessorName: true,
-          gapAnalysis: true,
-          priority: true,
-          assessor: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: {
-      rapidAssessment: {
-        rapidAssessmentDate: 'desc',
-      },
-    },
-  });
-
+  const assessment = await findLatestTypedAssessment(entityId, incidentId, 'FOOD');
   if (!assessment) return null;
 
-  const data = {
-    rapidAssessmentId: assessment.rapidAssessmentId,
-    isFoodSufficient: assessment.isFoodSufficient,
-    hasRegularMealAccess: assessment.hasRegularMealAccess,
-    hasInfantNutrition: assessment.hasInfantNutrition,
-    foodSource: assessment.foodSource,
-    availableFoodDurationDays: assessment.availableFoodDurationDays,
-    additionalFoodRequiredPersons: assessment.additionalFoodRequiredPersons,
-    additionalFoodRequiredHouseholds: assessment.additionalFoodRequiredHouseholds,
-    additionalFoodDetails: assessment.additionalFoodDetails,
-    rapidAssessmentDate: assessment.rapidAssessment.rapidAssessmentDate,
-    verificationStatus: assessment.rapidAssessment.verificationStatus,
-    assessorName: assessment.rapidAssessment.assessorName || assessment.rapidAssessment.assessor?.name || 'Unknown',
+  const payload = fromAnswers('FOOD', assessment.answers) as unknown as FoodAssessmentData;
+  const data: FoodAssessmentData = {
+    ...payload,
+    rapidAssessmentId: assessment.id,
+    rapidAssessmentDate: assessment.rapidAssessmentDate,
+    verificationStatus: assessment.verificationStatus,
+    assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.rapidAssessment.gapAnalysis as unknown as FoodGapAnalysis;
+  const storedGapAnalysis = assessment.gapAnalysis as unknown as FoodGapAnalysis;
   const gapAnalysis = storedGapAnalysis ?? await analyzeFoodGaps(data);
 
   return {
@@ -1131,56 +1107,19 @@ async function getLatestFoodAssessment(entityId: string, incidentId?: string): P
 }
 
 async function getLatestWASHAssessment(entityId: string, incidentId?: string): Promise<(WASHAssessmentData & { gapAnalysis: WASHGapAnalysis }) | null> {
-  const assessment = await prisma.wASHAssessment.findFirst({
-    where: {
-      rapidAssessment: {
-        entityId: entityId,
-        incidentId: incidentId,
-        verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-      },
-    },
-    include: {
-      rapidAssessment: {
-        select: {
-          id: true,
-          rapidAssessmentDate: true,
-          verificationStatus: true,
-          assessorName: true,
-          gapAnalysis: true,
-          priority: true,
-          assessor: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: {
-      rapidAssessment: {
-        rapidAssessmentDate: 'desc',
-      },
-    },
-  });
-
+  const assessment = await findLatestTypedAssessment(entityId, incidentId, 'WASH');
   if (!assessment) return null;
 
-  const data = {
-    rapidAssessmentId: assessment.rapidAssessmentId,
-    waterSource: assessment.waterSource,
-    isWaterSufficient: assessment.isWaterSufficient,
-    hasCleanWaterAccess: assessment.hasCleanWaterAccess,
-    functionalLatrinesAvailable: assessment.functionalLatrinesAvailable,
-    areLatrinesSufficient: assessment.areLatrinesSufficient,
-    hasHandwashingFacilities: assessment.hasHandwashingFacilities,
-    hasOpenDefecationConcerns: assessment.hasOpenDefecationConcerns,
-    additionalWashDetails: assessment.additionalWashDetails,
-    rapidAssessmentDate: assessment.rapidAssessment.rapidAssessmentDate,
-    verificationStatus: assessment.rapidAssessment.verificationStatus,
-    assessorName: assessment.rapidAssessment.assessorName || assessment.rapidAssessment.assessor?.name || 'Unknown',
+  const payload = fromAnswers('WASH', assessment.answers) as unknown as WASHAssessmentData;
+  const data: WASHAssessmentData = {
+    ...payload,
+    rapidAssessmentId: assessment.id,
+    rapidAssessmentDate: assessment.rapidAssessmentDate,
+    verificationStatus: assessment.verificationStatus,
+    assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.rapidAssessment.gapAnalysis as unknown as WASHGapAnalysis;
+  const storedGapAnalysis = assessment.gapAnalysis as unknown as WASHGapAnalysis;
   const gapAnalysis = storedGapAnalysis ?? await analyzeWASHGaps(data);
 
   return {
@@ -1190,56 +1129,19 @@ async function getLatestWASHAssessment(entityId: string, incidentId?: string): P
 }
 
 async function getLatestShelterAssessment(entityId: string, incidentId?: string): Promise<(ShelterAssessmentData & { gapAnalysis: ShelterGapAnalysis }) | null> {
-  const assessment = await prisma.shelterAssessment.findFirst({
-    where: {
-      rapidAssessment: {
-        entityId: entityId,
-        incidentId: incidentId,
-        verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-      },
-    },
-    include: {
-      rapidAssessment: {
-        select: {
-          id: true,
-          rapidAssessmentDate: true,
-          verificationStatus: true,
-          assessorName: true,
-          gapAnalysis: true,
-          priority: true,
-          assessor: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: {
-      rapidAssessment: {
-        rapidAssessmentDate: 'desc',
-      },
-    },
-  });
-
+  const assessment = await findLatestTypedAssessment(entityId, incidentId, 'SHELTER');
   if (!assessment) return null;
 
-  const data = {
-    rapidAssessmentId: assessment.rapidAssessmentId,
-    areSheltersSufficient: assessment.areSheltersSufficient,
-    hasSafeStructures: assessment.hasSafeStructures,
-    shelterTypes: assessment.shelterTypes,
-    requiredShelterType: assessment.requiredShelterType,
-    numberSheltersRequired: assessment.numberSheltersRequired,
-    areOvercrowded: assessment.areOvercrowded,
-    provideWeatherProtection: assessment.provideWeatherProtection,
-    additionalShelterDetails: assessment.additionalShelterDetails,
-    rapidAssessmentDate: assessment.rapidAssessment.rapidAssessmentDate,
-    verificationStatus: assessment.rapidAssessment.verificationStatus,
-    assessorName: assessment.rapidAssessment.assessorName || assessment.rapidAssessment.assessor?.name || 'Unknown',
+  const payload = fromAnswers('SHELTER', assessment.answers) as unknown as ShelterAssessmentData;
+  const data: ShelterAssessmentData = {
+    ...payload,
+    rapidAssessmentId: assessment.id,
+    rapidAssessmentDate: assessment.rapidAssessmentDate,
+    verificationStatus: assessment.verificationStatus,
+    assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.rapidAssessment.gapAnalysis as unknown as ShelterGapAnalysis;
+  const storedGapAnalysis = assessment.gapAnalysis as unknown as ShelterGapAnalysis;
   const gapAnalysis = storedGapAnalysis ?? await analyzeShelterGaps(data);
 
   return {
@@ -1249,55 +1151,19 @@ async function getLatestShelterAssessment(entityId: string, incidentId?: string)
 }
 
 async function getLatestSecurityAssessment(entityId: string, incidentId?: string): Promise<(SecurityAssessmentData & { gapAnalysis: SecurityGapAnalysis }) | null> {
-  const assessment = await prisma.securityAssessment.findFirst({
-    where: {
-      rapidAssessment: {
-        entityId: entityId,
-        incidentId: incidentId,
-        verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-      },
-    },
-    include: {
-      rapidAssessment: {
-        select: {
-          id: true,
-          rapidAssessmentDate: true,
-          verificationStatus: true,
-          assessorName: true,
-          gapAnalysis: true,
-          priority: true,
-          assessor: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: {
-      rapidAssessment: {
-        rapidAssessmentDate: 'desc',
-      },
-    },
-  });
-
+  const assessment = await findLatestTypedAssessment(entityId, incidentId, 'SECURITY');
   if (!assessment) return null;
 
-  const data = {
-    rapidAssessmentId: assessment.rapidAssessmentId,
-    isSafeFromViolence: assessment.isSafeFromViolence,
-    gbvCasesReported: assessment.gbvCasesReported,
-    hasSecurityPresence: assessment.hasSecurityPresence,
-    hasProtectionReportingMechanism: assessment.hasProtectionReportingMechanism,
-    vulnerableGroupsHaveAccess: assessment.vulnerableGroupsHaveAccess,
-    hasLighting: assessment.hasLighting,
-    additionalSecurityDetails: assessment.additionalSecurityDetails,
-    rapidAssessmentDate: assessment.rapidAssessment.rapidAssessmentDate,
-    verificationStatus: assessment.rapidAssessment.verificationStatus,
-    assessorName: assessment.rapidAssessment.assessorName || assessment.rapidAssessment.assessor?.name || 'Unknown',
+  const payload = fromAnswers('SECURITY', assessment.answers) as unknown as SecurityAssessmentData;
+  const data: SecurityAssessmentData = {
+    ...payload,
+    rapidAssessmentId: assessment.id,
+    rapidAssessmentDate: assessment.rapidAssessmentDate,
+    verificationStatus: assessment.verificationStatus,
+    assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.rapidAssessment.gapAnalysis as unknown as SecurityGapAnalysis;
+  const storedGapAnalysis = assessment.gapAnalysis as unknown as SecurityGapAnalysis;
   const gapAnalysis = storedGapAnalysis ?? await analyzeSecurityGaps(data);
 
   return {
@@ -1307,56 +1173,17 @@ async function getLatestSecurityAssessment(entityId: string, incidentId?: string
 }
 
 async function getLatestPopulationAssessment(entityId: string, incidentId?: string): Promise<PopulationAssessmentData | null> {
-  const assessment = await prisma.populationAssessment.findFirst({
-    where: {
-      rapidAssessment: {
-        entityId: entityId,
-        incidentId: incidentId,
-        verificationStatus: { in: ['VERIFIED', 'AUTO_VERIFIED'] },
-      },
-   },
-    include: {
-      rapidAssessment: {
-        select: {
-          id: true,
-          rapidAssessmentDate: true,
-          verificationStatus: true,
-          assessorName: true,
-          assessor: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: {
-      rapidAssessment: {
-        rapidAssessmentDate: 'desc',
-      },
-    },
-  });
-
+  const assessment = await findLatestTypedAssessment(entityId, incidentId, 'POPULATION');
   if (!assessment) return null;
 
+  const payload = fromAnswers('POPULATION', assessment.answers) as unknown as PopulationAssessmentData;
+
   return {
-    rapidAssessmentId: assessment.rapidAssessmentId,
-    totalHouseholds: assessment.totalHouseholds,
-    totalPopulation: assessment.totalPopulation,
-    populationMale: assessment.populationMale,
-    populationFemale: assessment.populationFemale,
-    populationUnder5: assessment.populationUnder5,
-    pregnantWomen: assessment.pregnantWomen,
-    lactatingMothers: assessment.lactatingMothers,
-    personWithDisability: assessment.personWithDisability,
-    elderlyPersons: assessment.elderlyPersons,
-    separatedChildren: assessment.separatedChildren,
-    numberLivesLost: assessment.numberLivesLost,
-    numberInjured: assessment.numberInjured,
-    additionalPopulationDetails: assessment.additionalPopulationDetails,
-    rapidAssessmentDate: assessment.rapidAssessment.rapidAssessmentDate,
-    verificationStatus: assessment.rapidAssessment.verificationStatus,
-    assessorName: assessment.rapidAssessment.assessorName || assessment.rapidAssessment.assessor?.name || 'Unknown',
+    ...payload,
+    rapidAssessmentId: assessment.id,
+    rapidAssessmentDate: assessment.rapidAssessmentDate,
+    verificationStatus: assessment.verificationStatus,
+    assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 }
 
@@ -1449,26 +1276,15 @@ async function calculateFieldLevelGaps(assessments: any[], gapIndicators: Array<
 }
 
 /**
- * Get field severity from Gap Field Severity Management database
- * Uses the same service that provides individual field severity for entity assessments
- * This ensures consistency between individual entity and "All Entities" views
+ * Get field severity from the Dynamic Question Registry (Question.severity).
+ * This ensures consistency between individual entity and "All Entities" views.
  */
 async function getFieldSeverityFromDatabase(fieldName: string, assessmentType: 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY'): Promise<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'> {
   try {
-    // Use the gap field severity service for database-driven configuration
-    const { gapFieldSeverityService } = await import('@/lib/services/gap-field-severity.service');
-    
-    // Convert string literal to AssessmentType enum properly
-    const assessmentTypeEnum: AssessmentType = assessmentType as AssessmentType;
-    
-    // Get the configured severity from database for this field
-    // Note: calculateFieldSeverity has parameters in this order: assessmentType, fieldName
-    const severity = await gapFieldSeverityService.calculateFieldSeverity(assessmentTypeEnum, fieldName);
-    
-    return severity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+    return await getGapFieldSeverity(assessmentType as AssessmentType, fieldName);
   } catch (error) {
     console.warn(`Error getting field severity for ${fieldName} in ${assessmentType}:`, error);
-    // Fallback to MEDIUM if service unavailable
+    // Fallback to MEDIUM if lookup unavailable
     return 'MEDIUM';
   }
 }

@@ -49,6 +49,9 @@
     "test:baseline:e2e": "playwright test --config playwright.baseline.config.ts",
     "test:baseline:all": "npm run test:unit && npm run test:api && npm run test:baseline:e2e"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1055.0",
     "@aws-sdk/s3-request-presigner": "^3.1055.0",
@@ -148,6 +151,7 @@
     "node-mocks-http": "^1.17.2",
     "supertest": "^7.1.4",
     "ts-jest": "^29.1.1",
+    "tsx": "^4.19.2",
     "wait-on": "^8.0.1"
   }
 }

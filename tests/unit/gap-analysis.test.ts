@@ -1,56 +1,50 @@
 import {
+  analyzeGaps,
   analyzeHealthGaps,
   analyzeFoodGaps,
   analyzeWASHGaps,
   analyzeShelterGaps,
   analyzeSecurityGaps,
+  derivePriorityFromGaps,
+  clearGapQuestionCache,
 } from '@/lib/services/gap-analysis.service'
-import { gapFieldSeverityService } from '@/lib/services/gap-field-severity.service'
 
 /**
- * Unit — gap detection logic of the five sector analyzers.
- * The ONLY mocked seam is gapFieldSeverityService (DB-backed config source);
- * everything under test (field detection incl. inverted flags, hasGap,
- * recommendation mapping, severity passthrough) is real code.
+ * Unit — registry-driven gap analysis.
+ *
+ * The ONLY mocked seam is `@/lib/db/client` (the registry question source):
+ * `prisma.question.findMany` returns the catalog's real GAP questions, so the
+ * code under test — field detection incl. inverted flags, severity MAX
+ * roll-up, recommendation mapping, per-type caching, POPULATION early-return,
+ * priority derivation — all run against the real catalog definitions.
+ *
+ * tests/setup.ts globally mocks '@prisma/client' with the const-object enums
+ * (AssessmentType / Priority) the service value-imports; no DB access happens.
  */
+jest.mock('@/lib/db/client', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { QUESTION_CATALOG } = require('@/lib/questions/registry-validation')
+  const findMany = jest.fn(async (args?: { where?: { assessmentType?: string; category?: string } }) => {
+    const type = args?.where?.assessmentType
+    const category = args?.where?.category
+    return QUESTION_CATALOG.filter((entry: any) => !type || entry.assessmentType === type)
+      .flatMap((entry: any) =>
+        entry.sections.flatMap((section: any) =>
+          section.questions.map((question: any) => ({
+            questionKey: question.questionKey,
+            inverted: question.inverted ?? false,
+            severity: question.severity ?? 'LOW',
+            recommendation: question.recommendation ?? null,
+            _category: question.category,
+          }))
+        )
+      )
+      .filter((row: any) => !category || row._category === category)
+  })
+  return { prisma: { question: { findMany } } }
+})
 
-/**
- * tests/setup.ts globally mocks '@prisma/client' with ONLY PrismaClient —
- * no enums — so the value-imported AssessmentType/Priority enums in the
- * service would be undefined. Re-register the module mock here (test-file
- * registration overrides the setup-file one) with the enums the service
- * reads at runtime. No DB access happens through this seam.
- */
-jest.mock('@prisma/client', () => ({
-  AssessmentType: {
-    POPULATION: 'POPULATION',
-    HEALTH: 'HEALTH',
-    FOOD: 'FOOD',
-    WASH: 'WASH',
-    SHELTER: 'SHELTER',
-    SECURITY: 'SECURITY',
-  },
-  Priority: {
-    UNCLASSIFIED: 'UNCLASSIFIED',
-    LOW: 'LOW',
-    MEDIUM: 'MEDIUM',
-    HIGH: 'HIGH',
-    CRITICAL: 'CRITICAL',
-  },
-}))
-
-jest.mock('@/lib/services/gap-field-severity.service', () => ({
-  gapFieldSeverityService: {
-    calculateAssessmentSeverity: jest.fn(async (_type: string, fields: string[]) =>
-      fields.includes('hasFunctionalClinic')
-        ? 'CRITICAL'
-        : fields.length > 0
-          ? 'HIGH'
-          : 'LOW'
-    ),
-    calculateFieldSeverity: jest.fn(async () => 'MEDIUM'),
-  },
-}))
+import { prisma } from '@/lib/db/client'
 
 const ALL_GOOD_HEALTH = {
   hasFunctionalClinic: true,
@@ -70,13 +64,14 @@ const ALL_DIRE_HEALTH = {
   hasMaternalChildServices: false,
 }
 
-describe('unit — gap-analysis sector analyzers', () => {
-  afterEach(() => {
-    jest.clearAllMocks()
+describe('unit — gap-analysis registry analyzers', () => {
+  beforeEach(() => {
+    clearGapQuestionCache()
+    ;(prisma.question.findMany as jest.Mock).mockClear()
   })
 
   describe('analyzeHealthGaps', () => {
-    test('healthy facility → no gaps, no recommendations', async () => {
+    test('healthy facility → no gaps, no recommendations, LOW severity', async () => {
       const result = await analyzeHealthGaps(ALL_GOOD_HEALTH)
       expect(result.hasGap).toBe(false)
       expect(result.gapFields).toEqual([])
@@ -108,12 +103,34 @@ describe('unit — gap-analysis sector analyzers', () => {
       expect(result.recommendations).toHaveLength(1)
     })
 
-    test('severity is passed through from the configured mapping (CRITICAL)', async () => {
+    test('severity comes from the registry Question rows (MEDIUM for clinic gap at P1 seed)', async () => {
       const result = await analyzeHealthGaps({
         ...ALL_GOOD_HEALTH,
         hasFunctionalClinic: false,
       })
-      expect(result.severity).toBe('CRITICAL')
+      expect(result.severity).toBe('MEDIUM')
+    })
+
+    test('severity is the MAX of gapped questions, not the last', async () => {
+      // P1 seed policy is all-MEDIUM, so the MAX roll-up is proven with
+      // synthetic registry rows: HIGH (trained staff) + MEDIUM (maternal) → HIGH
+      ;(prisma.question.findMany as jest.Mock).mockImplementationOnce(async () => [
+        { questionKey: 'hasTrainedStaff', inverted: false, severity: 'HIGH', recommendation: null },
+        { questionKey: 'hasMaternalChildServices', inverted: false, severity: 'MEDIUM', recommendation: null },
+      ])
+      const result = await analyzeHealthGaps({
+        ...ALL_GOOD_HEALTH,
+        hasMaternalChildServices: false,
+        hasTrainedStaff: false,
+      })
+      expect(result.gapFields).toEqual(['hasTrainedStaff', 'hasMaternalChildServices'])
+      expect(result.severity).toBe('HIGH')
+      // Same cached rows: single MEDIUM gap → MEDIUM
+      const mediumOnly = await analyzeHealthGaps({
+        ...ALL_GOOD_HEALTH,
+        hasMaternalChildServices: false,
+      })
+      expect(mediumOnly.severity).toBe('MEDIUM')
     })
   })
 
@@ -233,9 +250,45 @@ describe('unit — gap-analysis sector analyzers', () => {
     })
   })
 
-  test('every analyzer consults the configured severity source exactly once', async () => {
-    await analyzeHealthGaps(ALL_DIRE_HEALTH)
-    expect(gapFieldSeverityService.calculateAssessmentSeverity).toHaveBeenCalledTimes(1)
-    expect(gapFieldSeverityService.calculateFieldSeverity).toHaveBeenCalledTimes(6)
+  describe('POPULATION (context-only type)', () => {
+    test('analyzes to LOW with no gaps and never queries the registry', async () => {
+      const result = await analyzeGaps('POPULATION', {
+        totalPopulation: 5000,
+        numberLivesLost: 3,
+      })
+      expect(result.hasGap).toBe(false)
+      expect(result.gapFields).toEqual([])
+      expect(result.severity).toBe('LOW')
+      expect(prisma.question.findMany).not.toHaveBeenCalled()
+    })
+
+    test('derivePriorityFromGaps always yields LOW for POPULATION', () => {
+      expect(derivePriorityFromGaps('POPULATION', { hasGap: true, gapFields: ['x'], severity: 'CRITICAL', recommendations: [] })).toBe('LOW')
+    })
+
+    test('derivePriorityFromGaps passes the gap severity through for gap types', async () => {
+      ;(prisma.question.findMany as jest.Mock).mockImplementationOnce(async () => [
+        { questionKey: 'hasFunctionalClinic', inverted: false, severity: 'CRITICAL', recommendation: null },
+      ])
+      const analysis = await analyzeHealthGaps({ ...ALL_GOOD_HEALTH, hasFunctionalClinic: false })
+      expect(analysis.severity).toBe('CRITICAL')
+      expect(derivePriorityFromGaps('HEALTH', analysis)).toBe('CRITICAL')
+    })
+  })
+
+  describe('registry query caching', () => {
+    test('GAP questions are queried once per type and cached across analyses', async () => {
+      await analyzeHealthGaps(ALL_DIRE_HEALTH)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(1)
+
+      await analyzeHealthGaps(ALL_GOOD_HEALTH)
+      await analyzeHealthGaps({ ...ALL_GOOD_HEALTH, hasMedicineSupply: false })
+      // Still one registry query (30s per-type cache)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(1)
+
+      await analyzeFoodGaps({ isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true })
+      // A different type triggers its own single query
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(2)
+    })
   })
 })

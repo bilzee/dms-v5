@@ -1,0 +1,9 @@
+
+> disaster-response-management-system@0.1.0 validate:schema
+> node scripts/validate-schema-usage.js
+
+🔍 Validating Prisma schema usage...
+
+📊 Found 29 models in schema
+✅ No schema validation errors found!
+📚 Generated docs/schema-reference.md

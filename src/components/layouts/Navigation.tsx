@@ -186,12 +186,6 @@ const getNavigationItems = (role: string | null): { roleItems: NavItem[]; utilit
             description: 'Manage automatic verification settings'
           },
           {
-            name: 'Gap Field Management',
-            href: '/coordinator/settings/gap-field-management',
-            icon: Settings,
-            description: 'Configure gap field severities'
-          },
-          {
             name: 'Severity Thresholds',
             href: '/coordinator/settings/severity-thresholds',
             icon: Settings,

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db/client'
-import { RapidAssessment, AssessmentType, Prisma, Priority } from '@prisma/client'
-import { 
+import { RapidAssessment, AssessmentType, Prisma, Priority, Question } from '@prisma/client'
+import {
   CreateRapidAssessmentInput,
   UpdateRapidAssessmentInput,
   QueryRapidAssessmentInput,
@@ -11,124 +11,104 @@ import {
   ShelterAssessmentInput,
   SecurityAssessmentInput
 } from '@/lib/validation/rapid-assessment'
-import { 
-  analyzeHealthGaps, 
-  analyzeFoodGaps, 
-  analyzeWASHGaps, 
-  analyzeShelterGaps, 
-  analyzeSecurityGaps,
-  HealthGapAnalysis,
-  FoodGapAnalysis,
-  WASHGapAnalysis,
-  ShelterGapAnalysis,
-  SecurityGapAnalysis
+import {
+  analyzeGaps,
+  derivePriorityFromGaps,
+  GapAnalysis
 } from '@/lib/services/gap-analysis.service'
+import {
+  toAnswers,
+  fromAnswers,
+  buildQuestionSnapshot,
+  RapidAssessmentType,
+  RapidAssessmentAnswers
+} from '@/lib/questions/legacy-convert'
+import { getRegistryVersions, RegistryVersions } from '@/lib/questions/registry-versions'
 
-// Type for returned assessments with their specific data
-export interface HealthAssessmentData {
-  id: string;
-  rapidAssessmentId: string;
-  hasFunctionalClinic: boolean;
-  hasEmergencyServices: boolean;
-  numberHealthFacilities: number;
-  healthFacilityType: string;
-  qualifiedHealthWorkers: number;
-  hasTrainedStaff: boolean;
-  hasMedicineSupply: boolean;
-  hasMedicalSupplies: boolean;
-  hasMaternalChildServices: boolean;
-  commonHealthIssues: string;
-  additionalHealthDetails?: unknown;
-  createdAt: Date;
-  updatedAt: Date;
+/**
+ * Rapid Assessment Service — Dynamic Question Registry edition.
+ *
+ * Legacy typed child tables are gone; answers live in `RapidAssessment.answers`
+ * (keyed by registry questionKey), with an immutable `questionSnapshot` copied
+ * from the live registry at answer time. `gapAnalysis` and `priority` are
+ * server-derived from the registry's GAP questions (priority replaces any
+ * client-supplied value; POPULATION assessments derive LOW).
+ *
+ * The legacy API payload shapes (healthData/washData/...) remain accepted:
+ * `toAnswers()` converts the validated typed payload to the answers map and
+ * `fromAnswers()` rebuilds it for edit-form hydration.
+ */
+
+// Returned assessments now carry answers/snapshot directly on the row.
+export type RapidAssessmentWithData = RapidAssessment
+
+/** Ordered registry questions for an assessment type (for snapshot building). */
+async function getRegistryQuestions(
+  assessmentType: AssessmentType,
+  tx?: Prisma.TransactionClient
+): Promise<Array<Question & { section: { sectionKey: string; title: string; description: string | null; category: string; order: number } }>> {
+  const client = tx ?? prisma
+  return client.question.findMany({
+    where: {
+      assessmentType,
+      isActive: true,
+    },
+    orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }],
+    include: {
+      section: {
+        select: {
+          sectionKey: true,
+          title: true,
+          description: true,
+          category: true,
+          order: true,
+        },
+      },
+    },
+  }) as Promise<Array<Question & { section: { sectionKey: string; title: string; description: string | null; category: string; order: number } }>>
 }
 
-export interface PopulationAssessmentData {
-  id: string;
-  rapidAssessmentId: string;
-  totalHouseholds: number;
-  totalPopulation: number;
-  populationMale: number;
-  populationFemale: number;
-  populationUnder5: number;
-  pregnantWomen: number;
-  lactatingMothers: number;
-  personWithDisability: number;
-  elderlyPersons: number;
-  separatedChildren: number;
-  numberLivesLost: number;
-  numberInjured: number;
-  additionalPopulationDetails?: string;
-  createdAt: Date;
-  updatedAt: Date;
+/** Extracts the legacy typed payload from a create input by assessment type. */
+function typedPayloadFromCreateInput(input: CreateRapidAssessmentInput): Record<string, unknown> {
+  switch (input.type) {
+    case 'HEALTH':
+      return (input as CreateRapidAssessmentInput & { healthData: HealthAssessmentInput }).healthData
+    case 'POPULATION':
+      return (input as CreateRapidAssessmentInput & { populationData: PopulationAssessmentInput }).populationData
+    case 'FOOD':
+      return (input as CreateRapidAssessmentInput & { foodData: FoodAssessmentInput }).foodData
+    case 'WASH':
+      return (input as CreateRapidAssessmentInput & { washData: WASHAssessmentInput }).washData
+    case 'SHELTER':
+      return (input as CreateRapidAssessmentInput & { shelterData: ShelterAssessmentInput }).shelterData
+    case 'SECURITY':
+      return (input as CreateRapidAssessmentInput & { securityData: SecurityAssessmentInput }).securityData
+    default:
+      throw new Error('Unsupported assessment type')
+  }
 }
 
-export interface FoodAssessmentData {
-  id: string;
-  rapidAssessmentId: string;
-  isFoodSufficient: boolean;
-  hasRegularMealAccess: boolean;
-  hasInfantNutrition: boolean;
-  foodSource: string;
-  availableFoodDurationDays: number;
-  additionalFoodRequiredPersons: number;
-  additionalFoodRequiredHouseholds: number;
-  additionalFoodDetails?: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface WASHAssessmentData {
-  id: string;
-  rapidAssessmentId: string;
-  waterSource: string;
-  isWaterSufficient: boolean;
-  hasCleanWaterAccess: boolean;
-  functionalLatrinesAvailable: number;
-  areLatrinesSufficient: boolean;
-  hasHandwashingFacilities: boolean;
-  hasOpenDefecationConcerns: boolean;
-  additionalWashDetails?: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface ShelterAssessmentData {
-  id: string;
-  rapidAssessmentId: string;
-  areSheltersSufficient: boolean;
-  hasSafeStructures: boolean;
-  shelterTypes: string;
-  requiredShelterType: string;
-  numberSheltersRequired: number;
-  areOvercrowded: boolean;
-  provideWeatherProtection: boolean;
-  additionalShelterDetails?: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface SecurityAssessmentData {
-  id: string;
-  rapidAssessmentId: string;
-  isSafeFromViolence: boolean;
-  gbvCasesReported: boolean;
-  hasSecurityPresence: boolean;
-  hasProtectionReportingMechanism: boolean;
-  vulnerableGroupsHaveAccess: boolean;
-  hasLighting: boolean;
-  additionalSecurityDetails?: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type RapidAssessmentWithData = RapidAssessment & {
-  healthAssessment?: HealthAssessmentData | null
-  populationAssessment?: PopulationAssessmentData | null
-  foodAssessment?: FoodAssessmentData | null
-  wASHAssessment?: WASHAssessmentData | null
-  shelterAssessment?: ShelterAssessmentData | null
-  securityAssessment?: SecurityAssessmentData | null
+/** Extracts the (partial) legacy typed payload from an update input, if present. */
+function typedPayloadFromUpdateInput(
+  type: AssessmentType,
+  input: UpdateRapidAssessmentInput
+): Record<string, unknown> | null {
+  switch (type) {
+    case 'HEALTH':
+      return (input.healthData as HealthAssessmentInput | undefined) ?? null
+    case 'POPULATION':
+      return (input.populationData as PopulationAssessmentInput | undefined) ?? null
+    case 'FOOD':
+      return (input.foodData as FoodAssessmentInput | undefined) ?? null
+    case 'WASH':
+      return (input.washData as WASHAssessmentInput | undefined) ?? null
+    case 'SHELTER':
+      return (input.shelterData as ShelterAssessmentInput | undefined) ?? null
+    case 'SECURITY':
+      return (input.securityData as SecurityAssessmentInput | undefined) ?? null
+    default:
+      return null
+  }
 }
 
 export class RapidAssessmentService {
@@ -136,7 +116,7 @@ export class RapidAssessmentService {
     input: CreateRapidAssessmentInput,
     createdBy: string
   ): Promise<RapidAssessmentWithData> {
-    const { type, entityId, ...baseData } = input
+    const { type, entityId } = input
 
     // Verify user is assigned to this entity
     await this.validateEntityAssignment(createdBy, entityId)
@@ -154,113 +134,46 @@ export class RapidAssessmentService {
     // Determine verification status based on entity's auto-approval setting
     const verificationStatus = entity.autoApproveEnabled ? 'AUTO_VERIFIED' : 'SUBMITTED'
 
-    // Start transaction to create both rapid assessment and type-specific assessment
-    const result = await prisma.$transaction(async (tx) => {
-      // Create base rapid assessment
-      const rapidAssessment = await tx.rapidAssessment.create({
-        data: {
-          rapidAssessmentType: type,
-          rapidAssessmentDate: input.rapidAssessmentDate,
-          assessorId: createdBy,
-          assessorName: input.assessorName,
-          entityId: input.entityId,
-          incidentId: input.incidentId,
-          location: input.location,
-          coordinates: input.coordinates,
-          priority: input.priority,
-          mediaAttachments: input.mediaAttachments || [],
-          versionNumber: 1,
-          isOfflineCreated: false,
-          syncStatus: 'SYNCED',
-          verificationStatus,
-          verifiedAt: entity.autoApproveEnabled ? new Date() : null
-        }
-      })
+    // Convert the validated legacy typed payload into the canonical answers map
+    const typedPayload = typedPayloadFromCreateInput(input)
+    const answers = toAnswers(type as RapidAssessmentType, typedPayload)
 
-      // Create type-specific assessment based on type
-      let typeSpecificAssessment = null
-      switch (type) {
-        case 'HEALTH':
-          const healthData = (input as CreateRapidAssessmentInput & { healthData: HealthAssessmentInput }).healthData
-          typeSpecificAssessment = await tx.healthAssessment.create({
-            data: {
-              rapidAssessmentId: rapidAssessment.id,
-              ...healthData,
-              commonHealthIssues: JSON.stringify(healthData.commonHealthIssues || [])
-            }
-          })
-          break
-
-        case 'POPULATION':
-          const populationData = (input as CreateRapidAssessmentInput & { populationData: PopulationAssessmentInput }).populationData
-          typeSpecificAssessment = await tx.populationAssessment.create({
-            data: {
-              rapidAssessmentId: rapidAssessment.id,
-              ...populationData
-            }
-          })
-          break
-
-        case 'FOOD':
-          const foodData = (input as CreateRapidAssessmentInput & { foodData: FoodAssessmentInput }).foodData
-          typeSpecificAssessment = await tx.foodAssessment.create({
-            data: {
-              rapidAssessmentId: rapidAssessment.id,
-              ...foodData,
-              foodSource: JSON.stringify(foodData.foodSource || [])
-            }
-          })
-          break
-
-        case 'WASH':
-          const washData = (input as CreateRapidAssessmentInput & { washData: WASHAssessmentInput }).washData
-          if (!washData) {
-            throw new Error('WASH assessment data (washData) is required but missing from input')
-          }
-          typeSpecificAssessment = await tx.wASHAssessment.create({
-            data: {
-              rapidAssessmentId: rapidAssessment.id,
-              ...washData,
-              waterSource: JSON.stringify(washData.waterSource || [])
-            }
-          })
-          break
-
-        case 'SHELTER':
-          const shelterData = (input as CreateRapidAssessmentInput & { shelterData: ShelterAssessmentInput }).shelterData
-          typeSpecificAssessment = await tx.shelterAssessment.create({
-            data: {
-              rapidAssessmentId: rapidAssessment.id,
-              ...shelterData,
-              shelterTypes: JSON.stringify(shelterData.shelterTypes || []),
-              requiredShelterType: JSON.stringify(shelterData.requiredShelterType || [])
-            }
-          })
-          break
-
-        case 'SECURITY':
-          const securityData = (input as CreateRapidAssessmentInput & { securityData: SecurityAssessmentInput }).securityData
-          typeSpecificAssessment = await tx.securityAssessment.create({
-            data: {
-              rapidAssessmentId: rapidAssessment.id,
-              ...securityData
-            }
-          })
-          break
-
-        default:
-          throw new Error(`Unsupported assessment type: ${type}`)
-      }
-
-      return { rapidAssessment, typeSpecificAssessment }
-    })
-
-    // Automatically trigger gap analysis calculation after successful creation
-    try {
-      await this.triggerGapAnalysis(result.rapidAssessment.id)
-    } catch (gapError) {
-      console.error('[RapidAssessmentService] Gap analysis failed during create; assessment will retain default priority. Manual recalculation required:', gapError)
+    // Fetch the live registry questions and freeze the per-assessment snapshot
+    const questions = await getRegistryQuestions(type)
+    if (questions.length === 0) {
+      throw new Error(`No active registry questions found for assessment type ${type}`)
     }
+    const versions = await getRegistryVersions(prisma, type as RapidAssessmentType)
+    const questionSnapshot = buildQuestionSnapshot(questions, versions)
+
+    // Derive gap analysis + priority from the registry (priority replaces client input)
+    const gapAnalysis = await analyzeGaps(type, answers)
+    const priority = derivePriorityFromGaps(type, gapAnalysis)
+
+    const rapidAssessment = await prisma.rapidAssessment.create({
+      data: {
+        rapidAssessmentType: type,
+        rapidAssessmentDate: input.rapidAssessmentDate,
+        assessorId: createdBy,
+        assessorName: input.assessorName,
+        entityId: input.entityId,
+        incidentId: input.incidentId,
+        location: input.location,
+        coordinates: input.coordinates as unknown as Prisma.InputJsonValue | undefined,
+        priority,
+        mediaAttachments: input.mediaAttachments || [],
+        versionNumber: 1,
+        isOfflineCreated: false,
+        syncStatus: 'SYNCED',
+        verificationStatus,
+        verifiedAt: entity.autoApproveEnabled ? new Date() : null,
+        answers: answers as unknown as Prisma.InputJsonValue,
+        structureVersion: versions.structureVersion,
+        contentVersion: versions.contentVersion,
+        questionSnapshot: questionSnapshot as unknown as Prisma.InputJsonValue,
+        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+      }
+    })
 
     // Recalculate incident severity bottom-up
     if (input.incidentId) {
@@ -276,31 +189,21 @@ export class RapidAssessmentService {
         trigger: entity.autoApproveEnabled ? 'assessment-verified' : 'assessment-created',
         entityId: input.entityId,
         incidentId: input.incidentId,
-        assessmentId: result.rapidAssessment.id,
+        assessmentId: rapidAssessment.id,
         assessmentType: type,
-        assessmentPriority: input.priority,
+        assessmentPriority: rapidAssessment.priority,
       });
     } catch (e) {
       console.error('[RapidAssessmentService] signal hook error:', e);
     }
 
-    // Return the combined assessment
-    return {
-      ...result.rapidAssessment,
-      [this.getTypeSpecificFieldName(result.rapidAssessment.rapidAssessmentType)]: result.typeSpecificAssessment
-    }
+    return rapidAssessment
   }
 
   static async findById(id: string): Promise<RapidAssessmentWithData | null> {
     const assessment = await prisma.rapidAssessment.findUnique({
       where: { id },
       include: {
-        healthAssessment: true,
-        populationAssessment: true,
-        foodAssessment: true,
-        washAssessment: true,
-        shelterAssessment: true,
-        securityAssessment: true,
         assessor: {
           select: {
             id: true,
@@ -328,7 +231,26 @@ export class RapidAssessmentService {
       }
     })
 
-    return assessment as unknown as RapidAssessmentWithData
+    return assessment
+  }
+
+  /**
+   * Rebuilds the legacy typed payload shape (arrays as arrays) from the stored
+   * answers map — the edit-form hydration bridge.
+   */
+  static async findTypedPayload(id: string): Promise<{ type: AssessmentType; payload: Record<string, unknown> } | null> {
+    const assessment = await prisma.rapidAssessment.findUnique({
+      where: { id },
+      select: { rapidAssessmentType: true, answers: true }
+    })
+    if (!assessment) return null
+    return {
+      type: assessment.rapidAssessmentType,
+      payload: fromAnswers(
+        assessment.rapidAssessmentType as RapidAssessmentType,
+        (assessment.answers ?? {}) as RapidAssessmentAnswers
+      ),
+    }
   }
 
   static async findByUserId(
@@ -361,12 +283,6 @@ export class RapidAssessmentService {
     const assessments = await prisma.rapidAssessment.findMany({
       where,
       include: {
-        healthAssessment: true,
-        populationAssessment: true,
-        foodAssessment: true,
-        washAssessment: true,
-        shelterAssessment: true,
-        securityAssessment: true,
         entity: {
           select: {
             id: true,
@@ -391,7 +307,7 @@ export class RapidAssessmentService {
     })
 
     return {
-      assessments: assessments as unknown as RapidAssessmentWithData[],
+      assessments,
       total,
       totalPages: Math.ceil(total / limit)
     }
@@ -428,12 +344,6 @@ export class RapidAssessmentService {
     const assessments = await prisma.rapidAssessment.findMany({
       where,
       include: {
-        healthAssessment: true,
-        populationAssessment: true,
-        foodAssessment: true,
-        washAssessment: true,
-        shelterAssessment: true,
-        securityAssessment: true,
         assessor: {
           select: {
             id: true,
@@ -465,7 +375,7 @@ export class RapidAssessmentService {
     })
 
     return {
-      assessments: assessments as unknown as RapidAssessmentWithData[],
+      assessments,
       total,
       totalPages: Math.ceil(total / limit)
     }
@@ -477,7 +387,18 @@ export class RapidAssessmentService {
     updatedBy: string
   ): Promise<RapidAssessmentWithData> {
     // First check if assessment exists and user has permission
-    const existingAssessment = await this.findById(id)
+    const existingAssessment = await prisma.rapidAssessment.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        assessorId: true,
+        rapidAssessmentType: true,
+        answers: true,
+        questionSnapshot: true,
+        structureVersion: true,
+        contentVersion: true,
+      }
+    })
     if (!existingAssessment) {
       throw new Error('Assessment not found')
     }
@@ -490,44 +411,38 @@ export class RapidAssessmentService {
 
     const assessmentType = existingAssessment.rapidAssessmentType
 
-    const typeSpecificUpdate: Record<string, any> = {}
-    if (assessmentType === 'HEALTH' && healthData) {
-      typeSpecificUpdate.healthAssessment = {
-        update: {
-          ...healthData,
-          commonHealthIssues: JSON.stringify((healthData as any).commonHealthIssues || [])
-        }
+    // Merge the (partial) typed payload into the stored answers map and
+    // re-derive snapshot + gap analysis + priority when answers changed.
+    const typedPayload = typedPayloadFromUpdateInput(assessmentType, input)
+    let answersUpdate: Prisma.InputJsonValue | undefined
+    let versionsUpdate: RegistryVersions | undefined
+    let questionSnapshotUpdate: Prisma.InputJsonValue | undefined
+    let priorityUpdate: Priority | undefined
+    let gapAnalysisUpdate: Prisma.InputJsonValue | undefined
+
+    if (typedPayload) {
+      const mergedAnswers: RapidAssessmentAnswers = {
+        ...((existingAssessment.answers ?? {}) as RapidAssessmentAnswers),
+        ...toAnswers(assessmentType as RapidAssessmentType, typedPayload),
       }
-    } else if (assessmentType === 'POPULATION' && populationData) {
-      typeSpecificUpdate.populationAssessment = { update: { ...populationData } }
-    } else if (assessmentType === 'FOOD' && foodData) {
-      typeSpecificUpdate.foodAssessment = {
-        update: {
-          ...foodData,
-          foodSource: JSON.stringify((foodData as any).foodSource || [])
-        }
+      const questions = await getRegistryQuestions(assessmentType)
+      if (questions.length === 0) {
+        throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
       }
-    } else if (assessmentType === 'WASH' && washData) {
-      typeSpecificUpdate.washAssessment = {
-        update: {
-          ...washData,
-          waterSource: JSON.stringify((washData as any).waterSource || [])
-        }
-      }
-    } else if (assessmentType === 'SHELTER' && shelterData) {
-      typeSpecificUpdate.shelterAssessment = {
-        update: {
-          ...shelterData,
-          shelterTypes: JSON.stringify((shelterData as any).shelterTypes || []),
-          requiredShelterType: JSON.stringify((shelterData as any).requiredShelterType || [])
-        }
-      }
-    } else if (assessmentType === 'SECURITY' && securityData) {
-      typeSpecificUpdate.securityAssessment = { update: { ...securityData } }
+      const versions = await getRegistryVersions(prisma, assessmentType as RapidAssessmentType)
+      const gapAnalysis = await analyzeGaps(assessmentType, mergedAnswers)
+      answersUpdate = mergedAnswers as unknown as Prisma.InputJsonValue
+      versionsUpdate = versions
+      questionSnapshotUpdate = buildQuestionSnapshot(questions, versions) as unknown as Prisma.InputJsonValue
+      priorityUpdate = derivePriorityFromGaps(assessmentType, gapAnalysis)
+      gapAnalysisUpdate = gapAnalysis as unknown as Prisma.InputJsonValue
     }
 
-    const { verificationStatus, ...safeBaseData } = baseData as any
-    const statusUpdate: Record<string, any> = {}
+    const { verificationStatus, priority, ...safeBaseData } = baseData as Record<string, unknown> & {
+      verificationStatus?: string
+      priority?: Priority
+    }
+    const statusUpdate: Record<string, unknown> = {}
     if (verificationStatus !== undefined) {
       statusUpdate.verificationStatus = verificationStatus
       if (verificationStatus === 'SUBMITTED') {
@@ -538,22 +453,19 @@ export class RapidAssessmentService {
       }
     }
 
-    // Update base rapid assessment
     const updatedAssessment = await prisma.rapidAssessment.update({
       where: { id },
       data: {
-        ...safeBaseData,
+        ...(safeBaseData as Record<string, never>),
         ...statusUpdate,
-        ...typeSpecificUpdate,
+        ...(answersUpdate !== undefined ? { answers: answersUpdate } : {}),
+        ...(versionsUpdate !== undefined
+          ? { structureVersion: versionsUpdate.structureVersion, contentVersion: versionsUpdate.contentVersion }
+          : {}),
+        ...(questionSnapshotUpdate !== undefined ? { questionSnapshot: questionSnapshotUpdate } : {}),
+        ...(priorityUpdate !== undefined ? { priority: priorityUpdate } : {}),
+        ...(gapAnalysisUpdate !== undefined ? { gapAnalysis: gapAnalysisUpdate } : {}),
         updatedAt: new Date()
-      },
-      include: {
-        healthAssessment: true,
-        populationAssessment: true,
-        foodAssessment: true,
-        washAssessment: true,
-        shelterAssessment: true,
-        securityAssessment: true
       }
     })
 
@@ -565,7 +477,7 @@ export class RapidAssessmentService {
       } catch {}
     }
 
-    return updatedAssessment as unknown as RapidAssessmentWithData
+    return updatedAssessment
   }
 
   static async delete(id: string, deletedBy: string): Promise<void> {
@@ -585,7 +497,7 @@ export class RapidAssessmentService {
 
     const incidentId = existingAssessment.incidentId
 
-    // Delete assessment (cascade will handle type-specific assessment)
+    // Delete assessment
     await prisma.rapidAssessment.delete({
       where: { id }
     })
@@ -600,7 +512,10 @@ export class RapidAssessmentService {
   }
 
   static async submit(id: string, submittedBy: string): Promise<RapidAssessmentWithData> {
-    const assessment = await this.findById(id)
+    const assessment = await prisma.rapidAssessment.findUnique({
+      where: { id },
+      select: { assessorId: true, entityId: true, incidentId: true, rapidAssessmentType: true, priority: true }
+    })
     if (!assessment) {
       throw new Error('Assessment not found')
     }
@@ -614,18 +529,10 @@ export class RapidAssessmentService {
       data: {
         verificationStatus: 'SUBMITTED',
         updatedAt: new Date()
-      },
-      include: {
-        healthAssessment: true,
-        populationAssessment: true,
-        foodAssessment: true,
-        washAssessment: true,
-        shelterAssessment: true,
-        securityAssessment: true
       }
     })
 
-    // Automatically trigger gap analysis calculation after successful submission
+    // Re-run gap analysis on submission
     await this.triggerGapAnalysis(id)
 
     try {
@@ -642,76 +549,44 @@ export class RapidAssessmentService {
       console.error('[RapidAssessmentService] signal hook error:', e);
     }
 
-    return updatedAssessment as unknown as RapidAssessmentWithData
+    return updatedAssessment
   }
 
   /**
-   * Calculate and trigger gap analysis for a submitted assessment
-   * This should be called after successful assessment submission
+   * Calculate and persist gap analysis (and the derived priority) for an
+   * assessment from its stored answers.
    */
   static async triggerGapAnalysis(assessmentId: string): Promise<void> {
     try {
-      const assessment = await this.findById(assessmentId)
+      const assessment = await prisma.rapidAssessment.findUnique({
+        where: { id: assessmentId },
+        select: { rapidAssessmentType: true, answers: true, incidentId: true }
+      })
       if (!assessment) {
         console.warn(`Assessment ${assessmentId} not found for gap analysis`)
         return
       }
 
-      // Calculate gap analysis based on assessment type and data
-      const gapAnalysisData: { gapAnalysis?: HealthGapAnalysis | FoodGapAnalysis | WASHGapAnalysis | ShelterGapAnalysis | SecurityGapAnalysis } = {}
-      let calculatedSeverity: string | null = null
-
-      switch (assessment.rapidAssessmentType) {
-        case 'HEALTH':
-          if (assessment.healthAssessment) {
-            gapAnalysisData.gapAnalysis = await analyzeHealthGaps(assessment.healthAssessment as unknown as Record<string, unknown>)
-            calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-          }
-          break
-        case 'FOOD':
-          if (assessment.foodAssessment) {
-            gapAnalysisData.gapAnalysis = await analyzeFoodGaps(assessment.foodAssessment as unknown as Record<string, unknown>)
-            calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-          }
-          break
-        case 'WASH':
-          if (assessment.wASHAssessment) {
-            gapAnalysisData.gapAnalysis = await analyzeWASHGaps(assessment.wASHAssessment as unknown as Record<string, unknown>)
-            calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-          }
-          break
-        case 'SHELTER':
-          if (assessment.shelterAssessment) {
-            gapAnalysisData.gapAnalysis = await analyzeShelterGaps(assessment.shelterAssessment as unknown as Record<string, unknown>)
-            calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-          }
-          break
-        case 'SECURITY':
-          if (assessment.securityAssessment) {
-            gapAnalysisData.gapAnalysis = await analyzeSecurityGaps(assessment.securityAssessment as unknown as Record<string, unknown>)
-            calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-          }
-          break
+      // Rows predating the answers data layer have no answers to analyze;
+      // deriving from an empty map would fabricate gaps — skip them.
+      if (assessment.answers == null) {
+        console.warn(`Assessment ${assessmentId} has no answers; skipping gap analysis`)
+        return
       }
 
-      // Update the assessment with gap analysis data AND priority based on calculated severity
-      if (Object.keys(gapAnalysisData).length > 0 && calculatedSeverity) {
-        await prisma.rapidAssessment.update({
-          where: { id: assessmentId },
-          data: {
-            gapAnalysis: gapAnalysisData.gapAnalysis as unknown as Prisma.InputJsonObject,
-            priority: calculatedSeverity as unknown as Priority // Set priority to match severity from gap analysis
-          }
-        })
-      } else if (Object.keys(gapAnalysisData).length > 0) {
-        // Fallback: update without priority change if severity calculation failed
-        await prisma.rapidAssessment.update({
-          where: { id: assessmentId },
-          data: {
-            gapAnalysis: gapAnalysisData.gapAnalysis as unknown as Prisma.InputJsonObject
-          }
-        })
-      }
+      const gapAnalysis = await analyzeGaps(
+        assessment.rapidAssessmentType,
+        (assessment.answers ?? {}) as Record<string, unknown>
+      )
+      const priority = derivePriorityFromGaps(assessment.rapidAssessmentType, gapAnalysis)
+
+      await prisma.rapidAssessment.update({
+        where: { id: assessmentId },
+        data: {
+          gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+          priority
+        }
+      })
 
       // Recalculate incident severity after gap analysis updates priority
       if (assessment.incidentId) {
@@ -730,22 +605,13 @@ export class RapidAssessmentService {
 
   /**
    * Updates all historical assessments to have correct priorities based on gap analysis severity
-   * This method should be called once to migrate existing assessments to the new priority system
    */
   static async updateAllHistoricalAssessmentPriorities(): Promise<{ updated: number; failed: number; total: number }> {
     try {
       console.log('Starting historical assessment priority update...')
 
-      // Fetch all assessments that need priority updates
       const allAssessments = await prisma.rapidAssessment.findMany({
-        include: {
-          healthAssessment: true,
-          populationAssessment: true,
-          foodAssessment: true,
-          washAssessment: true,
-          shelterAssessment: true,
-          securityAssessment: true
-        }
+        select: { id: true, rapidAssessmentType: true, answers: true }
       })
 
       console.log(`Found ${allAssessments.length} assessments to process`)
@@ -755,57 +621,25 @@ export class RapidAssessmentService {
 
       for (const assessment of allAssessments) {
         try {
-          // Calculate gap analysis based on assessment type and data
-          const gapAnalysisData: { gapAnalysis?: HealthGapAnalysis | FoodGapAnalysis | WASHGapAnalysis | ShelterGapAnalysis | SecurityGapAnalysis } = {}
-          let calculatedSeverity: string | null = null
-
-          switch (assessment.rapidAssessmentType) {
-            case 'HEALTH':
-              if (assessment.healthAssessment) {
-                gapAnalysisData.gapAnalysis = await analyzeHealthGaps(assessment.healthAssessment as unknown as Record<string, unknown>)
-                calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-              }
-              break
-            case 'FOOD':
-              if (assessment.foodAssessment) {
-                gapAnalysisData.gapAnalysis = await analyzeFoodGaps(assessment.foodAssessment as unknown as Record<string, unknown>)
-                calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-              }
-              break
-            case 'WASH':
-              if (assessment.washAssessment) {
-                gapAnalysisData.gapAnalysis = await analyzeWASHGaps(assessment.washAssessment as unknown as Record<string, unknown>)
-                calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-              }
-              break
-            case 'SHELTER':
-              if (assessment.shelterAssessment) {
-                gapAnalysisData.gapAnalysis = await analyzeShelterGaps(assessment.shelterAssessment as unknown as Record<string, unknown>)
-                calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-              }
-              break
-            case 'SECURITY':
-              if (assessment.securityAssessment) {
-                gapAnalysisData.gapAnalysis = await analyzeSecurityGaps(assessment.securityAssessment as unknown as Record<string, unknown>)
-                calculatedSeverity = gapAnalysisData.gapAnalysis.severity
-              }
-              break
+          if (assessment.answers == null) {
+            // Rows predating the answers data layer have no answers to analyze.
+            continue
           }
+          const gapAnalysis = await analyzeGaps(
+            assessment.rapidAssessmentType,
+            (assessment.answers ?? {}) as Record<string, unknown>
+          )
+          const priority = derivePriorityFromGaps(assessment.rapidAssessmentType, gapAnalysis)
 
-          // Update the assessment with gap analysis data AND priority based on calculated severity
-          if (Object.keys(gapAnalysisData).length > 0 && calculatedSeverity) {
-            await prisma.rapidAssessment.update({
-              where: { id: assessment.id },
-              data: {
-                gapAnalysis: gapAnalysisData.gapAnalysis as unknown as Prisma.InputJsonObject,
-                priority: calculatedSeverity as unknown as Priority
-              }
-            })
-            console.log(`Updated assessment ${assessment.id} (${assessment.rapidAssessmentType}) - Priority: ${calculatedSeverity}`)
-            updatedCount++
-          } else {
-            console.log(`No gap analysis data for assessment ${assessment.id} (${assessment.rapidAssessmentType})`)
-          }
+          await prisma.rapidAssessment.update({
+            where: { id: assessment.id },
+            data: {
+              gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+              priority
+            }
+          })
+          console.log(`Updated assessment ${assessment.id} (${assessment.rapidAssessmentType}) - Priority: ${priority}`)
+          updatedCount++
         } catch (error) {
           console.error(`Failed to update assessment ${assessment.id}:`, error)
           failedCount++
@@ -845,8 +679,6 @@ export class RapidAssessmentService {
     type: AssessmentType
   ): Promise<RapidAssessmentWithData | null> {
     try {
-      const typeFieldName = this.getTypeSpecificFieldName(type)
-      
       const assessment = await prisma.rapidAssessment.findFirst({
         where: {
           incidentId,
@@ -856,31 +688,17 @@ export class RapidAssessmentService {
             not: 'DRAFT'
           }
         },
-        include: {
-          [typeFieldName]: true
-        },
         orderBy: {
           rapidAssessmentDate: 'desc'
         }
       })
 
-      return assessment as unknown as RapidAssessmentWithData
+      return assessment
     } catch (error) {
       console.error('Error finding latest assessment:', error)
       throw new Error('Failed to find latest assessment')
     }
   }
-
-  private static getTypeSpecificFieldName(type: AssessmentType): string {
-    const fieldMap = {
-      'HEALTH': 'healthAssessment',
-      'POPULATION': 'populationAssessment',
-      'FOOD': 'foodAssessment',
-      'WASH': 'wASHAssessment',
-      'SHELTER': 'shelterAssessment',
-      'SECURITY': 'securityAssessment'
-    }
-
-    return fieldMap[type] || 'healthAssessment'
-  }
 }
+
+export type { GapAnalysis }

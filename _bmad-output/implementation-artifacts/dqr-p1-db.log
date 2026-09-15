@@ -1,0 +1,473 @@
+PHASE-A EXIT:
+BEGIN
+DELETE 1
+DROP INDEX
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+COMMIT
+PHASE-A EXIT:
+
+=== PHASE B: npx prisma migrate deploy (re-apply edited DQR migration) ===
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "drms_dev", schema "public" at "localhost:5435"
+
+11 migrations found in prisma/migrations
+
+Applying migration `20260915000000_dqr_question_registry`
+Error: P3018
+
+A migration failed to apply. New migrations cannot be applied before the error is recovered from. Read more about how to resolve migration issues in a production database: https://pris.ly/d/migrate-resolve
+
+Migration name: 20260915000000_dqr_question_registry
+
+Database error code: 42710
+
+Database error:
+ERROR: type "QuestionType" already exists
+
+DbError { severity: "ERROR", parsed_severity: Some(Error), code: SqlState(E42710), message: "type \"QuestionType\" already exists", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("typecmds.c"), line: Some(1167), routine: Some("DefineEnum") }
+
+
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "drms_dev", schema "public" at "localhost:5435"
+
+11 migrations found in prisma/migrations
+
+Applying migration `20260915000000_dqr_question_registry`
+Error: P3018
+
+A migration failed to apply. New migrations cannot be applied before the error is recovered from. Read more about how to resolve migration issues in a production database: https://pris.ly/d/migrate-resolve
+
+Migration name: 20260915000000_dqr_question_registry
+
+Database error code: 42704
+
+Database error:
+ERROR: constraint "food_assessments_rapidAssessmentId_fkey" of relation "food_assessments" does not exist
+
+DbError { severity: "ERROR", parsed_severity: Some(Error), code: SqlState(E42704), message: "constraint \"food_assessments_rapidAssessmentId_fkey\" of relation \"food_assessments\" does not exist", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("tablecmds.c"), line: Some(12250), routine: Some("ATExecDropConstraint") }
+
+
+BEGIN
+DELETE 1
+DROP TYPE
+NOTICE:  type "QuestionType" does not exist, skipping
+NOTICE:  type "QuestionCategory" does not exist, skipping
+DROP TYPE
+DROP TYPE
+NOTICE:  type "QuestionStatus" does not exist, skipping
+DROP INDEX
+NOTICE:  index "rapid_assessments_rapidAssessmentType_questionVersion_idx" does not exist, skipping
+NOTICE:  index "rapid_assessments_rapidAssessmentType_structureVersion_idx" does not exist, skipping
+DROP INDEX
+ALTER TABLE
+NOTICE:  column "answers" of relation "rapid_assessments" does not exist, skipping
+ALTER TABLE
+NOTICE:  column "questionSnapshot" of relation "rapid_assessments" does not exist, skipping
+NOTICE:  column "questionVersion" of relation "rapid_assessments" does not exist, skipping
+ALTER TABLE
+ALTER TABLE
+NOTICE:  column "structureVersion" of relation "rapid_assessments" does not exist, skipping
+NOTICE:  column "contentVersion" of relation "rapid_assessments" does not exist, skipping
+ALTER TABLE
+DROP TABLE
+NOTICE:  table "question_audit_logs" does not exist, skipping
+DROP TABLE
+NOTICE:  table "questions" does not exist, skipping
+NOTICE:  table "question_sections" does not exist, skipping
+DROP TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+ALTER TABLE
+COMMIT
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "drms_dev", schema "public" at "localhost:5435"
+
+11 migrations found in prisma/migrations
+
+Applying migration `20260915000000_dqr_question_registry`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260915000000_dqr_question_registry/
+    └─ migration.sql
+      
+All migrations have been successfully applied.
+PHASE-B: DEPLOY OK
+
+=== PHASE C: seed run #1 (npx prisma db seed) ===
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Running seed command `tsx prisma/seed.ts` ...
+🌱 Starting database seed...
+📝 Creating permissions...
+👥 Creating roles...
+🔗 Assigning permissions to roles...
+🏢 Creating sample entities...
+❌ Seed failed: PrismaClientKnownRequestError: 
+Invalid `prisma.entity.deleteMany()` invocation in
+B:\Dev\Claude Code\dms-v4-bmad-v6\prisma\seed.ts:213:23
+
+  210 await prisma.entityAssignment.deleteMany({})
+  211 await prisma.rapidResponse.deleteMany({})
+  212 await prisma.rapidAssessment.deleteMany({})
+→ 213 await prisma.entity.deleteMany(
+Foreign key constraint violated on the constraint: `action_signals_entity_id_fkey`
+    at ei.handleRequestError (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:228:13)
+    at ei.handleAndLogRequestError (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:174:12)
+    at ei.request (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:143:12)
+    at async a (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:833:24)
+    at async main (B:\Dev\Claude Code\dms-v4-bmad-v6\prisma\seed.ts:213:3) {
+  code: 'P2003',
+  meta: { modelName: 'Entity', constraint: 'action_signals_entity_id_fkey' },
+  clientVersion: '6.18.0'
+}
+
+An error occurred while running the seed command:
+Error: Command failed with exit code 1: tsx prisma/seed.ts
+ERROR:  update or delete on table "action_signals" violates foreign key constraint "notifications_signal_id_fkey" on table "notifications"
+DETAIL:  Key (id)=(e5beca3c-69f5-40c9-8e95-53bdc1c86e05) is still referenced from table "notifications".
+TRUNCATE TABLE
+=== retry seed run #1 after clearing unmanaged FK rows ===
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Running seed command `tsx prisma/seed.ts` ...
+🌱 Starting database seed...
+📝 Creating permissions...
+👥 Creating roles...
+🔗 Assigning permissions to roles...
+🏢 Creating sample entities...
+👤 Creating default admin user...
+👤 Creating sample coordinator user...
+👤 Creating sample multi-role user...
+👤 Creating sample responder user...
+👤 Creating sample assessor user...
+🏢 Assigning multirole user to additional entities...
+👤 Creating sample donor user (Donor-only role)...
+🏢 Creating donor record for donor user...
+🏢 Creating donor record for multi-role user...
+🚨 Creating sample incidents...
+❓ Seeding question registry...
+❓ Question registry: 55 questions (55 created, 0 updated, 0 unchanged) across 27 sections
+📋 Creating sample rapid assessments for verification testing...
+💰 Creating sample donor commitments...
+💰 Creating sample commitments using entity-1 and entity-2...
+💰 Created 4 sample donor commitments
+🎭 Creating E2E test users...
+✅ Database seed completed successfully!
+📧 Admin credentials: admin@dms.gov.ng / admin123!
+📧 Coordinator credentials: coordinator@dms.gov.ng / coordinator123!
+📧 Responder credentials: responder@dms.gov.ng / responder123!
+📧 Assessor credentials: assessor@test.com / test-password
+📧 Donor credentials: donor@test.com / donor123! (DONOR role only)
+📧 Multi-role credentials: multirole@dms.gov.ng / multirole123! (ASSESSOR, COORDINATOR, DONOR, RESPONDER)
+🎭 E2E Test Credentials:
+   📧 E2E Coordinator: coordinator@test.com / testpassword123
+   📧 E2E Assessor: assessor@test.com / testpassword123
+📋 Created 5 sample assessments for verification workflow testing
+💰 Created 4 sample donor commitments for testing Story 4.3
+🏢 Created donor organization for testing Story 5.1
+✅ Question registry seeded (GapFieldSeverity table removed in DQR P1 — severities now live on Question.severity)
+
+The seed command has been executed.
+PHASE-C: SEED#1 OK
+
+=== PHASE D: seed run #2 (idempotency gate) ===
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Running seed command `tsx prisma/seed.ts` ...
+🌱 Starting database seed...
+📝 Creating permissions...
+👥 Creating roles...
+🔗 Assigning permissions to roles...
+🏢 Creating sample entities...
+👤 Creating default admin user...
+👤 Creating sample coordinator user...
+👤 Creating sample multi-role user...
+👤 Creating sample responder user...
+👤 Creating sample assessor user...
+🏢 Assigning multirole user to additional entities...
+👤 Creating sample donor user (Donor-only role)...
+🏢 Creating donor record for donor user...
+🏢 Creating donor record for multi-role user...
+🚨 Creating sample incidents...
+❓ Seeding question registry...
+❓ Question registry: 55 questions (0 created, 6 updated, 49 unchanged) across 27 sections
+📋 Creating sample rapid assessments for verification testing...
+💰 Creating sample donor commitments...
+💰 Creating sample commitments using entity-1 and entity-2...
+💰 Created 4 sample donor commitments
+🎭 Creating E2E test users...
+✅ Database seed completed successfully!
+📧 Admin credentials: admin@dms.gov.ng / admin123!
+📧 Coordinator credentials: coordinator@dms.gov.ng / coordinator123!
+📧 Responder credentials: responder@dms.gov.ng / responder123!
+📧 Assessor credentials: assessor@test.com / test-password
+📧 Donor credentials: donor@test.com / donor123! (DONOR role only)
+📧 Multi-role credentials: multirole@dms.gov.ng / multirole123! (ASSESSOR, COORDINATOR, DONOR, RESPONDER)
+🎭 E2E Test Credentials:
+   📧 E2E Coordinator: coordinator@test.com / testpassword123
+   📧 E2E Assessor: assessor@test.com / testpassword123
+📋 Created 5 sample assessments for verification workflow testing
+💰 Created 4 sample donor commitments for testing Story 4.3
+🏢 Created donor organization for testing Story 5.1
+✅ Question registry seeded (GapFieldSeverity table removed in DQR P1 — severities now live on Question.severity)
+
+The seed command has been executed.
+PHASE-D: SEED#2 OK
+
+=== CLEAN RE-RUN with canonicalJson drift fix ===
+BEGIN
+DELETE 1
+DELETE 12
+ERROR:  cannot drop type "QuestionType" because other objects depend on it
+DETAIL:  column question_type of table questions depends on type "QuestionType"
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+=== CLEAN RE-RUN attempt 2 (prepare order fixed) ===
+BEGIN
+DELETE 1
+DELETE 12
+NOTICE:  index "rapid_assessments_rapidAssessmentType_questionVersion_idx" does not exist, skipping
+DROP INDEX
+DROP INDEX
+ALTER TABLE
+ALTER TABLE
+NOTICE:  column "questionVersion" of relation "rapid_assessments" does not exist, skipping
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+DROP TABLE
+NOTICE:  table "food_assessments" does not exist, skipping
+NOTICE:  table "gap_field_severities" does not exist, skipping
+DROP TABLE
+NOTICE:  table "health_assessments" does not exist, skipping
+DROP TABLE
+NOTICE:  table "population_assessments" does not exist, skipping
+DROP TABLE
+DROP TABLE
+NOTICE:  table "security_assessments" does not exist, skipping
+DROP TABLE
+NOTICE:  table "shelter_assessments" does not exist, skipping
+DROP TABLE
+NOTICE:  table "wash_assessments" does not exist, skipping
+DROP TYPE
+DROP TYPE
+DROP TYPE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+ALTER TABLE
+COMMIT
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "drms_dev", schema "public" at "localhost:5435"
+
+11 migrations found in prisma/migrations
+
+Applying migration `20260915000000_dqr_question_registry`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260915000000_dqr_question_registry/
+    └─ migration.sql
+      
+All migrations have been successfully applied.
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Running seed command `tsx prisma/seed.ts` ...
+🌱 Starting database seed...
+📝 Creating permissions...
+👥 Creating roles...
+🔗 Assigning permissions to roles...
+🏢 Creating sample entities...
+👤 Creating default admin user...
+👤 Creating sample coordinator user...
+👤 Creating sample multi-role user...
+👤 Creating sample responder user...
+👤 Creating sample assessor user...
+🏢 Assigning multirole user to additional entities...
+👤 Creating sample donor user (Donor-only role)...
+🏢 Creating donor record for donor user...
+🏢 Creating donor record for multi-role user...
+🚨 Creating sample incidents...
+❓ Seeding question registry...
+❓ Question registry: 55 questions (55 created, 0 updated, 0 unchanged) across 27 sections
+📋 Creating sample rapid assessments for verification testing...
+💰 Creating sample donor commitments...
+💰 Creating sample commitments using entity-1 and entity-2...
+💰 Created 4 sample donor commitments
+🎭 Creating E2E test users...
+✅ Database seed completed successfully!
+📧 Admin credentials: admin@dms.gov.ng / admin123!
+📧 Coordinator credentials: coordinator@dms.gov.ng / coordinator123!
+📧 Responder credentials: responder@dms.gov.ng / responder123!
+📧 Assessor credentials: assessor@test.com / test-password
+📧 Donor credentials: donor@test.com / donor123! (DONOR role only)
+📧 Multi-role credentials: multirole@dms.gov.ng / multirole123! (ASSESSOR, COORDINATOR, DONOR, RESPONDER)
+🎭 E2E Test Credentials:
+   📧 E2E Coordinator: coordinator@test.com / testpassword123
+   📧 E2E Assessor: assessor@test.com / testpassword123
+📋 Created 5 sample assessments for verification workflow testing
+💰 Created 4 sample donor commitments for testing Story 4.3
+🏢 Created donor organization for testing Story 5.1
+✅ Question registry seeded (GapFieldSeverity table removed in DQR P1 — severities now live on Question.severity)
+
+The seed command has been executed.
+SEED#1(fixed): OK
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Running seed command `tsx prisma/seed.ts` ...
+🌱 Starting database seed...
+📝 Creating permissions...
+👥 Creating roles...
+🔗 Assigning permissions to roles...
+🏢 Creating sample entities...
+👤 Creating default admin user...
+👤 Creating sample coordinator user...
+👤 Creating sample multi-role user...
+👤 Creating sample responder user...
+👤 Creating sample assessor user...
+🏢 Assigning multirole user to additional entities...
+👤 Creating sample donor user (Donor-only role)...
+🏢 Creating donor record for donor user...
+🏢 Creating donor record for multi-role user...
+🚨 Creating sample incidents...
+❓ Seeding question registry...
+❓ Question registry: 55 questions (0 created, 0 updated, 55 unchanged) across 27 sections
+📋 Creating sample rapid assessments for verification testing...
+💰 Creating sample donor commitments...
+💰 Creating sample commitments using entity-1 and entity-2...
+💰 Created 4 sample donor commitments
+🎭 Creating E2E test users...
+✅ Database seed completed successfully!
+📧 Admin credentials: admin@dms.gov.ng / admin123!
+📧 Coordinator credentials: coordinator@dms.gov.ng / coordinator123!
+📧 Responder credentials: responder@dms.gov.ng / responder123!
+📧 Assessor credentials: assessor@test.com / test-password
+📧 Donor credentials: donor@test.com / donor123! (DONOR role only)
+📧 Multi-role credentials: multirole@dms.gov.ng / multirole123! (ASSESSOR, COORDINATOR, DONOR, RESPONDER)
+🎭 E2E Test Credentials:
+   📧 E2E Coordinator: coordinator@test.com / testpassword123
+   📧 E2E Assessor: assessor@test.com / testpassword123
+📋 Created 5 sample assessments for verification workflow testing
+💰 Created 4 sample donor commitments for testing Story 4.3
+🏢 Created donor organization for testing Story 5.1
+✅ Question registry seeded (GapFieldSeverity table removed in DQR P1 — severities now live on Question.severity)
+
+The seed command has been executed.
+SEED#2(fixed): OK
+
+=== PHASE E: post-seed verification queries ===
+ questions | gap | context | types 
+-----------+-----+---------+-------
+        55 |  24 |      31 |     6
+(1 row)
+
+ sections 
+----------
+       27
+(1 row)
+
+             key             | value 
+-----------------------------+-------
+ contentVersion/FOOD         | 1
+ contentVersion/HEALTH       | 1
+ contentVersion/POPULATION   | 1
+ contentVersion/SECURITY     | 1
+ contentVersion/SHELTER      | 1
+ contentVersion/WASH         | 1
+ structureVersion/FOOD       | 1
+ structureVersion/HEALTH     | 1
+ structureVersion/POPULATION | 1
+ structureVersion/SECURITY   | 1
+ structureVersion/SHELTER    | 1
+ structureVersion/WASH       | 1
+(12 rows)
+
+ action | count 
+--------+-------
+ CREATE |    55
+(1 row)
+
+ stamped_assessments 
+---------------------
+                   5
+(1 row)
+
+
+=== PHASE E summary (expectations) ===
+questions=55, gap=24, context=31, types=6; sections=27
+12 counter rows, all value 1 (structureVersion/* and contentVersion/* per type)
+audit_logs: 55 CREATE rows
+stamped_assessments: demo rows with structureVersion/contentVersion = 1/1 and answers+snapshot present

@@ -1,6 +1,6 @@
 # Prisma Schema Reference
 
-_Auto-generated on 2026-01-13T11:12:32.147Z_
+_Auto-generated on 2026-09-15T12:18:41.077Z_
 
 ## ReportTemplate
 
@@ -46,6 +46,24 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `createdAt`
 - `configuration`
 
+## ScheduledReport
+
+**Fields:**
+- `id`
+- `userId`
+- `reportType`
+- `schedule`
+- `recipients`
+- `filters`
+- `defaultDateRange`
+- `options`
+- `isActive`
+- `lastRunAt`
+- `nextRunAt`
+- `createdAt`
+- `updatedAt`
+- `user`
+
 ## User
 
 **Fields:**
@@ -63,13 +81,16 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `updatedAt`
 - `auditLogs`
 - `entityAssignments`
-- `gapFieldSeveritiesCreated`
-- `gapFieldSeveritiesUpdated`
+- `questionAuditLogs`
 - `assessments`
 - `responses`
 - `reportConfigurations`
 - `reportTemplates`
+- `scheduledReports`
 - `roles`
+- `actionSignals`
+- `notifications`
+- `pushSubscriptions`
 
 ## Role
 
@@ -130,6 +151,7 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `rapidAssessments`
 - `responses`
 - `preliminaryAssessments`
+- `actionSignals`
 
 ## EntityAssignment
 
@@ -160,6 +182,7 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `commitments`
 - `preliminaryAssessments`
 - `rapidAssessments`
+- `actionSignals`
 
 ## PreliminaryAssessment
 
@@ -208,7 +231,6 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `assessorName`
 - `location`
 - `coordinates`
-- `status`
 - `priority`
 - `versionNumber`
 - `isOfflineCreated`
@@ -223,107 +245,14 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `updatedAt`
 - `gapAnalysis`
 - `incidentId`
-- `foodAssessment`
-- `healthAssessment`
-- `populationAssessment`
+- `answers`
+- `structureVersion`
+- `contentVersion`
+- `questionSnapshot`
 - `assessor`
 - `entity`
 - `incident`
 - `responses`
-- `securityAssessment`
-- `shelterAssessment`
-- `washAssessment`
-
-## HealthAssessment
-
-**Fields:**
-- `rapidAssessmentId`
-- `hasFunctionalClinic`
-- `hasEmergencyServices`
-- `numberHealthFacilities`
-- `healthFacilityType`
-- `qualifiedHealthWorkers`
-- `hasTrainedStaff`
-- `hasMedicineSupply`
-- `hasMedicalSupplies`
-- `hasMaternalChildServices`
-- `commonHealthIssues`
-- `additionalHealthDetails`
-- `rapidAssessment`
-
-## PopulationAssessment
-
-**Fields:**
-- `rapidAssessmentId`
-- `totalHouseholds`
-- `totalPopulation`
-- `populationMale`
-- `populationFemale`
-- `populationUnder5`
-- `pregnantWomen`
-- `lactatingMothers`
-- `personWithDisability`
-- `elderlyPersons`
-- `separatedChildren`
-- `numberLivesLost`
-- `numberInjured`
-- `additionalPopulationDetails`
-- `rapidAssessment`
-
-## FoodAssessment
-
-**Fields:**
-- `rapidAssessmentId`
-- `isFoodSufficient`
-- `hasRegularMealAccess`
-- `hasInfantNutrition`
-- `foodSource`
-- `availableFoodDurationDays`
-- `additionalFoodRequiredPersons`
-- `additionalFoodRequiredHouseholds`
-- `additionalFoodDetails`
-- `rapidAssessment`
-
-## WASHAssessment
-
-**Fields:**
-- `rapidAssessmentId`
-- `waterSource`
-- `isWaterSufficient`
-- `hasCleanWaterAccess`
-- `functionalLatrinesAvailable`
-- `areLatrinesSufficient`
-- `hasHandwashingFacilities`
-- `hasOpenDefecationConcerns`
-- `additionalWashDetails`
-- `rapidAssessment`
-
-## ShelterAssessment
-
-**Fields:**
-- `rapidAssessmentId`
-- `areSheltersSufficient`
-- `hasSafeStructures`
-- `shelterTypes`
-- `requiredShelterType`
-- `numberSheltersRequired`
-- `areOvercrowded`
-- `provideWeatherProtection`
-- `additionalShelterDetails`
-- `rapidAssessment`
-
-## SecurityAssessment
-
-**Fields:**
-- `rapidAssessmentId`
-- `isSafeFromViolence`
-- `gbvCasesReported`
-- `hasSecurityPresence`
-- `hasProtectionReportingMechanism`
-- `vulnerableGroupsHaveAccess`
-- `hasLighting`
-- `additionalSecurityDetails`
-- `rapidAssessment`
 
 ## RapidResponse
 
@@ -334,7 +263,7 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `assessmentId`
 - `type`
 - `priority`
-- `status`
+- `deliveryStatus`
 - `description`
 - `resources`
 - `timeline`
@@ -345,8 +274,6 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `verifiedBy`
 - `createdAt`
 - `updatedAt`
-- `donorId`
-- `commitmentId`
 - `items`
 - `offlineId`
 - `plannedDate`
@@ -356,11 +283,12 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `syncStatus`
 - `mediaAttachments`
 - `assessment`
-- `commitment`
-- `donor`
 - `entity`
 - `responder`
 - `conflicts`
+- `planCommitments`
+- `sourceCommitmentId`
+- `sourceCommitment`
 
 ## Donor
 
@@ -377,8 +305,8 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `leaderboardRank`
 - `selfReportedDeliveryRate`
 - `verifiedDeliveryRate`
+- `achievementBadges`
 - `commitments`
-- `responses`
 
 ## DonorCommitment
 
@@ -387,6 +315,8 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `donorId`
 - `entityId`
 - `incidentId`
+- `type`
+- `sourcePlanId`
 - `status`
 - `items`
 - `totalCommittedQuantity`
@@ -399,7 +329,8 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `donor`
 - `entity`
 - `incident`
-- `responses`
+- `planCommitments`
+- `sourcePlan`
 
 ## MediaAttachment
 
@@ -447,20 +378,126 @@ _Auto-generated on 2026-01-13T11:12:32.147Z_
 - `userAgent`
 - `user`
 
-## GapFieldSeverity
+## QuestionSection
 
 **Fields:**
 - `id`
-- `fieldName`
 - `assessmentType`
-- `severity`
-- `displayName`
+- `sectionKey`
+- `title`
 - `description`
+- `category`
+- `order`
 - `isActive`
+- `version`
 - `createdAt`
 - `updatedAt`
-- `createdBy`
+- `questions`
+
+## Question
+
+**Fields:**
+- `id`
+- `questionKey`
+- `assessmentType`
+- `sectionId`
+- `questionType`
+- `label`
+- `helperText`
+- `required`
+- `options`
+- `category`
+- `inverted`
+- `gapLabel`
+- `gapMeaning`
+- `recommendation`
+- `severity`
+- `numberMin`
+- `numberMax`
+- `order`
+- `isActive`
+- `version`
+- `auditLogs`
+- `createdAt`
+- `updatedAt`
+- `section`
+
+## QuestionAuditLog
+
+**Fields:**
+- `id`
+- `questionId`
+- `action`
+- `changes`
+- `previous`
+- `actorId`
+- `actedAt`
+- `question`
+- `actor`
+
+## SystemSetting
+
+**Fields:**
+- `id`
+- `section`
+- `key`
+- `value`
+- `updatedAt`
 - `updatedBy`
-- `createdByUser`
-- `updatedByUser`
+
+## ActionSignal
+
+**Fields:**
+- `id`
+- `userId`
+- `entityId`
+- `incidentId`
+- `type`
+- `signalReason`
+- `priority`
+- `context`
+- `createdAt`
+- `resolvedAt`
+- `user`
+- `entity`
+- `incident`
+- `notifications`
+
+## Notification
+
+**Fields:**
+- `id`
+- `userId`
+- `signalId`
+- `title`
+- `body`
+- `priority`
+- `readAt`
+- `dismissedAt`
+- `createdAt`
+- `expiresAt`
+- `user`
+- `signal`
+
+## PushSubscription
+
+**Fields:**
+- `id`
+- `userId`
+- `endpoint`
+- `p256dh`
+- `auth`
+- `browserInfo`
+- `createdAt`
+- `user`
+
+## PlanCommitment
+
+**Fields:**
+- `id`
+- `planId`
+- `commitmentId`
+- `createdAt`
+- `plan`
+- `commitment`
 

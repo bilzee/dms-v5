@@ -1,19 +1,31 @@
 /**
- * Gap Analysis Service
- * 
- * Provides gap analysis calculation functions that can be used across
- * the application for real-time form indicators and submission workflow.
- * 
- * Updated to use dynamic severity calculation from database instead of hardcoded logic.
+ * Gap Analysis Service — Dynamic Question Registry edition.
+ *
+ * Replaces the per-type hardcoded analyzers and the GapFieldSeverity lookup
+ * table with the `Question` registry: gap detection, per-field severity,
+ * assessment severity and recommendations are all derived from the active
+ * GAP questions for the assessment type.
+ *
+ * Behavior parity with the legacy analyzers:
+ * - Non-inverted GAP booleans indicate a gap when falsy (false/undefined).
+ * - Inverted GAP booleans (hasOpenDefecationConcerns, areOvercrowded,
+ *   gbvCasesReported) indicate a gap when true.
+ * - Assessment severity = MAX(severity of gapped questions), LOW when no gaps.
+ * - Recommendations = the gapped questions' registry `recommendation`, in
+ *   registry order.
+ *
+ * The stored `gapAnalysis` JSON shape is unchanged:
+ * `{ hasGap, gapFields, severity, recommendations, fieldSeverityMap? }`.
  */
 
 import { AssessmentType, Priority } from '@prisma/client'
-import { gapFieldSeverityService } from './gap-field-severity.service'
+import { prisma } from '@/lib/db/client'
+import { deriveGapAnalysisFromQuestions } from '@/lib/questions/gap-derivation'
 
-// Types for gap analysis results
-type FieldSeverityMap = Record<string, 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>;
+type FieldSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+type FieldSeverityMap = Record<string, FieldSeverity>
 
-export interface HealthGapAnalysis {
+export interface GapAnalysis {
   hasGap: boolean;
   gapFields: string[];
   severity: Priority;
@@ -21,286 +33,148 @@ export interface HealthGapAnalysis {
   fieldSeverityMap?: FieldSeverityMap;
 }
 
-export interface FoodGapAnalysis {
-  hasGap: boolean;
-  gapFields: string[];
-  severity: Priority;
-  recommendations: string[];
-  fieldSeverityMap?: FieldSeverityMap;
+// Legacy per-type result aliases (shape-identical; kept for existing consumers).
+export type HealthGapAnalysis = GapAnalysis;
+export type FoodGapAnalysis = GapAnalysis;
+export type WASHGapAnalysis = GapAnalysis;
+export type ShelterGapAnalysis = GapAnalysis;
+export type SecurityGapAnalysis = GapAnalysis;
+
+/** Assessment types that carry GAP questions. POPULATION is context-only. */
+const GAP_ASSESSMENT_TYPES = new Set<AssessmentType>(['HEALTH', 'FOOD', 'WASH', 'SHELTER', 'SECURITY'])
+
+interface GapQuestionMeta {
+  questionKey: string
+  inverted: boolean
+  severity: Priority
+  recommendation: string | null
 }
 
-export interface WASHGapAnalysis {
-  hasGap: boolean;
-  gapFields: string[];
-  severity: Priority;
-  recommendations: string[];
-  fieldSeverityMap?: FieldSeverityMap;
+/**
+ * Short-lived cache of GAP question metadata per assessment type so a single
+ * dashboard render does not re-query the registry per assessment.
+ */
+let gapQuestionCache = new Map<AssessmentType, GapQuestionMeta[]>()
+let gapQuestionCacheTimestamp = 0
+const GAP_QUESTION_CACHE_DURATION_MS = 30 * 1000
+
+function clearGapQuestionCache(): void {
+  gapQuestionCache = new Map()
+  gapQuestionCacheTimestamp = 0
 }
 
-export interface ShelterGapAnalysis {
-  hasGap: boolean;
-  gapFields: string[];
-  severity: Priority;
-  recommendations: string[];
-  fieldSeverityMap?: FieldSeverityMap;
-}
-
-export interface SecurityGapAnalysis {
-  hasGap: boolean;
-  gapFields: string[];
-  severity: Priority;
-  recommendations: string[];
-  fieldSeverityMap?: FieldSeverityMap;
-}
-
-// Gap analysis calculation functions
-export async function analyzeHealthGaps(data: any): Promise<HealthGapAnalysis> {
-  const gapFields: string[] = [];
-  let hasGap = false;
-
-  // Gap-Indicating fields (when false, indicates a gap)
-  if (!data.hasFunctionalClinic) { gapFields.push('hasFunctionalClinic'); hasGap = true; }
-  if (!data.hasEmergencyServices) { gapFields.push('hasEmergencyServices'); hasGap = true; }
-  if (!data.hasTrainedStaff) { gapFields.push('hasTrainedStaff'); hasGap = true; }
-  if (!data.hasMedicineSupply) { gapFields.push('hasMedicineSupply'); hasGap = true; }
-  if (!data.hasMedicalSupplies) { gapFields.push('hasMedicalSupplies'); hasGap = true; }
-  if (!data.hasMaternalChildServices) { gapFields.push('hasMaternalChildServices'); hasGap = true; }
-
-  // Build per-field severity map from database config
-  const fieldSeverityMap: FieldSeverityMap = {};
-  for (const fieldName of gapFields) {
-    fieldSeverityMap[fieldName] = await gapFieldSeverityService.calculateFieldSeverity(
-      AssessmentType.HEALTH, fieldName
-    ) as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+async function getGapQuestions(assessmentType: AssessmentType): Promise<GapQuestionMeta[]> {
+  const now = Date.now()
+  if (now - gapQuestionCacheTimestamp < GAP_QUESTION_CACHE_DURATION_MS && gapQuestionCache.has(assessmentType)) {
+    return gapQuestionCache.get(assessmentType)!
   }
 
-  // Use dynamic severity calculation from database
-  const severity = await gapFieldSeverityService.calculateAssessmentSeverity(
-    AssessmentType.HEALTH, 
-    gapFields
-  );
+  const questions = await prisma.question.findMany({
+    where: {
+      assessmentType,
+      category: 'GAP',
+      isActive: true,
+    },
+    orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }],
+    select: {
+      questionKey: true,
+      inverted: true,
+      severity: true,
+      recommendation: true,
+    },
+  })
 
-  const recommendations = generateHealthRecommendations(gapFields);
+  const meta = questions.map((q) => ({
+    questionKey: q.questionKey,
+    inverted: q.inverted,
+    severity: q.severity,
+    recommendation: q.recommendation,
+  }))
 
-  return { hasGap, gapFields, severity, recommendations, fieldSeverityMap };
+  if (now - gapQuestionCacheTimestamp >= GAP_QUESTION_CACHE_DURATION_MS) {
+    gapQuestionCache = new Map()
+  }
+  gapQuestionCache.set(assessmentType, meta)
+  gapQuestionCacheTimestamp = now
+
+  return meta
+}
+
+/**
+ * Evaluates gap questions against an answers map (or legacy typed payload —
+ * the keys are identical) and derives the stored gapAnalysis JSON.
+ */
+export async function analyzeGaps(
+  assessmentType: AssessmentType,
+  answers: Record<string, unknown> | null | undefined
+): Promise<GapAnalysis> {
+  if (!GAP_ASSESSMENT_TYPES.has(assessmentType)) {
+    return { hasGap: false, gapFields: [], severity: Priority.LOW, recommendations: [] }
+  }
+
+  const source = answers ?? {}
+  let questions: GapQuestionMeta[]
+  try {
+    questions = await getGapQuestions(assessmentType)
+  } catch (error) {
+    console.error(`[gap-analysis] Failed to load GAP questions for ${assessmentType}:`, error)
+    throw error
+  }
+
+  return deriveGapAnalysisFromQuestions(questions, source) as GapAnalysis
+}
+
+/**
+ * Derives the assessment priority from gap analysis. POPULATION assessments
+ * are context-only and always derive LOW.
+ */
+export function derivePriorityFromGaps(assessmentType: AssessmentType, gapAnalysis: GapAnalysis): Priority {
+  if (!GAP_ASSESSMENT_TYPES.has(assessmentType)) {
+    return Priority.LOW
+  }
+  return gapAnalysis.severity
+}
+
+// Legacy per-type analyzer signatures (answers keys === legacy field names).
+export async function analyzeHealthGaps(data: any): Promise<HealthGapAnalysis> {
+  return analyzeGaps(AssessmentType.HEALTH, data)
 }
 
 export async function analyzeFoodGaps(data: any): Promise<FoodGapAnalysis> {
-  const gapFields: string[] = [];
-  let hasGap = false;
-
-  if (!data.isFoodSufficient) { gapFields.push('isFoodSufficient'); hasGap = true; }
-  if (!data.hasRegularMealAccess) { gapFields.push('hasRegularMealAccess'); hasGap = true; }
-  if (!data.hasInfantNutrition) { gapFields.push('hasInfantNutrition'); hasGap = true; }
-
-  // Build per-field severity map from database config
-  const fieldSeverityMap: FieldSeverityMap = {};
-  for (const fieldName of gapFields) {
-    fieldSeverityMap[fieldName] = await gapFieldSeverityService.calculateFieldSeverity(
-      AssessmentType.FOOD, fieldName
-    ) as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  }
-
-  // Use dynamic severity calculation from database
-  const severity = await gapFieldSeverityService.calculateAssessmentSeverity(
-    AssessmentType.FOOD, 
-    gapFields
-  );
-
-  const recommendations = generateFoodRecommendations(gapFields);
-
-  return { hasGap, gapFields, severity, recommendations, fieldSeverityMap };
+  return analyzeGaps(AssessmentType.FOOD, data)
 }
 
 export async function analyzeWASHGaps(data: any): Promise<WASHGapAnalysis> {
-  const gapFields: string[] = [];
-  let hasGap = false;
-
-  if (!data.isWaterSufficient) { gapFields.push('isWaterSufficient'); hasGap = true; }
-  if (!data.hasCleanWaterAccess) { gapFields.push('hasCleanWaterAccess'); hasGap = true; }
-  if (!data.areLatrinesSufficient) { gapFields.push('areLatrinesSufficient'); hasGap = true; }
-  if (!data.hasHandwashingFacilities) { gapFields.push('hasHandwashingFacilities'); hasGap = true; }
-  if (data.hasOpenDefecationConcerns) { gapFields.push('hasOpenDefecationConcerns'); hasGap = true; }
-
-  // Build per-field severity map from database config
-  const fieldSeverityMap: FieldSeverityMap = {};
-  for (const fieldName of gapFields) {
-    fieldSeverityMap[fieldName] = await gapFieldSeverityService.calculateFieldSeverity(
-      AssessmentType.WASH, fieldName
-    ) as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  }
-
-  // Use dynamic severity calculation from database
-  const severity = await gapFieldSeverityService.calculateAssessmentSeverity(
-    AssessmentType.WASH, 
-    gapFields
-  );
-
-  const recommendations = generateWASHRecommendations(gapFields);
-
-  return { hasGap, gapFields, severity, recommendations, fieldSeverityMap };
+  return analyzeGaps(AssessmentType.WASH, data)
 }
 
 export async function analyzeShelterGaps(data: any): Promise<ShelterGapAnalysis> {
-  const gapFields: string[] = [];
-  let hasGap = false;
-
-  if (!data.areSheltersSufficient) { gapFields.push('areSheltersSufficient'); hasGap = true; }
-  if (!data.hasSafeStructures) { gapFields.push('hasSafeStructures'); hasGap = true; }
-  if (data.areOvercrowded) { gapFields.push('areOvercrowded'); hasGap = true; }
-  if (!data.provideWeatherProtection) { gapFields.push('provideWeatherProtection'); hasGap = true; }
-
-  // Build per-field severity map from database config
-  const fieldSeverityMap: FieldSeverityMap = {};
-  for (const fieldName of gapFields) {
-    fieldSeverityMap[fieldName] = await gapFieldSeverityService.calculateFieldSeverity(
-      AssessmentType.SHELTER, fieldName
-    ) as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  }
-
-  // Use dynamic severity calculation from database
-  const severity = await gapFieldSeverityService.calculateAssessmentSeverity(
-    AssessmentType.SHELTER, 
-    gapFields
-  );
-
-  const recommendations = generateShelterRecommendations(gapFields);
-
-  return { hasGap, gapFields, severity, recommendations, fieldSeverityMap };
+  return analyzeGaps(AssessmentType.SHELTER, data)
 }
 
 export async function analyzeSecurityGaps(data: any): Promise<SecurityGapAnalysis> {
-  const gapFields: string[] = [];
-  let hasGap = false;
-
-  if (!data.isSafeFromViolence) { gapFields.push('isSafeFromViolence'); hasGap = true; }
-  if (data.gbvCasesReported) { gapFields.push('gbvCasesReported'); hasGap = true; }
-  if (!data.hasSecurityPresence) { gapFields.push('hasSecurityPresence'); hasGap = true; }
-  if (!data.hasProtectionReportingMechanism) { gapFields.push('hasProtectionReportingMechanism'); hasGap = true; }
-  if (!data.vulnerableGroupsHaveAccess) { gapFields.push('vulnerableGroupsHaveAccess'); hasGap = true; }
-  if (!data.hasLighting) { gapFields.push('hasLighting'); hasGap = true; }
-
-  // Build per-field severity map from database config
-  const fieldSeverityMap: FieldSeverityMap = {};
-  for (const fieldName of gapFields) {
-    fieldSeverityMap[fieldName] = await gapFieldSeverityService.calculateFieldSeverity(
-      AssessmentType.SECURITY, fieldName
-    ) as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  }
-
-  // Use dynamic severity calculation from database
-  const severity = await gapFieldSeverityService.calculateAssessmentSeverity(
-    AssessmentType.SECURITY, 
-    gapFields
-  );
-
-  const recommendations = generateSecurityRecommendations(gapFields);
-
-  return { hasGap, gapFields, severity, recommendations, fieldSeverityMap };
+  return analyzeGaps(AssessmentType.SECURITY, data)
 }
 
-// Recommendation generation functions
-function generateHealthRecommendations(gapFields: string[]): string[] {
-  const recommendations: string[] = [];
-  if (gapFields.includes('hasFunctionalClinic')) {
-    recommendations.push('Deploy mobile clinics or establish temporary health facilities');
-  }
-  if (gapFields.includes('hasEmergencyServices')) {
-    recommendations.push('Establish emergency medical response team with proper equipment');
-  }
-  if (gapFields.includes('hasTrainedStaff')) {
-    recommendations.push('Deploy trained medical personnel and provide emergency training');
-  }
-  if (gapFields.includes('hasMedicineSupply')) {
-    recommendations.push('Procure and distribute essential medicines and medical supplies');
-  }
-  if (gapFields.includes('hasMedicalSupplies')) {
-    recommendations.push('Secure medical equipment, diagnostic tools, and protective equipment');
-  }
-  if (gapFields.includes('hasMaternalChildServices')) {
-    recommendations.push('Establish maternal and child health services with emergency obstetric care');
-  }
-  return recommendations;
-}
+export { clearGapQuestionCache }
 
-function generateFoodRecommendations(gapFields: string[]): string[] {
-  const recommendations: string[] = [];
-  if (gapFields.includes('isFoodSufficient')) {
-    recommendations.push('Request emergency food assistance and establish food distribution points');
-  }
-  if (gapFields.includes('hasRegularMealAccess')) {
-    recommendations.push('Implement regular meal distribution programs and community kitchens');
-  }
-  if (gapFields.includes('hasInfantNutrition')) {
-    recommendations.push('Distribute therapeutic feeding and infant nutrition supplements');
-  }
-  return recommendations;
-}
-
-function generateWASHRecommendations(gapFields: string[]): string[] {
-  const recommendations: string[] = [];
-  if (gapFields.includes('isWaterSufficient')) {
-    recommendations.push('Deploy water trucking services and install water purification systems');
-  }
-  if (gapFields.includes('hasCleanWaterAccess')) {
-    recommendations.push('Establish water treatment points and ensure water quality testing');
-  }
-  if (gapFields.includes('areLatrinesSufficient')) {
-    recommendations.push('Construct emergency sanitation facilities and improve existing latrines');
-  }
-  if (gapFields.includes('hasHandwashingFacilities')) {
-    recommendations.push('Distribute soap and hand sanitizer, establish handwashing stations');
-  }
-  if (gapFields.includes('hasOpenDefecationConcerns')) {
-    recommendations.push('Implement safe defecation campaigns and monitor sanitation practices');
-  }
-  return recommendations;
-}
-
-function generateShelterRecommendations(gapFields: string[]): string[] {
-  const recommendations: string[] = [];
-  if (gapFields.includes('areSheltersSufficient')) {
-    recommendations.push('Deploy emergency shelter kits and establish temporary housing');
-  }
-  if (gapFields.includes('hasSafeStructures')) {
-    recommendations.push('Identify and retrofit safe buildings for emergency shelter use');
-  }
-  if (gapFields.includes('areOvercrowded')) {
-    recommendations.push('Decongest existing shelters and establish additional shelter sites');
-  }
-  if (gapFields.includes('provideWeatherProtection')) {
-    recommendations.push('Provide weatherproofing materials and improve shelter insulation');
-  }
-  return recommendations;
-}
-
-function generateSecurityRecommendations(gapFields: string[]): string[] {
-  const recommendations: string[] = [];
-  if (gapFields.includes('isSafeFromViolence')) {
-    recommendations.push('Establish security patrols and safe zones for vulnerable populations');
-  }
-  if (gapFields.includes('gbvCasesReported')) {
-    recommendations.push('Deploy specialized GBV response teams and establish safe reporting mechanisms');
-  }
-  if (gapFields.includes('hasSecurityPresence')) {
-    recommendations.push('Request security personnel deployment and establish local security committees');
-  }
-  if (gapFields.includes('hasProtectionReportingMechanism')) {
-    recommendations.push('Establish confidential protection reporting channels and community alert systems');
-  }
-  if (gapFields.includes('vulnerableGroupsHaveAccess')) {
-    recommendations.push('Ensure priority access to services for women, children, elderly, and persons with disabilities');
-  }
-  if (gapFields.includes('hasLighting')) {
-    recommendations.push('Install lighting systems in high-risk areas and communal spaces');
-  }
-  return recommendations;
+/** Cached registry lookup of a single GAP field's severity (MEDIUM if unknown). */
+export async function getGapFieldSeverity(
+  assessmentType: AssessmentType,
+  questionKey: string
+): Promise<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'> {
+  const questions = await getGapQuestions(assessmentType)
+  const question = questions.find((q) => q.questionKey === questionKey)
+  return question ? (question.severity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW') : 'MEDIUM'
 }
 
 export default {
+  analyzeGaps,
+  derivePriorityFromGaps,
   analyzeHealthGaps,
   analyzeFoodGaps,
   analyzeWASHGaps,
   analyzeShelterGaps,
-  analyzeSecurityGaps
+  analyzeSecurityGaps,
+  getGapFieldSeverity,
 };

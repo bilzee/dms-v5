@@ -30,7 +30,7 @@ const breadcrumbStructure: Record<string, BreadcrumbItem[]> = {
   ],
   '/coordinator/settings': [
     { name: 'Dashboard', href: '/dashboard' },
-    { name: 'Settings', href: '/coordinator/settings/gap-field-management' }
+    { name: 'Settings', href: '/coordinator/settings/severity-thresholds' }
   ],
   '/assessor/preliminary-assessment': [
     { name: 'Dashboard', href: '/dashboard' },
@@ -178,14 +178,9 @@ const breadcrumbStructure: Record<string, BreadcrumbItem[]> = {
     { name: 'Dashboard', href: '/dashboard' },
     { name: 'Entity-Incident Map', href: '/coordinator/entity-incident-map' }
   ],
-  '/coordinator/settings/gap-field-management': [
-    { name: 'Dashboard', href: '/dashboard' },
-    { name: 'Configuration', href: '/coordinator/settings/gap-field-management' },
-    { name: 'Gap Field Management', href: '/coordinator/settings/gap-field-management' }
-  ],
   '/coordinator/settings/severity-thresholds': [
     { name: 'Dashboard', href: '/dashboard' },
-    { name: 'Configuration', href: '/coordinator/settings/gap-field-management' },
+    { name: 'Configuration', href: '/coordinator/settings/severity-thresholds' },
     { name: 'Severity Thresholds', href: '/coordinator/settings/severity-thresholds' }
   ],
   '/coordinator/reports': [
@@ -235,7 +230,7 @@ const generateDynamicBreadcrumbs = (pathname: string): BreadcrumbItem[] => {
   if (pathname.includes('?tab=exports') || pathname.includes('/dashboard?tab=exports')) {
     return [
       { name: 'Dashboard', href: '/dashboard' },
-      { name: 'Settings', href: '/coordinator/settings/gap-field-management' },
+      { name: 'Settings', href: '/coordinator/settings/severity-thresholds' },
       { name: 'Export Functions', href: '/coordinator/dashboard?tab=exports' }
     ];
   }
@@ -243,7 +238,7 @@ const generateDynamicBreadcrumbs = (pathname: string): BreadcrumbItem[] => {
   if (pathname.includes('?tab=reports') || pathname.includes('/dashboard?tab=reports')) {
     return [
       { name: 'Dashboard', href: '/dashboard' },
-      { name: 'Settings', href: '/coordinator/settings/gap-field-management' },
+      { name: 'Settings', href: '/coordinator/settings/severity-thresholds' },
       { name: 'Report Builder', href: '/coordinator/dashboard?tab=reports' }
     ];
   }

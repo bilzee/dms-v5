@@ -13,6 +13,8 @@ import type {
   Role,
 } from '@prisma/client'
 import { testDb } from '../helpers/test-db'
+import { toAnswers, RapidAssessmentType } from '../../src/lib/questions/legacy-convert'
+import { seedQuestions } from '../../prisma/seed-questions'
 
 /**
  * Data factories for the API integration suite (tests/api/**).
@@ -167,6 +169,19 @@ export async function createPreliminaryAssessment(
   })
 }
 
+/**
+ * Ensures the question registry exists in drms_test. `truncateTestDb()` wipes it,
+ * so every suite that creates assessments through the API (service path requires
+ * active registry questions) must call this in beforeAll after truncating.
+ * Idempotent: seeds only when the questions table is empty.
+ */
+export async function ensureQuestionRegistry(): Promise<void> {
+  const existing = await testDb.question.count()
+  if (existing === 0) {
+    await seedQuestions(testDb)
+  }
+}
+
 export interface SectorPayloads {
   health?: Record<string, unknown>
   population?: Record<string, unknown>
@@ -192,6 +207,17 @@ export async function createRapidAssessment(
   options: CreateRapidAssessmentOptions
 ): Promise<RapidAssessment> {
   const assessmentType = options.assessmentType ?? 'HEALTH'
+  // Registry answers layer: the typed sector payload is converted to the
+  // canonical answers map (typed child tables no longer exist).
+  const sectorKeyByType: Record<string, keyof SectorPayloads> = {
+    HEALTH: 'health',
+    POPULATION: 'population',
+    FOOD: 'food',
+    WASH: 'wash',
+    SHELTER: 'shelter',
+    SECURITY: 'security',
+  }
+  const sectorPayload = options.sectors?.[sectorKeyByType[assessmentType]]
   return testDb.rapidAssessment.create({
     data: {
       rapidAssessmentType: assessmentType,
@@ -202,21 +228,8 @@ export async function createRapidAssessment(
       incidentId: options.incidentId,
       priority: options.priority ?? 'MEDIUM',
       verificationStatus: options.verificationStatus ?? 'SUBMITTED',
-      healthAssessment: options.sectors?.health
-        ? { create: options.sectors.health as never }
-        : undefined,
-      populationAssessment: options.sectors?.population
-        ? { create: options.sectors.population as never }
-        : undefined,
-      foodAssessment: options.sectors?.food
-        ? { create: options.sectors.food as never }
-        : undefined,
-      washAssessment: options.sectors?.wash ? { create: options.sectors.wash as never } : undefined,
-      shelterAssessment: options.sectors?.shelter
-        ? { create: options.sectors.shelter as never }
-        : undefined,
-      securityAssessment: options.sectors?.security
-        ? { create: options.sectors.security as never }
+      answers: sectorPayload
+        ? (toAnswers(assessmentType as RapidAssessmentType, sectorPayload) as never)
         : undefined,
     },
   })

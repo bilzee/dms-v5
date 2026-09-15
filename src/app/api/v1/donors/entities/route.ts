@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuth } from '@/lib/auth/middleware';
 import { prisma } from '@/lib/db/client';
 import { v4 as uuidv4 } from 'uuid';
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert';
 import { handleApiError } from '@/lib/api/response'
 
 export const GET = withAuth(async (request: NextRequest, context) => {
@@ -91,8 +92,8 @@ export const GET = withAuth(async (request: NextRequest, context) => {
               rapidAssessmentType: 'POPULATION',
               verificationStatus: 'VERIFIED'
             },
-            include: {
-              populationAssessment: true
+            select: {
+              answers: true
             },
             orderBy: {
               rapidAssessmentDate: 'desc'
@@ -100,17 +101,23 @@ export const GET = withAuth(async (request: NextRequest, context) => {
           })
         ]);
 
+        // Hydrate the legacy population payload from the canonical answers map
+        const populationPayload = fromAnswers(
+          'POPULATION',
+          (latestPopulationAssessment?.answers ?? null) as RapidAssessmentAnswers | null
+        );
+
         // Extract population data from latest population assessment
-        const population = latestPopulationAssessment?.populationAssessment?.totalPopulation || 0;
+        const population = Number(populationPayload.totalPopulation || 0);
 
         return {
           ...entity,
           demographics: {
             population: population,
-            vulnerableCount: (latestPopulationAssessment?.populationAssessment?.pregnantWomen || 0) + 
-                           (latestPopulationAssessment?.populationAssessment?.populationUnder5 || 0) + 
-                           (latestPopulationAssessment?.populationAssessment?.personWithDisability || 0) + 
-                           (latestPopulationAssessment?.populationAssessment?.elderlyPersons || 0),
+            vulnerableCount: Number(populationPayload.pregnantWomen || 0) + 
+                           Number(populationPayload.populationUnder5 || 0) + 
+                           Number(populationPayload.personWithDisability || 0) + 
+                           Number(populationPayload.elderlyPersons || 0),
             lga: (entity.metadata as any)?.lga || null,
             ward: (entity.metadata as any)?.ward || null,
             campDetails: entity.type === 'CAMP' ? entity.metadata : null,

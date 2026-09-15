@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { cn, formatNumber, formatArrayValue } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,6 @@ import { Separator } from '@/components/ui/separator';
 import { getBadgeClasses } from '@/components/shared/StatusBadge';
 import { Calendar, User, AlertTriangle, CheckCircle, Info, AlertCircle, Heart, Wheat, Droplets, Home, Shield, Users } from '@/lib/icons';
 import { GapIndicator } from './GapIndicator';
-import { apiGet } from '@/lib/api';
 import type { 
   HealthAssessmentData, 
   FoodAssessmentData, 
@@ -228,42 +227,14 @@ export function AssessmentCategorySummary({
   const config = categoryConfig[category];
   const fieldConfig = fieldDefinitions[category];
   
-  // State for dynamic field severities
-  const [fieldSeverities, setFieldSeverities] = useState<Record<string, 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>>({});
-
-  // Use the gap fields and severity mapping from gapAnalysis if available
+  // Severity comes from the registry-derived `fieldSeverityMap` the situation
+  // route attaches to gapAnalysis (Question.severity at analysis time); the
+  // static lists below are a display-only fallback for legacy payloads.
   const gapFields = gapAnalysis?.gapFields || [];
   const fieldSeverityMap = gapAnalysis?.fieldSeverityMap || {};
-  
-  // Fetch individual field severities when component mounts
-  useEffect(() => {
-    const fetchFieldSeverities = async () => {
-      const severities: Record<string, 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'> = {};
-      
-      // Only fetch severities for fields that are actually in the gap analysis
-      for (const field of fieldConfig.gapIndicators) {
-        if (gapFields.includes(field.key)) {
-          try {
-            const severity = await getFieldSeverity(field.key);
-            severities[field.key] = severity;
-          } catch (error) {
-            console.warn(`Failed to fetch severity for ${field.key}:`, error);
-            severities[field.key] = getFieldSeveritySync(field.key);
-          }
-        }
-      }
-      
-      setFieldSeverities(severities);
-    };
-    
-    if (gapFields.length > 0) {
-      fetchFieldSeverities();
-    }
-  }, [gapFields, category]);
 
-  // Function to get field severity using the API
-  const getFieldSeverity = async (fieldName: string): Promise<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'> => {
-    // If we have field severity mapping from aggregated analysis, use it
+  const getFieldSeverity = (fieldName: string): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' => {
+    // Registry-derived severity from the gap analysis
     if (fieldSeverityMap[fieldName]) {
       return fieldSeverityMap[fieldName];
     }
@@ -273,75 +244,7 @@ export function AssessmentCategorySummary({
       return 'LOW'; // No gap
     }
 
-    // Get assessment type for this category
-    const assessmentTypeMap = {
-      health: 'HEALTH',
-      food: 'FOOD',
-      wash: 'WASH',
-      shelter: 'SHELTER',
-      security: 'SECURITY',
-      population: 'POPULATION'
-    };
-
-    const assessmentType = assessmentTypeMap[category];
-    
-    try {
-      // Call the API to get field severity (with auth)
-      const result = await apiGet<{ severity: string }>(
-        `/api/v1/gap-field-severities?assessmentType=${assessmentType}&fieldName=${fieldName}`
-      );
-
-      if (result.success && result.data?.severity) {
-        return result.data.severity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-      } else {
-        console.warn('API returned error for field severity:', result.error);
-        throw new Error(result.error || 'API error');
-      }
-    } catch (error) {
-      console.warn('Failed to fetch field severity from API, using fallback logic:', error);
-    }
-
-    // Fallback: Use hardcoded field importance logic
-    const criticalFields = [
-      'hasEmergencyServices', 'hasFunctionalClinic', 'isWaterSufficient', 
-      'areSheltersSufficient', 'hasSafetyConcerns', 'hasImmediateThreats'
-    ];
-    
-    const highFields = [
-      'hasCleanWaterAccess', 'hasTrainedStaff', 'hasMedicineSupply',
-      'isFoodSufficient', 'hasRegularMealAccess', 'hasSafeStructures'
-    ];
-    
-    const mediumFields = [
-      'hasHandwashingFacilities', 'areLatrinesSufficient', 'hasMedicalSupplies',
-      'hasInfantNutrition', 'areOvercrowded', 'provideWeatherProtection'
-    ];
-
-    if (criticalFields.includes(fieldName)) {
-      return 'CRITICAL';
-    } else if (highFields.includes(fieldName)) {
-      return 'HIGH';
-    } else if (mediumFields.includes(fieldName)) {
-      return 'MEDIUM';
-    }
-    
-    // Default to HIGH for any other gap fields not explicitly categorized
-    return 'HIGH';
-  };
-
-  // Synchronous version using cached/fallback data for immediate rendering
-  const getFieldSeveritySync = (fieldName: string): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' => {
-    // If we have field severity mapping from aggregated analysis, use it
-    if (fieldSeverityMap[fieldName]) {
-      return fieldSeverityMap[fieldName];
-    }
-
-    // If this field is not in the gap fields, no gap
-    if (!gapFields.includes(fieldName)) {
-      return 'LOW'; // No gap
-    }
-
-    // Fallback logic for immediate rendering
+    // Display-only fallback for gap fields without a severity map
     const criticalFields = [
       'hasEmergencyServices', 'hasFunctionalClinic', 'isWaterSufficient', 
       'areSheltersSufficient', 'hasSafetyConcerns', 'hasImmediateThreats'
@@ -424,7 +327,7 @@ export function AssessmentCategorySummary({
       } else {
         // Individual entity data (original logic)
         const hasGap = invert ? value : !value;
-        const severity = hasGap ? (fieldSeverities[key] || getFieldSeveritySync(key)) : 'LOW';
+        const severity = hasGap ? getFieldSeverity(key) : 'LOW';
         return (
           <div key={key} className="flex items-center justify-between py-1">
             <span className="text-sm text-muted-foreground">{label}</span>

@@ -30,6 +30,7 @@ import { useCurrencySymbol } from '@/hooks/useCurrency';
 import { SignalPriorityBadge } from './SignalPriorityBadge';
 import { REASON_LABELS } from './SignalReasonIcon';
 import type { ActionSignalItem, SignalReason } from '@/types/action-signal';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
 
 interface SignalDetailPanelProps {
   signal: ActionSignalItem | null;
@@ -247,7 +248,14 @@ function AssessmentDetail({ data }: { data: any }) {
 
   const subAssessment =
     data.healthAssessment || data.washAssessment || data.shelterAssessment ||
-    data.foodAssessment || data.securityAssessment || data.populationAssessment;
+    data.foodAssessment || data.securityAssessment || data.populationAssessment ||
+    // Hydrate the legacy typed payload view from the canonical answers map
+    (data.answers && data.rapidAssessmentType
+      ? fromAnswers(
+          data.rapidAssessmentType as RapidAssessmentType,
+          data.answers as RapidAssessmentAnswers
+        )
+      : undefined);
 
   const gapAnalysis = data.gapAnalysis;
 

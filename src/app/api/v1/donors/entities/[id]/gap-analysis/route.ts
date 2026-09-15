@@ -7,7 +7,13 @@ import {
   GapAnalysisResponseSchema,
   AssessmentTypeSchema
 } from '@/lib/validation/entity-insights';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
 import { handleApiError } from '@/lib/api/response'
+
+// Hydrates the legacy typed payload view from the canonical answers map
+function assessmentDataOf(type: AssessmentType, assessment: any): any {
+  return fromAnswers(type as RapidAssessmentType, (assessment.answers ?? {}) as RapidAssessmentAnswers);
+}
 
 interface GapAnalysisItem {
   category: 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY' | 'POPULATION';
@@ -104,13 +110,8 @@ export const GET = withAuth(async (request: NextRequest, context, nextContext) =
           rapidAssessmentType: type,
           verificationStatus: 'VERIFIED'
         },
-        include: {
-          healthAssessment: type === 'HEALTH',
-          foodAssessment: type === 'FOOD',
-          washAssessment: type === 'WASH',
-          shelterAssessment: type === 'SHELTER',
-          securityAssessment: type === 'SECURITY',
-          populationAssessment: type === 'POPULATION'
+        select: {
+          answers: true
         },
         orderBy: { rapidAssessmentDate: 'desc' }
       });
@@ -203,11 +204,10 @@ async function analyzeCategoryGaps(
   entityId: string | null
 ): Promise<GapAnalysisItem[]> {
   const gaps: GapAnalysisItem[] = [];
-  let assessmentData;
+  const assessmentData = assessmentDataOf(type, assessment);
 
   switch (type) {
     case 'HEALTH':
-      assessmentData = assessment.healthAssessment;
       if (assessmentData) {
         if (!assessmentData.hasFunctionalClinic) {
           gaps.push({
@@ -269,7 +269,6 @@ async function analyzeCategoryGaps(
       break;
 
     case 'FOOD':
-      assessmentData = assessment.foodAssessment;
       if (assessmentData) {
         if (!assessmentData.isFoodSufficient) {
           gaps.push({
@@ -317,7 +316,6 @@ async function analyzeCategoryGaps(
       break;
 
     case 'WASH':
-      assessmentData = assessment.washAssessment;
       if (assessmentData) {
         if (!assessmentData.isWaterSufficient) {
           gaps.push({
@@ -379,7 +377,6 @@ async function analyzeCategoryGaps(
       break;
 
     case 'SHELTER':
-      assessmentData = assessment.shelterAssessment;
       if (assessmentData) {
         if (!assessmentData.areSheltersSufficient) {
           gaps.push({
@@ -441,7 +438,6 @@ async function analyzeCategoryGaps(
       break;
 
     case 'SECURITY':
-      assessmentData = assessment.securityAssessment;
       if (assessmentData) {
         if (!assessmentData.isSafeFromViolence) {
           gaps.push({
@@ -503,7 +499,6 @@ async function analyzeCategoryGaps(
       break;
 
     case 'POPULATION':
-      assessmentData = assessment.populationAssessment;
       if (assessmentData) {
         if (assessmentData.numberLivesLost > 0) {
           gaps.push({
@@ -583,8 +578,8 @@ async function analyzeGapTrend(type: AssessmentType, entityId: string): Promise<
         rapidAssessmentType: type,
         verificationStatus: 'VERIFIED'
       },
-      include: {
-        [`${type.toLowerCase()}Assessment`]: true
+      select: {
+        answers: true
       },
       orderBy: { rapidAssessmentDate: 'desc' },
       take: 3
@@ -620,11 +615,10 @@ async function analyzeGapTrend(type: AssessmentType, entityId: string): Promise<
 // Helper function to calculate gap count for an assessment
 function calculateGapCount(type: AssessmentType, assessment: any): number {
   let gapCount = 0;
-  let assessmentData;
+  const assessmentData = assessmentDataOf(type, assessment);
 
   switch (type) {
     case 'HEALTH':
-      assessmentData = assessment.healthAssessment;
       if (assessmentData) {
         if (!assessmentData.hasFunctionalClinic) gapCount++;
         if (!assessmentData.hasMedicineSupply) gapCount++;
@@ -635,7 +629,6 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
       break;
 
     case 'FOOD':
-      assessmentData = assessment.foodAssessment;
       if (assessmentData) {
         if (!assessmentData.isFoodSufficient) gapCount++;
         if (!assessmentData.hasRegularMealAccess) gapCount++;
@@ -644,7 +637,6 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
       break;
 
     case 'WASH':
-      assessmentData = assessment.washAssessment;
       if (assessmentData) {
         if (!assessmentData.isWaterSufficient) gapCount++;
         if (!assessmentData.hasCleanWaterAccess) gapCount++;
@@ -654,7 +646,6 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
       break;
 
     case 'SHELTER':
-      assessmentData = assessment.shelterAssessment;
       if (assessmentData) {
         if (!assessmentData.areSheltersSufficient) gapCount++;
         if (!assessmentData.hasSafeStructures) gapCount++;
@@ -664,7 +655,6 @@ function calculateGapCount(type: AssessmentType, assessment: any): number {
       break;
 
     case 'SECURITY':
-      assessmentData = assessment.securityAssessment;
       if (assessmentData) {
         if (!assessmentData.isSafeFromViolence) gapCount++;
         if (!assessmentData.hasSecurityPresence) gapCount++;

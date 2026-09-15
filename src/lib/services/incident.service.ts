@@ -4,6 +4,7 @@ import {
   CreateIncidentInput,
   QueryIncidentInput 
 } from '@/lib/validation/incidents'
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert'
 
 export class IncidentService {
   static async create(
@@ -145,19 +146,8 @@ export class IncidentService {
             location: true,
             coordinates: true,
             createdAt: true,
-            populationAssessment: {
-              select: {
-                numberLivesLost: true,
-                numberInjured: true,
-                totalPopulation: true,
-                totalHouseholds: true
-              }
-            },
-            healthAssessment: {
-              select: {
-                numberHealthFacilities: true
-              }
-            }
+            rapidAssessmentType: true,
+            answers: true
           }
         },
         commitments: {
@@ -333,15 +323,18 @@ export class IncidentService {
 
     // Aggregate population data from rapid assessments (nested structure)
     rapidAssessments.forEach((assessment: any) => {
-      if (assessment.populationAssessment) {
-        populationData.livesLost += assessment.populationAssessment.numberLivesLost || 0
-        populationData.injured += assessment.populationAssessment.numberInjured || 0
-        populationData.totalPopulation += assessment.populationAssessment.totalPopulation || 0
-        populationData.housesAffected += assessment.populationAssessment.totalHouseholds || 0
+      // Hydrate the legacy typed payload view from the canonical answers map
+      if (assessment.rapidAssessmentType === 'POPULATION') {
+        const population = fromAnswers('POPULATION', (assessment.answers ?? {}) as RapidAssessmentAnswers)
+        populationData.livesLost += population.numberLivesLost || 0
+        populationData.injured += population.numberInjured || 0
+        populationData.totalPopulation += population.totalPopulation || 0
+        populationData.housesAffected += population.totalHouseholds || 0
       }
 
-      if (assessment.healthAssessment) {
-        populationData.medicalFacilitiesAffected += assessment.healthAssessment.numberHealthFacilities || 0
+      if (assessment.rapidAssessmentType === 'HEALTH') {
+        const health = fromAnswers('HEALTH', (assessment.answers ?? {}) as RapidAssessmentAnswers)
+        populationData.medicalFacilitiesAffected += health.numberHealthFacilities || 0
       }
 
       // Calculate epicenter (average coordinates) from rapid assessment location
