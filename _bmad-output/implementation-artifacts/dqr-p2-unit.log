@@ -1,0 +1,998 @@
+
+> disaster-response-management-system@0.1.0 test:unit
+> jest
+
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+PASS tests/unit/signals/offline-signal-cache.test.ts
+PASS tests/unit/scoring-config.test.ts
+PASS tests/unit/gap-analysis.test.ts
+PASS tests/unit/legacy-convert.test.ts
+PASS tests/unit/validation-dynamic-assessment.test.ts
+PASS tests/unit/validation-schemas.test.ts
+PASS tests/unit/registry-validation.test.ts
+PASS tests/unit/question-snapshot.test.ts
+------------------------------------------------------------|---------|----------|---------|---------|-------------------
+File                                                        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+------------------------------------------------------------|---------|----------|---------|---------|-------------------
+All files                                                   |    0.97 |     0.85 |    0.59 |    0.97 |                   
+ src                                                        |       0 |        0 |       0 |       0 |                   
+  middleware.ts                                             |       0 |        0 |       0 |       0 | 1-117             
+ src/app                                                    |       0 |      100 |       0 |       0 |                   
+  error.tsx                                                 |       0 |      100 |       0 |       0 | 3-16              
+  loading.tsx                                               |       0 |      100 |       0 |       0 | 1                 
+  not-found.tsx                                             |       0 |      100 |       0 |       0 | 1-3               
+ src/app/(auth)                                             |       0 |        0 |       0 |       0 |                   
+  error.tsx                                                 |       0 |        0 |       0 |       0 | 3-16              
+  layout.tsx                                                |       0 |        0 |       0 |       0 | 3-74              
+  loading.tsx                                               |       0 |      100 |       0 |       0 | 1                 
+  not-found.tsx                                             |       0 |      100 |       0 |       0 | 1-3               
+ src/app/(auth)/admin                                       |       0 |      100 |       0 |       0 |                   
+  layout.tsx                                                |       0 |      100 |       0 |       0 | 3                 
+  loading.tsx                                               |       0 |      100 |       0 |       0 | 1                 
+ src/app/(auth)/admin/dashboard                             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-700             
+ src/app/(auth)/admin/donors                                |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-204             
+ src/app/(auth)/admin/donors/[id]                           |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-105             
+ src/app/(auth)/admin/donors/[id]/edit                      |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-364             
+ src/app/(auth)/admin/donors/metrics                        |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-6               
+ src/app/(auth)/admin/donors/register                       |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-20              
+ src/app/(auth)/admin/settings/branding                     |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-411             
+ src/app/(auth)/admin/settings/currency                     |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-208             
+ src/app/(auth)/admin/settings/map                          |       0 |        0 |       0 |       0 |                   
+  MapPreview.tsx                                            |       0 |        0 |       0 |       0 | 3-37              
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-374             
+ src/app/(auth)/admin/settings/notifications                |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-947             
+ src/app/(auth)/admin/users                                 |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-327             
+  pageV2.tsx                                                |       0 |        0 |       0 |       0 | 3-332             
+ src/app/(auth)/assessor                                    |       0 |      100 |       0 |       0 |                   
+  layout.tsx                                                |       0 |      100 |       0 |       0 | 3                 
+  loading.tsx                                               |       0 |      100 |       0 |       0 | 1                 
+ src/app/(auth)/assessor/dashboard                          |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-159             
+ src/app/(auth)/assessor/preliminary-assessment             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-254             
+ src/app/(auth)/assessor/preliminary-assessment/[id]        |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-207             
+ src/app/(auth)/assessor/preliminary-assessment/new         |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-122             
+ src/app/(auth)/assessor/rapid-assessments                  |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-514             
+ src/app/(auth)/assessor/rapid-assessments/[id]             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-608             
+ src/app/(auth)/assessor/rapid-assessments/[id]/edit        |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-315             
+ src/app/(auth)/assessor/rapid-assessments/new              |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-327             
+ src/app/(auth)/coordinator                                 |       0 |      100 |       0 |       0 |                   
+  layout.tsx                                                |       0 |      100 |       0 |       0 | 3                 
+  loading.tsx                                               |       0 |      100 |       0 |       0 | 1                 
+ src/app/(auth)/coordinator/analytics                       |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-304             
+ src/app/(auth)/coordinator/auto-approval                   |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-24              
+ src/app/(auth)/coordinator/dashboard                       |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-148             
+ src/app/(auth)/coordinator/donors                          |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-211             
+ src/app/(auth)/coordinator/donors/metrics                  |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-6               
+ src/app/(auth)/coordinator/entities                        |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-552             
+ src/app/(auth)/coordinator/entity-incident-map             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-495             
+ src/app/(auth)/coordinator/entity-management               |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-440             
+ src/app/(auth)/coordinator/incidents                       |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 1-10              
+ src/app/(auth)/coordinator/incidents/[id]                  |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 10-219            
+ src/app/(auth)/coordinator/reports                         |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-6               
+ src/app/(auth)/coordinator/resource-management             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-24              
+ src/app/(auth)/coordinator/settings/scoring                |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-596             
+ src/app/(auth)/coordinator/settings/severity-thresholds    |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-126             
+ src/app/(auth)/coordinator/situation-dashboard             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-134             
+ src/app/(auth)/coordinator/verification                    |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-69              
+ src/app/(auth)/coordinator/verification/auto-approval      |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 2-9               
+ src/app/(auth)/coordinator/verification/deliveries         |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-573             
+ src/app/(auth)/dashboard                                   |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-21              
+ src/app/(auth)/donor                                       |       0 |      100 |       0 |       0 |                   
+  layout.tsx                                                |       0 |      100 |       0 |       0 | 3                 
+  loading.tsx                                               |       0 |      100 |       0 |       0 | 1                 
+ src/app/(auth)/donor/analytics                             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-473             
+ src/app/(auth)/donor/dashboard                             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-184             
+ src/app/(auth)/donor/entities                              |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-9               
+ src/app/(auth)/donor/entities/[id]                         |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-343             
+ src/app/(auth)/donor/entities/performance                  |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-520             
+ src/app/(auth)/donor/leaderboard                           |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-87              
+ src/app/(auth)/donor/performance                           |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-128             
+ src/app/(auth)/donor/profile                               |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-9               
+ src/app/(auth)/donor/rapid-assessments                     |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-118             
+ src/app/(auth)/donor/reports                               |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-458             
+ src/app/(auth)/donor/responses                             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-356             
+ src/app/(auth)/help                                        |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-127             
+ src/app/(auth)/reports/builder                             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-190             
+ src/app/(auth)/responder                                   |       0 |      100 |       0 |       0 |                   
+  layout.tsx                                                |       0 |      100 |       0 |       0 | 3                 
+  loading.tsx                                               |       0 |      100 |       0 |       0 | 1                 
+ src/app/(auth)/responder/dashboard                         |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-356             
+ src/app/(auth)/responder/planning                          |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-238             
+ src/app/(auth)/responder/planning/new                      |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 4-124             
+ src/app/(auth)/responder/responses                         |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-413             
+ src/app/(auth)/responder/responses/[id]                    |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-341             
+ src/app/(auth)/responder/responses/[id]/deliver            |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-197             
+ src/app/(auth)/responder/responses/[id]/edit               |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-185             
+ src/app/(auth)/roles                                       |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-404             
+ src/app/(auth)/system/audit                                |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 2-32              
+ src/app/(auth)/system/database                             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-609             
+ src/app/(auth)/system/health                               |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-147             
+ src/app/(auth)/system/settings                             |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-526             
+ src/app/(auth)/verification/metrics                        |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-212             
+ src/app/api/branding/icon                                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-65              
+ src/app/api/entities/available-for-assessment              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-70              
+ src/app/api/health                                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-17              
+ src/app/api/v1/action-signals                              |       0 |      100 |       0 |       0 |                   
+  route.ts                                                  |       0 |      100 |       0 |       0 | 1-31              
+ src/app/api/v1/admin/database/backup                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-287             
+ src/app/api/v1/admin/database/optimize                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-37              
+ src/app/api/v1/admin/database/query                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-54              
+ src/app/api/v1/admin/database/restore/[id]                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-83              
+ src/app/api/v1/admin/database/stats                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-59              
+ src/app/api/v1/admin/database/tables                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-45              
+ src/app/api/v1/admin/questions                             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-25              
+ src/app/api/v1/admin/questions/[id]                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-55              
+ src/app/api/v1/admin/questions/[id]/severity               |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-28              
+ src/app/api/v1/admin/questions/export                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-19              
+ src/app/api/v1/admin/questions/reorder                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-27              
+ src/app/api/v1/admin/sections                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-24              
+ src/app/api/v1/admin/sections/[id]                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-52              
+ src/app/api/v1/admin/seed                                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-229             
+ src/app/api/v1/admin/severity/recalculate                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-20              
+ src/app/api/v1/assessments/[id]                            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-38              
+ src/app/api/v1/assessments/[id]/reject                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-166             
+ src/app/api/v1/assessments/[id]/verify                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-172             
+ src/app/api/v1/assessments/verified                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-61              
+ src/app/api/v1/auth/login                                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-70              
+ src/app/api/v1/auth/logout                                 |       0 |      100 |       0 |       0 |                   
+  route.ts                                                  |       0 |      100 |       0 |       0 | 1-26              
+ src/app/api/v1/auth/me                                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-30              
+ src/app/api/v1/auth/profile                                |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-217             
+ src/app/api/v1/auth/refresh                                |       0 |      100 |       0 |       0 |                   
+  route.ts                                                  |       0 |      100 |       0 |       0 | 2-13              
+ src/app/api/v1/auto-assignment/config                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-149             
+ src/app/api/v1/auto-assignment/trigger                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-67              
+ src/app/api/v1/commitments                                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-225             
+ src/app/api/v1/commitments/[id]                            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-355             
+ src/app/api/v1/commitments/[id]/assign                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-221             
+ src/app/api/v1/commitments/[id]/notify                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-209             
+ src/app/api/v1/commitments/available                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-151             
+ src/app/api/v1/coordinator/analytics                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-33              
+ src/app/api/v1/dashboard/resource-management/commitments   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-129             
+ src/app/api/v1/dashboard/resource-management/critical-gaps |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-154             
+ src/app/api/v1/dashboard/resource-management/gap-analysis  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-310             
+ src/app/api/v1/dashboard/resource-management/stats         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-134             
+ src/app/api/v1/dashboard/situation                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-2392            
+ src/app/api/v1/delivery-media                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-94              
+ src/app/api/v1/delivery-media/[id]                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-59              
+ src/app/api/v1/delivery-media/sync                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-36              
+ src/app/api/v1/donors                                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-194             
+ src/app/api/v1/donors/[id]                                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-514             
+ src/app/api/v1/donors/[id]/commitments                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-336             
+ src/app/api/v1/donors/[id]/performance-trends              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-338             
+ src/app/api/v1/donors/entities                             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-167             
+ src/app/api/v1/donors/entities/[id]/assessments            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-195             
+ src/app/api/v1/donors/entities/[id]/assessments/latest     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-317             
+ src/app/api/v1/donors/entities/[id]/assessments/trends     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-481             
+ src/app/api/v1/donors/entities/[id]/demographics           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-185             
+ src/app/api/v1/donors/entities/[id]/gap-analysis           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-667             
+ src/app/api/v1/donors/entities/[id]/reports/export         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-137             
+ src/app/api/v1/donors/entities/impact/assessments/latest   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-396             
+ src/app/api/v1/donors/entities/impact/demographics         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-217             
+ src/app/api/v1/donors/management                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-181             
+ src/app/api/v1/donors/metrics                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-349             
+ src/app/api/v1/donors/profile                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-297             
+ src/app/api/v1/donors/reports/generate                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-170             
+ src/app/api/v1/entities                                    |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-92              
+ src/app/api/v1/entities/[id]                               |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-107             
+ src/app/api/v1/entities/[id]/assessments/latest            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 8-291             
+ src/app/api/v1/entities/[id]/auto-approval                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-201             
+ src/app/api/v1/entities/[id]/donor-recommendations         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-214             
+ src/app/api/v1/entities/[id]/donors                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-103             
+ src/app/api/v1/entities/[id]/incidents                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 9-96              
+ src/app/api/v1/entities/assigned                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-52              
+ src/app/api/v1/entities/commitments                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-266             
+ src/app/api/v1/entities/public                             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-27              
+ src/app/api/v1/entity-assignments                          |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-189             
+ src/app/api/v1/entity-assignments/[id]                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-122             
+ src/app/api/v1/entity-assignments/bulk                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-172             
+ src/app/api/v1/entity-assignments/collaboration            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-83              
+ src/app/api/v1/entity-assignments/entity/[entityId]        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-104             
+ src/app/api/v1/entity-assignments/suggestions              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-124             
+ src/app/api/v1/entity-assignments/user/[userId]            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-84              
+ src/app/api/v1/exports/charts                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-453             
+ src/app/api/v1/exports/csv                                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-404             
+ src/app/api/v1/exports/reports                             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-922             
+ src/app/api/v1/exports/schedule                            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-270             
+ src/app/api/v1/incidents                                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-39              
+ src/app/api/v1/incidents/[id]                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-93              
+ src/app/api/v1/incidents/[id]/assessment-summary           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 8-45              
+ src/app/api/v1/incidents/[id]/entities                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-85              
+ src/app/api/v1/incidents/from-assessment                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-80              
+ src/app/api/v1/incidents/types                             |       0 |      100 |       0 |       0 |                   
+  route.ts                                                  |       0 |      100 |       0 |       0 | 1-37              
+ src/app/api/v1/jobs/email-digest                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-17              
+ src/app/api/v1/leaderboard                                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-346             
+ src/app/api/v1/leaderboard/criteria                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-157             
+ src/app/api/v1/manifest                                    |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-72              
+ src/app/api/v1/map-config                                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-58              
+ src/app/api/v1/notification-config                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-81              
+ src/app/api/v1/notifications                               |       0 |      100 |       0 |       0 |                   
+  route.ts                                                  |       0 |      100 |       0 |       0 | 1-35              
+ src/app/api/v1/notifications/[id]/dismiss                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-30              
+ src/app/api/v1/notifications/[id]/read                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-30              
+ src/app/api/v1/notifications/unsubscribe                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-30              
+ src/app/api/v1/permissions                                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-44              
+ src/app/api/v1/preliminary-assessments                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-79              
+ src/app/api/v1/preliminary-assessments/[id]                |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-207             
+ src/app/api/v1/preliminary-assessments/user/[userId]       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-83              
+ src/app/api/v1/push/subscribe                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-65              
+ src/app/api/v1/push/test                                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-28              
+ src/app/api/v1/questions                                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-34              
+ src/app/api/v1/rapid-assessments                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-59              
+ src/app/api/v1/rapid-assessments/[id]                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-221             
+ src/app/api/v1/rapid-assessments/[id]/submit               |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-78              
+ src/app/api/v1/rapid-assessments/latest                    |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-70              
+ src/app/api/v1/rapid-assessments/update-priorities         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-70              
+ src/app/api/v1/rapid-assessments/user/[userId]             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-62              
+ src/app/api/v1/relationships                               |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 9-111             
+ src/app/api/v1/relationships/statistics                    |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 9-95              
+ src/app/api/v1/relationships/timeline                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 9-140             
+ src/app/api/v1/reports/configurations                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 7-375             
+ src/app/api/v1/reports/configurations/[id]                 |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 9-281             
+ src/app/api/v1/reports/download/[id]                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 6-425             
+ src/app/api/v1/reports/executions                          |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-64              
+ src/app/api/v1/reports/executions/[id]                     |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 6-380             
+ src/app/api/v1/reports/generate                            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 6-1117            
+ src/app/api/v1/reports/performance/export                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-305             
+ src/app/api/v1/reports/statistics                          |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-50              
+ src/app/api/v1/reports/templates                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 7-219             
+ src/app/api/v1/reports/templates/[id]                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 8-277             
+ src/app/api/v1/responses/[id]                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-164             
+ src/app/api/v1/responses/[id]/collaboration                |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-234             
+ src/app/api/v1/responses/[id]/deliver                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-156             
+ src/app/api/v1/responses/[id]/reject                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-135             
+ src/app/api/v1/responses/[id]/unfulfilled-items            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-92              
+ src/app/api/v1/responses/[id]/verify                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-129             
+ src/app/api/v1/responses/assigned                          |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-69              
+ src/app/api/v1/responses/conflicts/[assessmentId]          |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-55              
+ src/app/api/v1/responses/delivered                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-61              
+ src/app/api/v1/responses/from-commitment                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-280             
+ src/app/api/v1/responses/planned                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-130             
+ src/app/api/v1/responses/planned/assigned                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-70              
+ src/app/api/v1/roles                                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-187             
+ src/app/api/v1/roles/[id]                                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-137             
+ src/app/api/v1/scoring-config                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-43              
+ src/app/api/v1/severity-thresholds                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-162             
+ src/app/api/v1/severity-thresholds/[id]                    |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-133             
+ src/app/api/v1/signals/analytics                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-34              
+ src/app/api/v1/signals/analytics/export                    |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-51              
+ src/app/api/v1/signals/live                                |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-118             
+ src/app/api/v1/signals/reconcile                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-28              
+ src/app/api/v1/storage/download                            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-43              
+ src/app/api/v1/sync/batch                                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-68              
+ src/app/api/v1/sync/conflicts                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-57              
+ src/app/api/v1/sync/conflicts/export                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-73              
+ src/app/api/v1/sync/conflicts/resolve                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-120             
+ src/app/api/v1/sync/conflicts/summary                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-64              
+ src/app/api/v1/sync/pull                                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-38              
+ src/app/api/v1/sync/resolve                                |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-56              
+ src/app/api/v1/sync/status                                 |       0 |      100 |       0 |       0 |                   
+  route.ts                                                  |       0 |      100 |       0 |       0 | 2-24              
+ src/app/api/v1/system/audit                                |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-202             
+ src/app/api/v1/system/audit/export                         |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-103             
+ src/app/api/v1/system/backup/external                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-46              
+ src/app/api/v1/system/branding                             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-30              
+ src/app/api/v1/system/branding/upload                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-45              
+ src/app/api/v1/system/currency                             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-28              
+ src/app/api/v1/system/health                               |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-142             
+ src/app/api/v1/system/settings                             |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-123             
+ src/app/api/v1/users                                       |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-126             
+ src/app/api/v1/users/[userId]                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-179             
+ src/app/api/v1/users/[userId]/roles                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-85              
+ src/app/api/v1/users/assignable                            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-73              
+ src/app/api/v1/users/me/donor                              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-123             
+ src/app/api/v1/verification/analytics                      |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 2-97              
+ src/app/api/v1/verification/audit                          |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-219             
+ src/app/api/v1/verification/audit/[id]/rollback            |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-89              
+ src/app/api/v1/verification/audit/export                   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-87              
+ src/app/api/v1/verification/auto-approval                  |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-322             
+ src/app/api/v1/verification/auto-approval/responses        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-322             
+ src/app/api/v1/verification/live                           |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-199             
+ src/app/api/v1/verification/metrics                        |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-146             
+ src/app/api/v1/verification/metrics/responses              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-332             
+ src/app/api/v1/verification/queue/assessments              |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-261             
+ src/app/api/v1/verification/queue/deliveries               |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-345             
+ src/app/api/v1/verification/queue/deliveries/[id]/verify   |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-263             
+ src/app/api/v1/verification/queue/responses                |       0 |        0 |       0 |       0 |                   
+  route.ts                                                  |       0 |        0 |       0 |       0 | 1-155             
+ src/app/login                                              |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-7               
+ src/app/profile                                            |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-84              
+ src/app/rapid-assessments                                  |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-31              
+ src/app/rapid-assessments/[id]                             |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 1-9               
+ src/app/rapid-assessments/new                              |       0 |        0 |       0 |       0 |                   
+  page.tsx                                                  |       0 |        0 |       0 |       0 | 3-220             
+ src/app/register                                           |       0 |      100 |       0 |       0 |                   
+  page.tsx                                                  |       0 |      100 |       0 |       0 | 3-12              
+ src/components/analytics                                   |       0 |        0 |       0 |       0 |                   
+  AfterActionWidgets.tsx                                    |       0 |        0 |       0 |       0 | 3-351             
+  AssessmentFreshnessHeatmap.tsx                            |       0 |        0 |       0 |       0 | 3-115             
+  GapRadarChart.tsx                                         |       0 |        0 |       0 |       0 | 3-76              
+  LivePulseWidgets.tsx                                      |       0 |        0 |       0 |       0 | 3-154             
+  PipelineFunnelChart.tsx                                   |       0 |        0 |       0 |       0 | 3-55              
+  PopulationImpactCharts.tsx                                |       0 |        0 |       0 |       0 | 3-224             
+  PriorityDistributionChart.tsx                             |       0 |        0 |       0 |       0 | 3-121             
+  ResolutionVelocityChart.tsx                               |       0 |        0 |       0 |       0 | 3-80              
+  ResourcePipelineCharts.tsx                                |       0 |        0 |       0 |       0 | 3-202             
+  RoleEngagementCards.tsx                                   |       0 |        0 |       0 |       0 | 3-51              
+  TopEntitiesTable.tsx                                      |       0 |        0 |       0 |       0 | 3-69              
+  VerificationThroughputChart.tsx                           |       0 |        0 |       0 |       0 | 3-158             
+  VolumeOverTimeChart.tsx                                   |       0 |        0 |       0 |       0 | 3-97              
+  WorkloadDistributionChart.tsx                             |       0 |        0 |       0 |       0 | 3-80              
+ src/components/auth                                        |       0 |        0 |       0 |       0 |                   
+  EditUserForm.tsx                                          |       0 |        0 |       0 |       0 | 3-397             
+  LoginForm.tsx                                             |       0 |        0 |       0 |       0 | 3-172             
+  RegisterForm.tsx                                          |       0 |        0 |       0 |       0 | 3-242             
+ src/components/coordinator                                 |       0 |        0 |       0 |       0 |                   
+  AssessmentRelationshipMap.tsx                             |       0 |        0 |       0 |       0 | 11-673            
+  AssessmentTimeline.tsx                                    |       0 |        0 |       0 |       0 | 11-521            
+  EntityAssignmentForm.tsx                                  |       0 |        0 |       0 |       0 | 3-568             
+  IncidentManagement.tsx                                    |       0 |        0 |       0 |       0 | 3-847             
+  PriorityInfoPopup.tsx                                     |       0 |        0 |       0 |       0 | 3-222             
+ src/components/dashboards/admin                            |       0 |        0 |       0 |       0 |                   
+  AuditLogDashboard.tsx                                     |       0 |        0 |       0 |       0 | 3-576             
+ src/components/dashboards/crisis                           |       0 |        0 |       0 |       0 |                   
+  ConflictExportDialog.tsx                                  |       0 |        0 |       0 |       0 | 3-166             
+  ConflictLog.tsx                                           |       0 |        0 |       0 |       0 | 3-356             
+  ConflictSummary.tsx                                       |       0 |        0 |       0 |       0 | 3-115             
+  DonorMetricsDashboard.tsx                                 |       0 |        0 |       0 |       0 | 3-293             
+  ResourceGapAnalysis.tsx                                   |       0 |        0 |       0 |       0 | 3-514             
+  ResourceManagement.tsx                                    |       0 |        0 |       0 |       0 | 3-435             
+  ResponseVerificationQueue.tsx                             |       0 |        0 |       0 |       0 | 3-514             
+  VerificationQueueManagement.tsx                           |       0 |        0 |       0 |       0 | 3-336             
+  VerifiedBadge.tsx                                         |       0 |        0 |       0 |       0 | 1-90              
+ src/components/dashboards/shared/action-queue              |       0 |        0 |       0 |       0 |                   
+  ActionQueue.tsx                                           |       0 |        0 |       0 |       0 | 3-240             
+  ActionQueueItem.tsx                                       |       0 |        0 |       0 |       0 | 3-205             
+  ActionQueueMapPanel.tsx                                   |       0 |        0 |       0 |       0 | 3-210             
+  NotificationBell.tsx                                      |       0 |        0 |       0 |       0 | 3-168             
+  PerItemCoverage.tsx                                       |       0 |        0 |       0 |       0 | 3-39              
+  SignalDetailPanel.tsx                                     |       0 |        0 |       0 |       0 | 3-485             
+  SignalPriorityBadge.tsx                                   |       0 |        0 |       0 |       0 | 3-83              
+  SignalReasonIcon.tsx                                      |       0 |        0 |       0 |       0 | 3-96              
+  map-utils.ts                                              |       0 |        0 |       0 |       0 | 10-46             
+ src/components/dashboards/shared/exports                   |       0 |        0 |       0 |       0 |                   
+  ExportButton.tsx                                          |       0 |        0 |       0 |       0 | 3-239             
+  ExportModal.tsx                                           |       0 |        0 |       0 |       0 | 3-771             
+ src/components/dashboards/situation                        |       0 |        0 |       0 |       0 |                   
+  EntityAssessmentPanel.tsx                                 |       0 |        0 |       0 |       0 | 3-497             
+  IncidentOverviewPanel.tsx                                 |       0 |        0 |       0 |       0 | 3-273             
+  InteractiveMap.tsx                                        |       0 |        0 |       0 |       0 | 3-439             
+  PanelResizer.tsx                                          |       0 |        0 |       0 |       0 | 3-270             
+  ResponsivePanelWrapper.tsx                                |       0 |        0 |       0 |       0 | 3-254             
+  SituationDashboardLayout.tsx                              |       0 |        0 |       0 |       0 | 3-187             
+ src/components/dashboards/situation/components             |       0 |        0 |       0 |       0 |                   
+  AdvancedFilters.tsx                                       |       0 |        0 |       0 |       0 | 3-527             
+  AggregateMetrics.tsx                                      |       0 |        0 |       0 |       0 | 3-431             
+  AggregationInfoPopup.tsx                                  |       0 |        0 |       0 |       0 | 3-239             
+  AssessmentCategorySummary.tsx                             |       0 |        0 |       0 |       0 | 3-549             
+  DonorOverlayControl.tsx                                   |       0 |        0 |       0 |       0 | 3-190             
+  EntityMarker.tsx                                          |       0 |        0 |       0 |       0 | 3-387             
+  EntitySelector.tsx                                        |       0 |        0 |       0 |       0 | 3-438             
+  GapAnalysisSummary.tsx                                    |       0 |        0 |       0 |       0 | 3-382             
+  GapIndicator.tsx                                          |       0 |        0 |       0 |       0 | 3-173             
+  IncidentSelector.tsx                                      |       0 |        0 |       0 |       0 | 3-400             
+  IncidentSummary.tsx                                       |       0 |        0 |       0 |       0 | 3-237             
+  IncidentsOverview.tsx                                     |       0 |        0 |       0 |       0 | 3-337             
+  IndividualEntityGapInfoPopup.tsx                          |       0 |        0 |       0 |       0 | 3-489             
+  OfflineTileLayer.tsx                                      |       0 |        0 |       0 |       0 | 3-98              
+  PopulationImpact.tsx                                      |       0 |        0 |       0 |       0 | 3-997             
+  PreliminaryImpact.tsx                                     |       0 |        0 |       0 |       0 | 3-353             
+  TopDonorsSection.tsx                                      |       0 |        0 |       0 |       0 | 3-236             
+ src/components/dashboards/situation/executive              |       0 |        0 |       0 |       0 |                   
+  CompactAssessmentTile.tsx                                 |       0 |        0 |       0 |       0 | 3-328             
+  ExecutiveIncidentsTable.tsx                               |       0 |        0 |       0 |       0 | 3-291             
+  GroupedImpactSummary.tsx                                  |       0 |        0 |       0 |       0 | 3-379             
+ src/components/dashboards/situation/layouts                |       0 |      100 |       0 |       0 |                   
+  CoordinatorPanelLayout.tsx                                |       0 |      100 |       0 |       0 | 3-60              
+  ExecutivePanelLayout.tsx                                  |       0 |      100 |       0 |       0 | 3-66              
+ src/components/dashboards/situation/shared                 |       0 |        0 |       0 |       0 |                   
+  ModeToggle.tsx                                            |       0 |        0 |       0 |       0 | 3-44              
+  ZoomAdjustmentHint.tsx                                    |       0 |        0 |       0 |       0 | 3-29              
+ src/components/delivery                                    |       0 |        0 |       0 |       0 |                   
+  OfflineSyncDashboard.tsx                                  |       0 |        0 |       0 |       0 | 3-261             
+  OfflineSyncStatus.tsx                                     |       0 |        0 |       0 |       0 | 3-236             
+ src/components/donor                                       |       0 |        0 |       0 |       0 |                   
+  AchievementNotifications.tsx                              |       0 |        0 |       0 |       0 | 3-255             
+  AssessmentExport.tsx                                      |       0 |        0 |       0 |       0 | 3-358             
+  AssessmentTrends.tsx                                      |       0 |        0 |       0 |       0 | 3-390             
+  AssessmentViewer.tsx                                      |       0 |        0 |       0 |       0 | 3-434             
+  CommitmentDashboard.tsx                                   |       0 |        0 |       0 |       0 | 3-413             
+  CommitmentForm.tsx                                        |       0 |        0 |       0 |       0 | 3-584             
+  CommitmentFromPlanForm.tsx                                |       0 |        0 |       0 |       0 | 3-217             
+  CommitmentStatusTracker.tsx                               |       0 |        0 |       0 |       0 | 3-403             
+  DonorDashboard.tsx                                        |       0 |        0 |       0 |       0 | 3-655             
+  DonorPerformanceDashboard.tsx                             |       0 |        0 |       0 |       0 | 3-470             
+  DonorProfile.tsx                                          |       0 |        0 |       0 |       0 | 3-221             
+  DonorRegistrationForm.tsx                                 |       0 |        0 |       0 |       0 | 3-525             
+  EntityDonorAssignment.tsx                                 |       0 |        0 |       0 |       0 | 3-594             
+  EntityInsightsCards.tsx                                   |       0 |        0 |       0 |       0 | 3-380             
+  EntityInsightsHeader.tsx                                  |       0 |        0 |       0 |       0 | 3-74              
+  EntitySelector.tsx                                        |       0 |        0 |       0 |       0 | 3-460             
+  ExportButton.tsx                                          |       0 |        0 |       0 |       0 | 3-279             
+  GameBadgeSystem.tsx                                       |       0 |        0 |       0 |       0 | 3-480             
+  GapAnalysis.tsx                                           |       0 |        0 |       0 |       0 | 3-332             
+  LeaderboardDisplay.tsx                                    |       0 |        0 |       0 |       0 | 3-355             
+  PeerComparison.tsx                                        |       0 |        0 |       0 |       0 | 3-451             
+ src/components/forms                                       |       0 |        0 |       0 |       0 |                   
+  EntityForm.tsx                                            |       0 |        0 |       0 |       0 | 3-276             
+  LocationSelector.tsx                                      |       0 |        0 |       0 |       0 | 3-102             
+ src/components/forms/assessment                            |       0 |        0 |       0 |       0 |                   
+  FoodAssessmentForm.tsx                                    |       0 |        0 |       0 |       0 | 3-546             
+  HealthAssessmentForm.tsx                                  |       0 |        0 |       0 |       0 | 3-657             
+  PopulationAssessmentForm.tsx                              |       0 |        0 |       0 |       0 | 3-770             
+  PreliminaryAssessmentForm.tsx                             |       0 |        0 |       0 |       0 | 3-628             
+  SecurityAssessmentForm.tsx                                |       0 |        0 |       0 |       0 | 3-445             
+  ShelterAssessmentForm.tsx                                 |       0 |        0 |       0 |       0 | 3-495             
+  WASHAssessmentForm.tsx                                    |       0 |        0 |       0 |       0 | 3-570             
+ src/components/forms/delivery                              |       0 |        0 |       0 |       0 |                   
+  DeliveryConfirmationForm.tsx                              |       0 |        0 |       0 |       0 | 3-701             
+  DeliveryMediaField.tsx                                    |       0 |        0 |       0 |       0 | 3-471             
+  EnhancedDeliveryMediaCapture.tsx                          |       0 |        0 |       0 |       0 | 3-601             
+ src/components/forms/incident                              |       0 |        0 |       0 |       0 |                   
+  IncidentCreationForm.tsx                                  |       0 |        0 |       0 |       0 | 3-364             
+ src/components/forms/response                              |       0 |        0 |       0 |       0 |                   
+  DonorCommitmentImportForm.tsx                             |       0 |        0 |       0 |       0 | 3-951             
+  ResponsePlanningForm.tsx                                  |       0 |        0 |       0 |       0 | 3-1177            
+ src/components/layouts                                     |       0 |        0 |       0 |       0 |                   
+  AppShell.tsx                                              |       0 |        0 |       0 |       0 | 3-150             
+  Navigation.tsx                                            |       0 |        0 |       0 |       0 | 3-667             
+  OfflineLayout.tsx                                         |       0 |        0 |       0 |       0 | 4-189             
+  RoleSwitcher.tsx                                          |       0 |        0 |       0 |       0 | 3-244             
+ src/components/offline                                     |       0 |        0 |       0 |       0 |                   
+  OfflineGuard.tsx                                          |       0 |        0 |       0 |       0 | 6-282             
+ src/components/providers                                   |       0 |        0 |       0 |       0 |                   
+  AuthInitializer.tsx                                       |       0 |        0 |       0 |       0 | 3-80              
+  AuthProvider.tsx                                          |       0 |        0 |       0 |       0 | 3-43              
+  QueryProvider.tsx                                         |       0 |        0 |       0 |       0 | 3-14              
+  ServiceWorkerRegistration.tsx                             |       0 |        0 |       0 |       0 | 3-36              
+  ThemeProvider.tsx                                         |       0 |      100 |       0 |       0 | 3-7               
+ src/components/pwa                                         |       0 |        0 |       0 |       0 |                   
+  InstallPrompt.tsx                                         |       0 |        0 |       0 |       0 | 4-271             
+ src/components/reports                                     |       0 |        0 |       0 |       0 |                   
+  ReportManagement.tsx                                      |       0 |        0 |       0 |       0 | 8-943             
+ src/components/reports/builder                             |       0 |        0 |       0 |       0 |                   
+  DataSourceConfigurator.tsx                                |       0 |        0 |       0 |       0 | 3-660             
+  ReportBuilder.tsx                                         |       0 |        0 |       0 |       0 | 3-1423            
+  TemplateSelector.tsx                                      |       0 |        0 |       0 |       0 | 3-342             
+ src/components/response                                    |       0 |        0 |       0 |       0 |                   
+  AssessmentSelector.tsx                                    |       0 |        0 |       0 |       0 | 3-181             
+  CollaborationStatus.tsx                                   |       0 |        0 |       0 |       0 | 3-186             
+  ResponsePlanningDashboard.tsx                             |       0 |        0 |       0 |       0 | 3-306             
+ src/components/settings                                    |       0 |        0 |       0 |       0 |                   
+  SeverityThresholdTable.tsx                                |       0 |        0 |       0 |       0 | 3-330             
+ src/components/shared                                      |       0 |        0 |       0 |       0 |                   
+  BrandedFooter.tsx                                         |       0 |      100 |       0 |       0 | 3-6               
+  Breadcrumbs.tsx                                           |       0 |        0 |       0 |       0 | 3-327             
+  ContentSkeleton.tsx                                       |       0 |        0 |       0 |       0 | 3-113             
+  DataCardGrid.tsx                                          |       0 |        0 |       0 |       0 | 3-121             
+  DataCardList.tsx                                          |       0 |        0 |       0 |       0 | 3-238             
+  DataList.tsx                                              |       0 |      100 |     100 |       0 | 1-4               
+  DataTable.tsx                                             |       0 |        0 |       0 |       0 | 3-418             
+  EmptyState.tsx                                            |       0 |        0 |       0 |       0 | 3-220             
+  EntitySelector.tsx                                        |       0 |        0 |       0 |       0 | 3-186             
+  EntitySelectorSkeleton.tsx                                |       0 |      100 |       0 |       0 | 1-7               
+  ErrorAlert.tsx                                            |       0 |        0 |       0 |       0 | 3-19              
+  FilterBar.tsx                                             |       0 |        0 |       0 |       0 | 3-402             
+  FilterPanel.tsx                                           |       0 |        0 |       0 |       0 | 3-708             
+  FormActionBar.tsx                                         |       0 |        0 |       0 |       0 | 3-69              
+  FormCard.tsx                                              |       0 |        0 |       0 |       0 | 3-101             
+  FormProgress.tsx                                          |       0 |        0 |       0 |       0 | 3-32              
+  FormStateManager.tsx                                      |       0 |        0 |       0 |       0 | 3-104             
+  GPSCapture.tsx                                            |       0 |        0 |       0 |       0 | 3-204             
+  Header.tsx                                                |       0 |        0 |       0 |       0 | 3-35              
+  IncidentSelector.tsx                                      |       0 |        0 |       0 |       0 | 3-81              
+  LocationSelector.tsx                                      |       0 |        0 |       0 |       0 | 3-141             
+  MediaField.tsx                                            |       0 |        0 |       0 |       0 | 3-252             
+  MultipleEntitySelector.tsx                                |       0 |        0 |       0 |       0 | 3-184             
+  OfflineIndicator.tsx                                      |       0 |        0 |       0 |       0 | 3-106             
+  ProgressBar.tsx                                           |       0 |        0 |       0 |       0 | 3-39              
+  RoleBasedRoute.tsx                                        |       0 |        0 |       0 |       0 | 3-118             
+  SafeDataLoader.tsx                                        |       0 |        0 |       0 |       0 | 3-185             
+  SearchToolbar.tsx                                         |       0 |        0 |       0 |       0 | 3-81              
+  SectionProgress.tsx                                       |       0 |        0 |       0 |       0 | 3-80              
+  StatCard.tsx                                              |       0 |        0 |       0 |       0 | 3-183             
+  StatCardGrid.tsx                                          |       0 |        0 |       0 |       0 | 3-92              
+  StatusBadge.tsx                                           |       0 |        0 |       0 |       0 | 1-248             
+  StickyFormHeader.tsx                                      |       0 |        0 |       0 |       0 | 3-76              
+  SyncIndicator.tsx                                         |       0 |        0 |       0 |       0 | 3-74              
+  SyncQueue.tsx                                             |       0 |        0 |       0 |       0 | 3-332             
+  TagPillSelect.tsx                                         |       0 |        0 |       0 |       0 | 3-43              
+  ThemeToggle.tsx                                           |       0 |      100 |       0 |       0 | 3-34              
+ src/components/testing                                     |       0 |        0 |       0 |       0 |                   
+  living-documentation-dashboard.tsx                        |       0 |        0 |       0 |       0 | 14-559            
+ src/components/ui                                          |       0 |        0 |       0 |       0 |                   
+  alert-dialog.tsx                                          |       0 |      100 |     100 |       0 | 1-138             
+  alert.tsx                                                 |       0 |      100 |     100 |       0 | 1-59              
+  avatar.tsx                                                |       0 |        0 |       0 |       0 | 1-78              
+  badge.tsx                                                 |       0 |      100 |       0 |       0 | 1-36              
+  button.tsx                                                |       0 |        0 |       0 |       0 | 1-56              
+  calendar.tsx                                              |       0 |        0 |       0 |       0 | 1-61              
+  card.tsx                                                  |       0 |      100 |     100 |       0 | 1-79              
+  checkbox.tsx                                              |       0 |      100 |     100 |       0 | 3-30              
+  collapsible.tsx                                           |       0 |      100 |     100 |       0 | 3-11              
+  command.tsx                                               |       0 |      100 |       0 |       0 | 1-152             
+  dialog.tsx                                                |       0 |      100 |     100 |       0 | 3-121             
+  dropdown-menu.tsx                                         |       0 |        0 |       0 |       0 | 3-199             
+  form.tsx                                                  |       0 |        0 |       0 |       0 | 3-177             
+  input.tsx                                                 |       0 |      100 |       0 |       0 | 1-22              
+  label.tsx                                                 |       0 |      100 |     100 |       0 | 3-26              
+  pagination.tsx                                            |       0 |        0 |     100 |       0 | 1-116             
+  popover.tsx                                               |       0 |        0 |     100 |       0 | 1-29              
+  progress.tsx                                              |       0 |        0 |     100 |       0 | 3-28              
+  radio-group.tsx                                           |       0 |      100 |       0 |       0 | 4-45              
+  scroll-area.tsx                                           |       0 |        0 |     100 |       0 | 1-46              
+  select.tsx                                                |       0 |        0 |     100 |       0 | 3-159             
+  separator.tsx                                             |       0 |        0 |     100 |       0 | 1-29              
+  skeleton.tsx                                              |       0 |      100 |       0 |       0 | 1-15              
+  slider.tsx                                                |       0 |      100 |     100 |       0 | 2-27              
+  switch.tsx                                                |       0 |      100 |     100 |       0 | 3-29              
+  table.tsx                                                 |       0 |      100 |     100 |       0 | 1-116             
+  tabs.tsx                                                  |       0 |      100 |     100 |       0 | 1-53              
+  textarea.tsx                                              |       0 |      100 |       0 |       0 | 1-24              
+  tooltip.tsx                                               |       0 |        0 |     100 |       0 | 1-28              
+ src/components/verification                                |       0 |        0 |       0 |       0 |                   
+  AutoApprovalConfig.tsx                                    |       0 |        0 |       0 |       0 | 3-701             
+  ConfigurationAnalytics.tsx                                |       0 |        0 |       0 |       0 | 3-458             
+  ConfigurationAuditHistory.tsx                             |       0 |        0 |       0 |       0 | 3-726             
+  ConnectionStatusIndicator.tsx                             |       0 |        0 |       0 |       0 | 3-216             
+  EnhancedAutoApprovalConfig.tsx                            |       0 |        0 |       0 |       0 | 3-970             
+  EnhancedVerificationDashboard.tsx                         |       0 |        0 |       0 |       0 | 3-523             
+  QueueFilters.tsx                                          |       0 |        0 |       0 |       0 | 3-482             
+  QueueFiltersV2.tsx                                        |       0 |        0 |       0 |       0 | 3-312             
+  StatusIndicator.tsx                                       |       0 |        0 |       0 |       0 | 1-196             
+  VerificationActions.tsx                                   |       0 |        0 |       0 |       0 | 3-416             
+  VerificationAnalytics.tsx                                 |       0 |        0 |       0 |       0 | 3-522             
+  VerificationDashboard.tsx                                 |       0 |        0 |       0 |       0 | 3-666             
+  VerificationQueue.tsx                                     |       0 |        0 |       0 |       0 | 3-190             
+ src/hooks                                                  |       0 |        0 |       0 |       0 |                   
+  use-commitment-stats.ts                                   |       0 |        0 |       0 |       0 | 3-95              
+  useActionSignals.ts                                       |       0 |        0 |       0 |       0 | 1-128             
+  useAdminDonorDetail.ts                                    |       0 |        0 |       0 |       0 | 1-27              
+  useAdminDonors.ts                                         |       0 |        0 |       0 |       0 | 1-15              
+  useAuth.ts                                                |       0 |      100 |       0 |       0 | 1-7               
+  useBackgroundSync.ts                                      |       0 |        0 |       0 |       0 | 3-140             
+  useBranding.ts                                            |       0 |        0 |       0 |       0 | 3-53              
+  useCollaboration.ts                                       |       0 |        0 |       0 |       0 | 1-84              
+  useCommitments.ts                                         |       0 |        0 |       0 |       0 | 1-38              
+  useConflicts.ts                                           |       0 |        0 |       0 |       0 | 1-132             
+  useCoordinatorAnalytics.ts                                |       0 |        0 |       0 |       0 | 1-161             
+  useCoordinatorIncident.ts                                 |       0 |        0 |       0 |       0 | 1-23              
+  useCurrency.ts                                            |       0 |        0 |       0 |       0 | 3-66              
+  useDonor.ts                                               |       0 |        0 |       0 |       0 | 1-204             
+  useDonorMetrics.ts                                        |       0 |        0 |       0 |       0 | 1-137             
+  useEntities.ts                                            |       0 |        0 |       0 |       0 | 1-57              
+  useFilters.ts                                             |       0 |        0 |       0 |       0 | 3-337             
+  useGPS.ts                                                 |       0 |        0 |       0 |       0 | 3-120             
+  useGapAnalysisRealtime.ts                                 |       0 |        0 |       0 |       0 | 1-189             
+  useIncident.ts                                            |       0 |        0 |       0 |       0 | 1-14              
+  useIncidentDetails.ts                                     |       0 |        0 |       0 |       0 | 1-23              
+  useIncidents.ts                                           |       0 |        0 |       0 |       0 | 3-56              
+  useLeaderboard.ts                                         |       0 |        0 |       0 |       0 | 1-17              
+  useMapConfig.ts                                           |       0 |        0 |       0 |       0 | 1-31              
+  useMapPerformance.ts                                      |       0 |        0 |       0 |       0 | 3-240             
+  useNotifications.ts                                       |       0 |        0 |       0 |       0 | 1-109             
+  useOffline.ts                                             |       0 |        0 |       0 |       0 | 3-168             
+  usePerformanceExport.ts                                   |       0 |        0 |       0 |       0 | 1-9               
+  usePreliminaryAssessment.ts                               |       0 |        0 |       0 |       0 | 1-14              
+  useRapidAssessmentDrafts.ts                               |       0 |        0 |       0 |       0 | 3-116             
+  useRealTimeMonitoring.ts                                  |       0 |        0 |       0 |       0 | 3-430             
+  useRealTimeVerification.ts                                |       0 |        0 |       0 |       0 | 1-432             
+  useRelationships.ts                                       |       0 |        0 |       0 |       0 | 1-66              
+  useReportManagement.ts                                    |       0 |        0 |       0 |       0 | 1-141             
+  useResponderPlanning.ts                                   |       0 |        0 |       0 |       0 | 1-25              
+  useResponseVerification.ts                                |       0 |        0 |       0 |       0 | 1-119             
+  useResponseVerificationMetrics.ts                         |       0 |        0 |       0 |       0 | 1-37              
+  useRoleSession.ts                                         |       0 |        0 |       0 |       0 | 3-183             
+  useSeverityThresholds.ts                                  |       0 |        0 |       0 |       0 | 1-180             
+  useSignalAnalytics.ts                                     |       0 |        0 |       0 |       0 | 1-19              
+  useSignalDetail.ts                                        |       0 |        0 |       0 |       0 | 1-87              
+  useSignalSSE.ts                                           |       0 |        0 |       0 |       0 | 1-119             
+  useSync.ts                                                |       0 |        0 |       0 |       0 | 1-278             
+  useTouchGestures.ts                                       |       0 |        0 |       0 |       0 | 3-208             
+  useVerification.ts                                        |       0 |        0 |       0 |       0 | 1-190             
+  useVerificationDeliveries.ts                              |       0 |        0 |       0 |       0 | 1-32              
+ src/lib                                                    |       0 |        0 |       0 |       0 |                   
+  api.ts                                                    |       0 |        0 |       0 |       0 | 1-193             
+  currency.ts                                               |       0 |        0 |       0 |       0 | 1-38              
+  icons.tsx                                                 |       0 |      100 |     100 |       0 | 1-470             
+  utils.ts                                                  |       0 |        0 |       0 |       0 | 1-100             
+ src/lib/api                                                |       0 |        0 |       0 |       0 |                   
+  response.ts                                               |       0 |        0 |       0 |       0 | 1-90              
+ src/lib/assignment                                         |       0 |        0 |       0 |       0 |                   
+  auto-assignment.ts                                        |       0 |        0 |       0 |       0 | 1-397             
+  middleware.ts                                             |       0 |        0 |       0 |       0 | 2-221             
+  multi-user-service.ts                                     |       0 |        0 |       0 |       0 | 1-517             
+ src/lib/auth                                               |       0 |        0 |       0 |       0 |                   
+  get-current-user.ts                                       |       0 |        0 |       0 |       0 | 1-64              
+  middleware.ts                                             |       0 |        0 |       0 |       0 | 1-103             
+  role-check.ts                                             |       0 |        0 |       0 |       0 | 1-51              
+  route-config.ts                                           |       0 |      100 |     100 |       0 | 3-102             
+  service.ts                                                |       0 |        0 |       0 |       0 | 1-317             
+  token-utils.ts                                            |       0 |        0 |       0 |       0 | 6-91              
+  verify.ts                                                 |       0 |        0 |       0 |       0 | 2-57              
+ src/lib/cache                                              |       0 |        0 |       0 |       0 |                   
+  cache.service.ts                                          |       0 |        0 |       0 |       0 | 1-123             
+  redis-client.ts                                           |       0 |        0 |       0 |       0 | 1-44              
+ src/lib/config                                             |       0 |        0 |       0 |       0 |                   
+  network-detection.ts                                      |       0 |        0 |       0 |       0 | 17-246            
+ src/lib/data                                               |       0 |        0 |       0 |       0 |                   
+  nigeria-locations.ts                                      |       0 |        0 |       0 |       0 | 18-476            
+ src/lib/db                                                 |    3.07 |     7.69 |       0 |    2.74 |                   
+  client.ts                                                 |      75 |      100 |     100 |     100 |                   
+  offline.ts                                                |       0 |        0 |       0 |       0 | 1-643             
+ src/lib/email                                              |       0 |        0 |       0 |       0 |                   
+  email.service.ts                                          |       0 |        0 |       0 |       0 | 17-96             
+  unsubscribe-token.ts                                      |       0 |        0 |       0 |       0 | 1-12              
+ src/lib/email/templates                                    |       0 |        0 |       0 |       0 |                   
+  base-template.ts                                          |       0 |        0 |       0 |       0 | 1-6               
+  commitment-notification.ts                                |       0 |      100 |       0 |       0 | 1-44              
+  digest-email.ts                                           |       0 |        0 |       0 |       0 | 1-114             
+  password-reset.ts                                         |       0 |      100 |       0 |       0 | 1-39              
+  report-generated.ts                                       |       0 |      100 |       0 |       0 | 1-35              
+  signal-notification.ts                                    |       0 |      100 |       0 |       0 | 1-75              
+ src/lib/exports                                            |       0 |        0 |       0 |       0 |                   
+  csv-generator.ts                                          |       0 |        0 |       0 |       0 | 3-1000            
+  download-manager.ts                                       |       0 |        0 |       0 |       0 | 1-606             
+ src/lib/jobs                                               |       0 |        0 |       0 |       0 |                   
+  email-digest.ts                                           |       0 |        0 |       0 |       0 | 1-120             
+  signal-reconciliation.ts                                  |       0 |        0 |       0 |       0 | 1-223             
+ src/lib/map                                                |       0 |        0 |       0 |       0 |                   
+  offlineTiles.ts                                           |       0 |        0 |       0 |       0 | 1-386             
+ src/lib/monitoring                                         |       0 |        0 |       0 |       0 |                   
+  sentry.ts                                                 |       0 |        0 |       0 |       0 | 1-6               
+ src/lib/offline                                            |       0 |        0 |       0 |       0 |                   
+  bootstrap.ts                                              |       0 |        0 |       0 |       0 | 4-473             
+ src/lib/questions                                          |   90.99 |     91.8 |   80.76 |   92.34 |                   
+  gap-derivation.ts                                         |     100 |      100 |     100 |     100 |                   
+  legacy-convert.ts                                         |   95.58 |    92.45 |     100 |   95.08 | 101,159,274       
+  registry-validation.ts                                    |   98.16 |     98.3 |     100 |     100 | 1037              
+  registry-versions.ts                                      |       0 |        0 |       0 |       0 | 14-50             
+ src/lib/reports                                            |       0 |        0 |       0 |       0 |                   
+  data-aggregator.ts                                        |       0 |        0 |       0 |       0 | 6-636             
+  template-engine.ts                                        |       0 |        0 |       0 |       0 | 6-537             
+ src/lib/services                                           |    2.01 |     1.61 |    1.91 |    1.93 |                   
+  action-signal-config.service.ts                           |       0 |        0 |       0 |       0 | 1-115             
+  action-signal.service.ts                                  |       0 |        0 |       0 |       0 | 1-1425            
+  assessment-export.service.ts                              |       0 |        0 |       0 |       0 | 3-587             
+  assessment-offline.service.ts                             |       0 |        0 |       0 |       0 | 1-141             
+  assessment-relationships.service.ts                       |       0 |        0 |       0 |       0 | 10-373            
+  audit-log.service.ts                                      |       0 |        0 |       0 |       0 | 1-81              
+  audit.service.ts                                          |       0 |      100 |       0 |       0 | 1-31              
+  commitment.service.ts                                     |       0 |        0 |       0 |       0 | 1-254             
+  conflict-export.service.ts                                |       0 |        0 |       0 |       0 | 2-332             
+  coordinator-analytics.service.ts                          |       0 |        0 |       0 |       0 | 1-733             
+  database-optimization.service.ts                          |       0 |        0 |       0 |       0 | 1-528             
+  delivery-media.service.ts                                 |       0 |        0 |       0 |       0 | 2-367             
+  delivery-offline.service.ts                               |       0 |        0 |       0 |       0 | 1-688             
+  entity-assignment.service.ts                              |       0 |        0 |       0 |       0 | 1-489             
+  entity.service.ts                                         |       0 |        0 |       0 |       0 | 1-104             
+  gamification.service.ts                                   |       0 |        0 |       0 |       0 | 1-438             
+  gap-analysis.service.ts                                   |   84.31 |       70 |   83.33 |    87.5 | 120-121,162-168   
+  incident-severity.service.ts                              |       0 |        0 |       0 |       0 | 1-170             
+  incident.service.ts                                       |       0 |        0 |       0 |       0 | 1-380             
+  leaderboard.service.ts                                    |       0 |        0 |       0 |       0 | 1-544             
+  map-config.service.ts                                     |       0 |        0 |       0 |       0 | 1-119             
+  notification-config.service.ts                            |       0 |        0 |       0 |       0 | 1-200             
+  notification.service.ts                                   |       0 |        0 |       0 |       0 | 1-192             
+  preliminary-assessment.service.ts                         |       0 |        0 |       0 |       0 | 1-294             
+  push-notification.service.ts                              |       0 |        0 |       0 |       0 | 1-94              
+  question-registry.service.ts                              |       0 |        0 |       0 |       0 | 33-1228           
+  rapid-assessment.service.ts                               |       0 |        0 |       0 |       0 | 1-681             
+  response-client.service.ts                                |       0 |        0 |       0 |       0 | 2-97              
+  response-offline.service.ts                               |       0 |        0 |       0 |       0 | 2-295             
+  response.service.ts                                       |       0 |        0 |       0 |       0 | 1-853             
+  scoring-config.service.ts                                 |   48.33 |    69.44 |   33.33 |   41.17 | 36-83,112-141     
+  signal-analytics-export.service.ts                        |       0 |        0 |       0 |       0 | 1-184             
+  signal-analytics.service.ts                               |       0 |        0 |       0 |       0 | 1-266             
+  sync-processing.service.ts                                |       0 |        0 |       0 |       0 | 1-361             
+  verification-broadcast.service.ts                         |       0 |      100 |       0 |       0 | 1-70              
+ src/lib/storage                                            |       0 |        0 |       0 |       0 |                   
+  backup-sync.service.ts                                    |       0 |        0 |       0 |       0 | 7-179             
+  paths.ts                                                  |       0 |      100 |       0 |       0 | 1-15              
+  s3-client.ts                                              |       0 |        0 |       0 |       0 | 1-39              
+  storage.service.ts                                        |       0 |        0 |       0 |       0 | 7-146             
+ src/lib/sync                                               |       0 |        0 |       0 |       0 |                   
+  conflict.ts                                               |       0 |        0 |       0 |       0 | 1-463             
+  engine.ts                                                 |       0 |        0 |       0 |       0 | 1-593             
+  queue.ts                                                  |       0 |        0 |       0 |       0 | 1-463             
+ src/lib/testing                                            |       0 |        0 |       0 |       0 |                   
+  fix-validator.ts                                          |       0 |        0 |       0 |       0 | 69-956            
+  living-documentation-dashboard.tsx                        |       0 |        0 |       0 |       0 | 14-558            
+  living-test-system.ts                                     |       0 |        0 |       0 |       0 | 10-891            
+ src/lib/utils                                              |       0 |        0 |       0 |       0 |                   
+  audit-logger.ts                                           |       0 |        0 |       0 |       0 | 1-96              
+  chart-config.ts                                           |       0 |        0 |       0 |       0 | 10-104            
+  chart-registration.ts                                     |       0 |      100 |     100 |       0 | 14-30             
+  debounce.ts                                               |       0 |      100 |       0 |       0 | 6-19              
+  delivery-media-manager.ts                                 |       0 |        0 |       0 |       0 | 2-396             
+  delivery-media-validator.ts                               |       0 |        0 |       0 |       0 | 26-530            
+  design-tokens.ts                                          |       0 |      100 |     100 |       0 | 1-45              
+  priority-colors.ts                                        |       0 |        0 |       0 |       0 | 1-73              
+  status-colors.ts                                          |       0 |        0 |       0 |       0 | 2-121             
+ src/lib/validation                                         |   34.93 |    69.04 |    62.5 |   47.97 |                   
+  action-signal.ts                                          |       0 |        0 |       0 |       0 | 1-29              
+  commitment.ts                                             |       0 |        0 |       0 |       0 | 1-43              
+  donor.ts                                                  |       0 |      100 |       0 |       0 | 1-26              
+  dynamic-assessment.ts                                     |   97.43 |     87.5 |     100 |     100 | 76,103-104        
+  entity-insights.ts                                        |       0 |      100 |     100 |       0 | 1-188             
+  gamification.ts                                           |       0 |      100 |     100 |       0 | 1-226             
+  incidents.ts                                              |   66.66 |      100 |     100 |     100 |                   
+  notification.ts                                           |       0 |        0 |       0 |       0 | 1-16              
+  preliminary-assessment.ts                                 |       0 |      100 |     100 |       0 | 1-40              
+  questions.ts                                              |       0 |      100 |     100 |       0 | 15-91             
+  rapid-assessment.ts                                       |   71.79 |      100 |     100 |     100 |                   
+  response.ts                                               |   61.53 |      100 |     100 |     100 |                   
+  signal-analytics.ts                                       |       0 |      100 |     100 |       0 | 1-3               
+ src/providers                                              |       0 |        0 |       0 |       0 |                   
+  BackgroundSyncProvider.tsx                                |       0 |        0 |       0 |       0 | 3-140             
+ src/stores                                                 |       0 |        0 |       0 |       0 |                   
+  action-signal.store.ts                                    |       0 |        0 |       0 |       0 | 1-161             
+  auth.store.ts                                             |       0 |        0 |       0 |       0 | 1-255             
+  dashboardLayout.store.ts                                  |       0 |        0 |       0 |       0 | 1-496             
+  entity.store.ts                                           |       0 |        0 |       0 |       0 | 1-273             
+  export.store.ts                                           |       0 |        0 |       0 |       0 | 1-510             
+  incident.store.ts                                         |       0 |        0 |       0 |       0 | 1-201             
+  offline.store.ts                                          |       0 |        0 |       0 |       0 | 1-217             
+  preliminary-assessment.store.ts                           |       0 |        0 |       0 |       0 | 1-457             
+  sync.store.ts                                             |       0 |        0 |       0 |       0 | 1-435             
+  verification.store.ts                                     |       0 |        0 |       0 |       0 | 1-481             
+ src/types                                                  |       0 |        0 |       0 |       0 |                   
+  action-signal.ts                                          |       0 |      100 |     100 |       0 | 122-139           
+  api.ts                                                    |       0 |        0 |       0 |       0 | 25-42             
+  commitment.ts                                             |       0 |        0 |       0 |       0 | 29                
+  donor.ts                                                  |       0 |        0 |       0 |       0 | 15                
+  entity-insights.ts                                        |       0 |      100 |       0 |       0 | 267-272           
+  media.ts                                                  |       0 |      100 |     100 |       0 | 1-118             
+  rapid-assessment.ts                                       |       0 |      100 |     100 |       0 | 1-3               
+  response.ts                                               |       0 |      100 |     100 |       0 | 1-69              
+ src/utils                                                  |       0 |        0 |       0 |       0 |                   
+  assessment-utils.ts                                       |       0 |        0 |       0 |       0 | 7-137             
+ src/utils/export                                           |       0 |        0 |       0 |       0 |                   
+  gapAnalysisCsv.ts                                         |       0 |        0 |       0 |       0 | 28-233            
+------------------------------------------------------------|---------|----------|---------|---------|-------------------
+
+Test Suites: 8 passed, 8 total
+Tests:       195 passed, 195 total
+Snapshots:   0 total
+Time:        8.78 s
+Ran all test suites.

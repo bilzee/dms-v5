@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db/client'
-import { RapidAssessment, AssessmentType, Prisma, Priority, Question } from '@prisma/client'
+import { RapidAssessment, AssessmentType, Prisma, Priority } from '@prisma/client'
 import {
   CreateRapidAssessmentInput,
   UpdateRapidAssessmentInput,
@@ -19,11 +19,10 @@ import {
 import {
   toAnswers,
   fromAnswers,
-  buildQuestionSnapshot,
   RapidAssessmentType,
   RapidAssessmentAnswers
 } from '@/lib/questions/legacy-convert'
-import { getRegistryVersions, RegistryVersions } from '@/lib/questions/registry-versions'
+import { QuestionRegistryService } from '@/lib/services/question-registry.service'
 
 /**
  * Rapid Assessment Service — Dynamic Question Registry edition.
@@ -42,30 +41,9 @@ import { getRegistryVersions, RegistryVersions } from '@/lib/questions/registry-
 // Returned assessments now carry answers/snapshot directly on the row.
 export type RapidAssessmentWithData = RapidAssessment
 
-/** Ordered registry questions for an assessment type (for snapshot building). */
-async function getRegistryQuestions(
-  assessmentType: AssessmentType,
-  tx?: Prisma.TransactionClient
-): Promise<Array<Question & { section: { sectionKey: string; title: string; description: string | null; category: string; order: number } }>> {
-  const client = tx ?? prisma
-  return client.question.findMany({
-    where: {
-      assessmentType,
-      isActive: true,
-    },
-    orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }],
-    include: {
-      section: {
-        select: {
-          sectionKey: true,
-          title: true,
-          description: true,
-          category: true,
-          order: true,
-        },
-      },
-    },
-  }) as Promise<Array<Question & { section: { sectionKey: string; title: string; description: string | null; category: string; order: number } }>>
+/** Total question count across snapshot sections (empty-registry guard). */
+function snapshotQuestionCount(snapshot: { sections: Array<{ questions: unknown[] }> }): number {
+  return snapshot.sections.reduce((count, section) => count + section.questions.length, 0)
 }
 
 /** Extracts the legacy typed payload from a create input by assessment type. */
@@ -138,13 +116,15 @@ export class RapidAssessmentService {
     const typedPayload = typedPayloadFromCreateInput(input)
     const answers = toAnswers(type as RapidAssessmentType, typedPayload)
 
-    // Fetch the live registry questions and freeze the per-assessment snapshot
-    const questions = await getRegistryQuestions(type)
-    if (questions.length === 0) {
+    // Freeze the per-assessment snapshot from the registry service (single source)
+    const questionSnapshot = await QuestionRegistryService.getSnapshot(type)
+    if (snapshotQuestionCount(questionSnapshot) === 0) {
       throw new Error(`No active registry questions found for assessment type ${type}`)
     }
-    const versions = await getRegistryVersions(prisma, type as RapidAssessmentType)
-    const questionSnapshot = buildQuestionSnapshot(questions, versions)
+    const versions = {
+      structureVersion: questionSnapshot.structureVersion,
+      contentVersion: questionSnapshot.contentVersion,
+    }
 
     // Derive gap analysis + priority from the registry (priority replaces client input)
     const gapAnalysis = await analyzeGaps(type, answers)
@@ -415,7 +395,7 @@ export class RapidAssessmentService {
     // re-derive snapshot + gap analysis + priority when answers changed.
     const typedPayload = typedPayloadFromUpdateInput(assessmentType, input)
     let answersUpdate: Prisma.InputJsonValue | undefined
-    let versionsUpdate: RegistryVersions | undefined
+    let versionsUpdate: { structureVersion: number; contentVersion: number } | undefined
     let questionSnapshotUpdate: Prisma.InputJsonValue | undefined
     let priorityUpdate: Priority | undefined
     let gapAnalysisUpdate: Prisma.InputJsonValue | undefined
@@ -425,15 +405,17 @@ export class RapidAssessmentService {
         ...((existingAssessment.answers ?? {}) as RapidAssessmentAnswers),
         ...toAnswers(assessmentType as RapidAssessmentType, typedPayload),
       }
-      const questions = await getRegistryQuestions(assessmentType)
-      if (questions.length === 0) {
+      const snapshot = await QuestionRegistryService.getSnapshot(assessmentType)
+      if (snapshotQuestionCount(snapshot) === 0) {
         throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
       }
-      const versions = await getRegistryVersions(prisma, assessmentType as RapidAssessmentType)
       const gapAnalysis = await analyzeGaps(assessmentType, mergedAnswers)
       answersUpdate = mergedAnswers as unknown as Prisma.InputJsonValue
-      versionsUpdate = versions
-      questionSnapshotUpdate = buildQuestionSnapshot(questions, versions) as unknown as Prisma.InputJsonValue
+      versionsUpdate = {
+        structureVersion: snapshot.structureVersion,
+        contentVersion: snapshot.contentVersion,
+      }
+      questionSnapshotUpdate = snapshot as unknown as Prisma.InputJsonValue
       priorityUpdate = derivePriorityFromGaps(assessmentType, gapAnalysis)
       gapAnalysisUpdate = gapAnalysis as unknown as Prisma.InputJsonValue
     }

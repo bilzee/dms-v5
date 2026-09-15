@@ -31,3 +31,9 @@
 - **Severity**: low
 - **Files**: `src/app/layout.tsx:26`, `src/app/api/v1/manifest/route.ts`
 - **Detail**: Catch blocks silently swallow errors. Should at minimum `console.error` for production debuggability.
+
+## From Review (2026-09-15)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p2-registry-service-api-governance.md`
+  summary: `LOGISTICS` passed as an assessment type at `src/lib/services/action-signal.service.ts:289` throws `PrismaClientValidationError` because `LOGISTICS` is a `ResponseType`, not a Prisma `AssessmentType`.
+  evidence: Pre-existing failure path present in the prompt-1 baseline, outside the P2 diff (confirmed in `dqr-p1-*` review logs); the query with an enum-invalid `assessmentType` value throws at Prisma query validation. Settling/fixing belongs to the action-signal owner: guard the type before the query or map `LOGISTICS` to a valid assessment-type context.

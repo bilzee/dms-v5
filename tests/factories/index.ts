@@ -13,7 +13,8 @@ import type {
   Role,
 } from '@prisma/client'
 import { testDb } from '../helpers/test-db'
-import { toAnswers, RapidAssessmentType } from '../../src/lib/questions/legacy-convert'
+import { toAnswers, buildQuestionSnapshot, RapidAssessmentType } from '../../src/lib/questions/legacy-convert'
+import { getRegistryVersions } from '../../src/lib/questions/registry-versions'
 import { seedQuestions } from '../../prisma/seed-questions'
 
 /**
@@ -201,6 +202,8 @@ export interface CreateRapidAssessmentOptions {
   verificationStatus?: 'DRAFT' | 'SUBMITTED' | 'VERIFIED' | 'AUTO_VERIFIED' | 'REJECTED'
   rapidAssessmentDate?: Date
   sectors?: SectorPayloads
+  /** Stamp the live registry snapshot + versions (registry-governance fixtures). */
+  withSnapshot?: boolean
 }
 
 export async function createRapidAssessment(
@@ -218,6 +221,27 @@ export async function createRapidAssessment(
     SECURITY: 'security',
   }
   const sectorPayload = options.sectors?.[sectorKeyByType[assessmentType]]
+  // Freeze-rule fixtures: stamp structureVersion/contentVersion/questionSnapshot
+  // from the live drms_test registry, exactly as the service path would.
+  let snapshotData:
+    | { structureVersion: number; contentVersion: number; questionSnapshot: unknown }
+    | undefined
+  if (options.withSnapshot) {
+    const questions = await testDb.question.findMany({
+      where: { assessmentType, isActive: true },
+      orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }],
+      include: {
+        section: {
+          select: { sectionKey: true, title: true, description: true, category: true, order: true },
+        },
+      },
+    })
+    const versions = await getRegistryVersions(testDb, assessmentType as RapidAssessmentType)
+    snapshotData = {
+      ...versions,
+      questionSnapshot: buildQuestionSnapshot(questions, versions),
+    }
+  }
   return testDb.rapidAssessment.create({
     data: {
       rapidAssessmentType: assessmentType,
@@ -231,6 +255,13 @@ export async function createRapidAssessment(
       answers: sectorPayload
         ? (toAnswers(assessmentType as RapidAssessmentType, sectorPayload) as never)
         : undefined,
+      ...(snapshotData
+        ? {
+            structureVersion: snapshotData.structureVersion,
+            contentVersion: snapshotData.contentVersion,
+            questionSnapshot: snapshotData.questionSnapshot as never,
+          }
+        : {}),
     },
   })
 }

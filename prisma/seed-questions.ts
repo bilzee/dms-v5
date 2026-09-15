@@ -256,11 +256,13 @@ export async function seedQuestions(db: PrismaClient): Promise<QuestionSeedResul
           const existing = await tx.question.findUnique({ where: { id } })
           if (!existing) {
             await tx.question.create({ data: incoming })
-            // One CREATE audit row per question (audit-writer wiring beyond the
-            // seed is P2).
+            // One CREATE audit row per question, tagged with the new P2
+            // entity columns (entityType/entityId) instead of the dropped
+            // question FK. Seed rows carry no actor.
             await tx.questionAuditLog.create({
               data: {
-                questionId: id,
+                entityType: 'QUESTION',
+                entityId: id,
                 action: 'CREATE',
                 changes: { created: incoming.questionKey, assessmentType, order: incoming.order },
               },
@@ -300,7 +302,8 @@ export async function seedQuestions(db: PrismaClient): Promise<QuestionSeedResul
           })
           await tx.questionAuditLog.create({
             data: {
-              questionId: id,
+              entityType: 'QUESTION',
+              entityId: id,
               action: 'UPDATE',
               changes: changes as object,
               previous: previousSnapshot as object,

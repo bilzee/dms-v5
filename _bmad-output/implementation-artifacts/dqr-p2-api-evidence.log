@@ -1,0 +1,39 @@
+DQR P2 API evidence run mu2zqxss
+DATABASE_URL: postgresql://dms_dev:***@localhost:5435/drms_test?schema=public
+Seeded question registry (was empty).
+
+[setup]
+  adminId: 14825545-6600-4ab7-95cf-c8c86b3a6531
+  coordinatorId: f253c9d4-de50-416a-be00-6e89a9caedc7
+
+[1. POST /api/v1/admin/sections (ADMIN)]
+  status: 201
+  sectionKey: evidence-ctx-mu2zqxss
+  structureVersionAfter: 2
+
+[2. POST /api/v1/admin/questions (ADMIN)]
+  status: 201
+  questionKey: evidenceNotesmu2zqxss
+  structureVersion: 2 → 3
+
+[3. PUT /api/v1/admin/questions/[id] label edit (ADMIN)]
+  status: 200
+  structureVersion: 3 → 3 (must be unchanged)
+  contentVersion: 1 → 2 (must be +1)
+
+[4. PUT /api/v1/admin/questions/[id] key rename (ADMIN)]
+  status: 400
+  error: question_key_immutable
+  details: {"questionKey":"evidenceNotesmu2zqxss","requested":"renamedmu2zqxss"}
+
+[5. PATCH /api/v1/admin/questions/[id]/severity (COORDINATOR)]
+  status: 200
+  questionKey: isWaterSufficient
+  severity: MEDIUM → HIGH
+  structureVersion: 3 → 3 (must be unchanged)
+  contentVersion: 2 → 3 (must be +1)
+
+[6. PUT /api/v1/admin/questions/[id] (COORDINATOR)]
+  status: 403
+
+ALL EVIDENCE CHECKS PASSED

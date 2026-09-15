@@ -465,7 +465,6 @@ model Question {
   order          Int
   isActive       Boolean            @default(true) @map("is_active")
   version        Int                @default(1)
-  auditLogs      QuestionAuditLog[]
   createdAt      DateTime           @default(now()) @map("created_at")
   updatedAt      DateTime           @updatedAt @map("updated_at")
   section        QuestionSection    @relation(fields: [sectionId], references: [id])
@@ -476,18 +475,24 @@ model Question {
   @@map("questions")
 }
 
+/// Polymorphic audit trail for registry governance (P2). `entityType` is
+/// `QUESTION` | `SECTION`; `entityId` is that row's id. `changes` carries the
+/// after-diff ({field: {from,to}}) and `previous` the before-image. `reason`
+/// is mandatory context for structural actions (create/deactivate/reorder/
+/// section create/delete) — enforced by QuestionRegistryService.writeAudit.
 model QuestionAuditLog {
   id         String   @id @default(uuid())
-  questionId String   @map("question_id")
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
   action     String
   changes    Json?
   previous   Json?
+  reason     String?
   actorId    String?  @map("actor_id")
   actedAt    DateTime @default(now()) @map("acted_at")
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   actor      User?    @relation("QuestionAuditLogActor", fields: [actorId], references: [id])
 
-  @@index([questionId, actedAt])
+  @@index([entityType, entityId, actedAt])
   @@map("question_audit_logs")
 }
 

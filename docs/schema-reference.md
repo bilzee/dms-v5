@@ -1,6 +1,6 @@
 # Prisma Schema Reference
 
-_Auto-generated on 2026-09-15T12:18:41.077Z_
+_Auto-generated on 2026-09-15T14:56:05.832Z_
 
 ## ReportTemplate
 
@@ -417,7 +417,6 @@ _Auto-generated on 2026-09-15T12:18:41.077Z_
 - `order`
 - `isActive`
 - `version`
-- `auditLogs`
 - `createdAt`
 - `updatedAt`
 - `section`
@@ -426,13 +425,14 @@ _Auto-generated on 2026-09-15T12:18:41.077Z_
 
 **Fields:**
 - `id`
-- `questionId`
+- `entityType`
+- `entityId`
 - `action`
 - `changes`
 - `previous`
+- `reason`
 - `actorId`
 - `actedAt`
-- `question`
 - `actor`
 
 ## SystemSetting

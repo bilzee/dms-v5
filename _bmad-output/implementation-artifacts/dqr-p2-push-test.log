@@ -1,0 +1,13 @@
+
+> disaster-response-management-system@0.1.0 db:push:test
+> cross-env DATABASE_URL=postgresql://dms_dev:dev_password_change_in_prod@localhost:5435/drms_test?schema=public prisma db push --skip-generate
+
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "drms_test", schema "public" at "localhost:5435"
+
+Your database is now in sync with your Prisma schema. Done in 218ms
+

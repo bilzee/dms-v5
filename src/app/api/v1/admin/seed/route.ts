@@ -4,6 +4,7 @@ import { RoleName } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedQuestions } from '../../../../../../prisma/seed-questions';
 import { clearGapQuestionCache } from '@/lib/services/gap-analysis.service';
+import { clearQuestionRegistryCache } from '@/lib/services/question-registry.service';
 
 async function assignPermissionsToRole(roleName: RoleName, permCodes: string[]) {
   const role = await prisma.role.findUnique({ where: { name: roleName } });
@@ -137,6 +138,7 @@ export async function POST(request: NextRequest) {
     logs.push('Seeding question registry...');
     const questionSeedResult = await seedQuestions(prisma);
     clearGapQuestionCache();
+    clearQuestionRegistryCache();
     logs.push(
       `Question registry: ${questionSeedResult.questions} questions ` +
       `(${questionSeedResult.created} created, ${questionSeedResult.updated} updated, ` +
