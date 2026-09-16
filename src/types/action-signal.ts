@@ -114,7 +114,6 @@ export interface SignalTriggerPayload {
   responseType?: string;
   responsePriority?: string;
   commitmentId?: string;
-  commitmentPriority?: string;
   donorId?: string;
   deliveryStatus?: string;
 }

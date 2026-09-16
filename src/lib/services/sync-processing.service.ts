@@ -3,6 +3,7 @@ import { SyncStatus } from '@prisma/client'
 import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
 import type { CreateRapidAssessmentInput } from '@/lib/validation/rapid-assessment'
 import type { OfflineSyncWarning } from '@/lib/questions/offline-answers'
+import { resolveSeverityPriority } from '@/lib/severity-inheritance'
 
 interface SyncChange {
   type: 'assessment' | 'response' | 'entity'
@@ -264,13 +265,30 @@ export class SyncProcessingService {
       const validTypes = ['HEALTH', 'WASH', 'SHELTER', 'FOOD', 'SECURITY', 'POPULATION', 'LOGISTICS']
       const typeValue = validTypes.includes(data.type as string) ? data.type as string : 'HEALTH'
 
+      // P6 (D-4): offline response priority derives from the linked assessment
+      // → its incident's severity → MEDIUM. The client's `data.priority` is
+      // ignored (closes the offline injection surface, mirroring P5's ruling
+      // for assessments). Works for both resolution paths — explicit
+      // `data.assessmentId` and the entity fallback above.
+      const linkedAssessment = assessmentId
+        ? await prisma.rapidAssessment.findUnique({
+            where: { id: assessmentId },
+            select: { priority: true, incident: { select: { severity: true } } },
+          })
+        : null
+      const derivedPriority = resolveSeverityPriority(
+        linkedAssessment && linkedAssessment.priority !== 'UNCLASSIFIED'
+          ? linkedAssessment.priority
+          : linkedAssessment?.incident?.severity
+      )
+
       const response = await prisma.rapidResponse.create({
         data: {
           responderId: userId,
           entityId: change.entityUuid,
           assessmentId,
           type: typeValue as any,
-          priority: (data.priority as any) || 'MEDIUM',
+          priority: derivedPriority,
           deliveryStatus: (data.deliveryStatus as any) || 'PLANNED',
           description: (data.description as string) || null,
           resources: data.resources as any || null,
@@ -320,7 +338,9 @@ export class SyncProcessingService {
           resources: data.resources as any || existing.resources,
           timeline: data.timeline as any || existing.timeline,
           items: (data.items as any) || existing.items,
-          priority: (data.priority as any) || existing.priority,
+          // P6 (D-4): offline updates never re-write priority from client
+          // input — the row keeps the priority it was created with.
+          priority: existing.priority,
           deliveryStatus: (data.deliveryStatus as any) || existing.deliveryStatus,
           versionNumber: change.versionNumber,
           syncStatus: 'SYNCED' as SyncStatus

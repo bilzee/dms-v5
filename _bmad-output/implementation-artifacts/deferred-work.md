@@ -90,3 +90,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p5-offline-sync-draft-migration.md`
   summary: Offline update accepts `data.entityId`/`data.incidentId` without re-validating the syncing user's entity assignment (only assessment ownership is checked).
   evidence: BH12 at review: mirrors the ONLINE update path, which also accepts re-pointed entity/incident ids without assignment checks — accepted parity, not a P5 regression. Fix belongs to a cross-cutting sync-authorization pass covering both paths.
+
+## From Review (2026-09-16, DQR P6)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p6-notification-severity-inheritance.md`
+  summary: `src/lib/services/commitment.service.ts:212` dispatches `donorId: data.donorId` (a Donor organization id) where the signal engine consumes `payload.donorId` as a recipient USER id — the donor branch of commitment signals FK-fails silently and kills subsequent responder rows in the same evaluator run.
+  evidence: Pre-existing, outside the P6 diff (finding #19, defer route). The real API surface (`donors/[id]/commitments/route.ts:326`) passes a user id correctly; only the service-internal caller conflates ids. Fix belongs to the commitment/signal owner: pass the donor's linked user id (or resolve it) at dispatch.

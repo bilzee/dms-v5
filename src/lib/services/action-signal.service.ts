@@ -11,6 +11,7 @@ import type {
 } from '@/types/action-signal';
 import { SIGNAL_REASON_ROLES, NOTIFICATION_TEMPLATES } from '@/types/action-signal';
 import type { SignalQueryInput } from '@/lib/validation/action-signal';
+import { SYSTEM_HEALTH_SEVERITY, resolveSeverityPriority } from '@/lib/severity-inheritance';
 
 type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -115,7 +116,7 @@ export class ActionSignalService {
             incidentId: payload.incidentId,
             type: payload.assessmentType || 'HEALTH',
             signalReason: 'awaiting-plan',
-            priority: (payload.assessmentPriority as SignalPriority) || 'MEDIUM',
+            priority: resolveSeverityPriority(payload.assessmentPriority),
             context: {
               entityName: entity.name,
               assessmentType: payload.assessmentType,
@@ -135,7 +136,7 @@ export class ActionSignalService {
             incidentId: payload.incidentId,
             type: payload.assessmentType || 'HEALTH',
             signalReason: 'assessment-needs-response',
-            priority: (payload.assessmentPriority as SignalPriority) || 'MEDIUM',
+            priority: resolveSeverityPriority(payload.assessmentPriority),
             context: {
               entityName: entity.name,
               assessmentType: payload.assessmentType,
@@ -189,7 +190,7 @@ export class ActionSignalService {
 
         if (isPlan) {
           const responders = assignments.filter(a => a.role === 'RESPONDER');
-          const priority = (payload.responsePriority as SignalPriority) || (response?.priority as SignalPriority) || 'MEDIUM';
+          const priority = resolveSeverityPriority(payload.responsePriority || response?.priority);
           for (const responder of responders) {
             await this.upsertSignal(
               {
@@ -223,7 +224,7 @@ export class ActionSignalService {
         }
 
         const donors = assignments.filter(a => a.role === 'DONOR');
-        const planPriority = (payload.responsePriority as SignalPriority) || (response?.priority as SignalPriority) || 'MEDIUM';
+        const planPriority = resolveSeverityPriority(payload.responsePriority || response?.priority);
         for (const donor of donors) {
           await this.upsertSignal(
             {
@@ -277,7 +278,7 @@ export class ActionSignalService {
       if (payload.trigger === 'response-verified' && payload.responseType && payload.responseId) {
         const verifiedResponse = await tx.rapidResponse.findUnique({
           where: { id: payload.responseId },
-          select: { updatedAt: true, verificationStatus: true, deliveryStatus: true },
+          select: { updatedAt: true, verificationStatus: true, deliveryStatus: true, priority: true },
         });
 
         if (verifiedResponse?.deliveryStatus !== 'DELIVERED') {
@@ -299,7 +300,7 @@ export class ActionSignalService {
         if (!hasReassessment && payload.incidentId) {
           const assignments = await this.getAssignmentsForEntity(payload.entityId, tx);
           const assessors = assignments.filter(a => a.role === 'ASSESSOR');
-          const priority = (payload.responsePriority as SignalPriority) || 'MEDIUM';
+          const priority = resolveSeverityPriority(payload.responsePriority || verifiedResponse?.priority);
 
           for (const assessor of assessors) {
             await this.upsertSignal(
@@ -345,6 +346,7 @@ export class ActionSignalService {
         status: true,
         donor: { select: { id: true, name: true } },
         planCommitments: { select: { planId: true } },
+        incident: { select: { severity: true } },
       },
     });
     if (!commitment) return;
@@ -404,7 +406,7 @@ export class ActionSignalService {
 
     if (commitment.planCommitments.length === 0 && commitment.incidentId) {
       const assignments = await this.getAssignmentsForEntity(payload.entityId, tx);
-      const priority = (payload.commitmentPriority as SignalPriority) || 'HIGH';
+      const priority = resolveSeverityPriority(commitment.incident?.severity);
 
       const responders = assignments.filter(a => a.role === 'RESPONDER');
       for (const responder of responders) {
@@ -429,7 +431,7 @@ export class ActionSignalService {
 
     if (commitment.status === 'PARTIAL' && commitment.incidentId) {
       const assignments = await this.getAssignmentsForEntity(payload.entityId, tx);
-      const priority = (payload.commitmentPriority as SignalPriority) || 'HIGH';
+      const priority = resolveSeverityPriority(commitment.incident?.severity);
 
       if (payload.donorId) {
         await this.upsertSignal(
@@ -551,7 +553,7 @@ export class ActionSignalService {
     }
 
     const donors = assignments.filter(a => a.role === 'DONOR');
-    const priority = (plan.priority as SignalPriority) || 'MEDIUM';
+    const priority = resolveSeverityPriority(plan.priority);
 
     if (hasAnyGap && hasAnyCoverage) {
       const avgCoverage = itemBreakdown.reduce((s, i) => s + i.coveragePercent, 0) / itemBreakdown.length;
@@ -657,7 +659,7 @@ export class ActionSignalService {
                   incidentId: incident.id,
                   type: 'POPULATION',
                   signalReason: 'overdue',
-                  priority: 'CRITICAL',
+                  priority: SYSTEM_HEALTH_SEVERITY.POPULATION_CADENCE,
                   context: {
                     entityName: entity.name,
                     assessmentType: 'POPULATION',
@@ -708,7 +710,9 @@ export class ActionSignalService {
         if (!a.incidentId) continue;
         const hoursSinceSubmit = (Date.now() - a.createdAt.getTime()) / (1000 * 60 * 60);
         const reason: SignalReason = hoursSinceSubmit > 48 ? 'verification-overdue' : 'assessment-awaiting-verification';
-        const priority: SignalPriority = reason === 'verification-overdue' ? 'CRITICAL' : (a.priority as SignalPriority) || 'MEDIUM';
+        const priority: SignalPriority = reason === 'verification-overdue'
+          ? SYSTEM_HEALTH_SEVERITY.VERIFICATION_OVERDUE
+          : resolveSeverityPriority(a.priority);
 
         await this.upsertSignal({
           userId: coordinator.id,
@@ -730,7 +734,9 @@ export class ActionSignalService {
         if (!incidentId) continue;
         const hoursSinceSubmit = (Date.now() - r.createdAt.getTime()) / (1000 * 60 * 60);
         const reason: SignalReason = hoursSinceSubmit > 48 ? 'verification-overdue' : 'delivery-awaiting-verification';
-        const priority: SignalPriority = reason === 'verification-overdue' ? 'CRITICAL' : (r.priority as SignalPriority) || 'MEDIUM';
+        const priority: SignalPriority = reason === 'verification-overdue'
+          ? SYSTEM_HEALTH_SEVERITY.VERIFICATION_OVERDUE
+          : resolveSeverityPriority(r.priority);
 
         await this.upsertSignal({
           userId: coordinator.id,
@@ -750,7 +756,7 @@ export class ActionSignalService {
 
     const activeIncidents = await prisma.incident.findMany({
       where: { status: 'ACTIVE' },
-      select: { id: true, name: true },
+      select: { id: true, name: true, severity: true },
     });
     const activeIncidentIds = new Set(activeIncidents.map(i => i.id));
 
@@ -799,7 +805,7 @@ export class ActionSignalService {
               incidentId: incident.id,
               type: 'ASSIGNMENT',
               signalReason: reason,
-              priority: 'HIGH',
+              priority: resolveSeverityPriority(incident.severity),
               context: {
                 entityName: entity.name,
               },
@@ -1088,7 +1094,6 @@ export class ActionSignalService {
         incidentId: data.incidentId,
         type: data.type,
         signalReason: data.signalReason,
-        resolvedAt: null,
       },
     });
 
@@ -1104,6 +1109,12 @@ export class ActionSignalService {
             resolvedAt: null,
           },
         });
+        if (priorityChanged) {
+          await tx.notification.updateMany({
+            where: { signalId: existing.id },
+            data: { priority: data.priority },
+          });
+        }
         emitSignalEvent('SIGNAL_UPDATED', {
           signalId: existing.id,
           signalReason: data.signalReason,
@@ -1141,7 +1152,7 @@ export class ActionSignalService {
     const notifConfig = await getNotificationConfig();
 
     if (shouldSendInApp(data.priority, notifConfig)) {
-      await this.createNotification(signal.id, data.userId, data.signalReason, data.context, notifConfig.notificationTTLHours, tx);
+      await this.createNotification(signal.id, data.userId, data.signalReason, data.context, data.priority, notifConfig.notificationTTLHours, tx);
     }
 
     if (shouldSendPush(data.priority, notifConfig)) {
@@ -1240,6 +1251,7 @@ export class ActionSignalService {
     userId: string,
     reason: SignalReason,
     context: SignalContext,
+    priority: SignalPriority,
     ttlHours: number,
     tx: PrismaTransaction | typeof prisma
   ): Promise<void> {
@@ -1259,7 +1271,7 @@ export class ActionSignalService {
         signalId,
         title: template.title,
         body,
-        priority: 'MEDIUM',
+        priority,
         expiresAt: new Date(Date.now() + ttlHours * 60 * 60 * 1000),
       },
     });
@@ -1373,17 +1385,7 @@ export class ActionSignalService {
       select: { severity: true },
     });
 
-    return this.mapSeverityToPriority(incident?.severity);
-  }
-
-  private static mapSeverityToPriority(severity?: string | null): SignalPriority {
-    switch (severity) {
-      case 'CRITICAL': return 'CRITICAL';
-      case 'HIGH': return 'HIGH';
-      case 'MEDIUM': return 'MEDIUM';
-      case 'LOW': return 'LOW';
-      default: return 'MEDIUM';
-    }
+    return resolveSeverityPriority(incident?.severity);
   }
 
   static async updateSignalPriorities(

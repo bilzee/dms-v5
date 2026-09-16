@@ -1,0 +1,88 @@
+DQR P6 severity-source evidence scan
+Scanned writers: src/lib/services/action-signal.service.ts, src/lib/services/notification.service.ts, src/lib/services/leaderboard.service.ts, src/lib/services/sync-processing.service.ts
+
+[1. SYSTEM_HEALTH_SEVERITY allowlist (src/lib/severity-inheritance.ts)]
+  keys: [
+  "VERIFICATION_OVERDUE",
+  "POPULATION_CADENCE",
+  "SYNC_ERROR",
+  "ACCOUNT_NOTICE"
+]
+  entries: [
+  "VERIFICATION_OVERDUE=CRITICAL",
+  "POPULATION_CADENCE=CRITICAL",
+  "SYNC_ERROR=CRITICAL",
+  "ACCOUNT_NOTICE=MEDIUM"
+]
+
+[2. Creation sites and their severity sources]
+  src/lib/services/action-signal.service.ts:112 [action signal] reason='awaiting-plan'
+    priority = resolveSeverityPriority(payload.assessmentPriority)
+    source  = resolver passthrough resolveSeverityPriority(payload.assessmentPriority) (triggering object's own severity)
+  src/lib/services/action-signal.service.ts:132 [action signal] reason='assessment-needs-response'
+    priority = resolveSeverityPriority(payload.assessmentPriority)
+    source  = resolver passthrough resolveSeverityPriority(payload.assessmentPriority) (triggering object's own severity)
+  src/lib/services/action-signal.service.ts:195 [action signal] reason='awaiting-delivery'
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:229 [action signal] reason='plan-needs-commitment'
+    priority = planPriority
+    source  = resolver-backed local variable `planPriority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:306 [action signal] reason='reassessment-needed'
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:413 [action signal] reason='awaiting-plan-for-commitment'
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:437 [action signal] reason='partially-fulfilled'
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:456 [action signal] reason='partially-fulfilled'
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:561 [action signal] reason='partially-covered'
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:655 [action signal] reason='overdue'
+    priority = SYSTEM_HEALTH_SEVERITY.POPULATION_CADENCE
+    source  = allowlist entry SYSTEM_HEALTH_SEVERITY.POPULATION_CADENCE (plan Appendix C fixed boundary)
+  src/lib/services/action-signal.service.ts:717 [action signal] reason=reason
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:741 [action signal] reason=reason
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/action-signal.service.ts:802 [action signal] reason=reason
+    priority = resolveSeverityPriority(incident.severity)
+    source  = resolver passthrough resolveSeverityPriority(incident.severity) (triggering object's own severity)
+  src/lib/services/action-signal.service.ts:1268 [in-app notification (signal row)] reason=(none)
+    priority = priority
+    source  = resolver-backed local variable `priority` (enforced by the literal-assignment sweep)
+  src/lib/services/notification.service.ts:34 [legacy in-app notification] reason=(none)
+    priority = payload.priority
+    source  = explicit caller-supplied priority (legacy send contract)
+  src/lib/services/leaderboard.service.ts:429 [gamification notification (via legacy send)] reason=(none)
+    priority = SYSTEM_HEALTH_SEVERITY.ACCOUNT_NOTICE
+    source  = allowlist entry SYSTEM_HEALTH_SEVERITY.ACCOUNT_NOTICE (plan Appendix C fixed boundary)
+  src/lib/services/leaderboard.service.ts:444 [gamification notification (via legacy send)] reason=(none)
+    priority = SYSTEM_HEALTH_SEVERITY.ACCOUNT_NOTICE
+    source  = allowlist entry SYSTEM_HEALTH_SEVERITY.ACCOUNT_NOTICE (plan Appendix C fixed boundary)
+  src/lib/services/sync-processing.service.ts:285 [offline sync response row] reason=(none)
+    priority = derivedPriority
+    source  = resolver-backed local variable `derivedPriority` (enforced by the literal-assignment sweep)
+
+[3. Hardcoded severity literal sweep (any literal form) + writer discovery]
+  src/lib/services/action-signal.service.ts:979 → enumerated exception (read-only filter / dead code pending p7): "where: { ...where, resolvedAt: null, priority: 'CRITICAL' },"
+  src/lib/services/action-signal.service.ts:1007 → enumerated exception (read-only filter / dead code pending p7): "finalCritical = mappedSignals.filter(s => !s.resolvedAt && s.priority === 'CRITICAL').length;"
+  src/lib/services/action-signal.service.ts:1058 → enumerated exception (read-only filter / dead code pending p7): "case 'CRITICAL': return 4;"
+  src/lib/services/action-signal.service.ts:1059 → enumerated exception (read-only filter / dead code pending p7): "case 'HIGH': return 3;"
+  src/lib/services/action-signal.service.ts:1060 → enumerated exception (read-only filter / dead code pending p7): "case 'MEDIUM': return 2;"
+  src/lib/services/action-signal.service.ts:1061 → enumerated exception (read-only filter / dead code pending p7): "case 'LOW': return 1;"
+  src/lib/services/action-signal.service.ts:1205 → enumerated exception (read-only filter / dead code pending p7): "if (config.emailDigestEnabled && priority !== 'CRITICAL') return;"
+  src/lib/services/action-signal.service.ts:1381 → enumerated exception (read-only filter / dead code pending p7): "if (assessmentType === 'POPULATION') return 'CRITICAL';"
+  src/lib/services/action-signal.service.ts:1396 → enumerated exception (read-only filter / dead code pending p7): "if (!['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(newPriority)) return;"
+  src/lib/services/sync-processing.service.ts:280 → enumerated exception (read-only filter / dead code pending p7): "linkedAssessment && linkedAssessment.priority !== 'UNCLASSIFIED'"
+  No hardcoded severity literals outside the allowlist module and the enumerated exceptions.
+  Writer discovery clean: notification/actionSignal creation sites exist only in the allowed writer files.
+
+ALL CHECKS PASSED

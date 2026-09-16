@@ -1,5 +1,6 @@
 import { db } from '@/lib/db/client';
 import { notificationService } from './notification.service';
+import { SYSTEM_HEALTH_SEVERITY } from '@/lib/severity-inheritance';
 import { 
   calculateDonorMetrics,
   calculateAchievementBadges,
@@ -430,6 +431,7 @@ class LeaderboardService {
       type: 'achievement_unlocked',
       title: 'New Achievement Unlocked!',
       message: `You earned the "${badgeType}" badge. Keep up the great work!`,
+      priority: SYSTEM_HEALTH_SEVERITY.ACCOUNT_NOTICE,
       data: { badgeType, metrics }
     });
   }
@@ -444,6 +446,7 @@ class LeaderboardService {
       type: 'ranking_change',
       title: 'Leaderboard Ranking Updated',
       message: `Your ranking has ${direction}! You're now rank #${metrics.currentRank || metrics.overallScore}.`,
+      priority: SYSTEM_HEALTH_SEVERITY.ACCOUNT_NOTICE,
       data: { rankChange: metrics.rankChange, currentRank: metrics.currentRank }
     });
   }

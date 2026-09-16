@@ -1,12 +1,19 @@
 import { prisma } from '@/lib/db/client';
 import type { NotificationQueryInput } from '@/lib/validation/notification';
 import type { NotificationItem } from '@/types/notification';
+import type { SignalPriority } from '@/types/action-signal';
 
 interface LegacyNotificationPayload {
   recipientId: string;
   type: 'achievement_unlocked' | 'ranking_change' | 'milestone_reached';
   title: string;
   message: string;
+  /**
+   * D-4: callers must state the notification's priority explicitly (no
+   * silently applied default) — gamification writers pass
+   * SYSTEM_HEALTH_SEVERITY.ACCOUNT_NOTICE.
+   */
+  priority: SignalPriority;
   data?: Record<string, unknown>;
 }
 
@@ -30,7 +37,7 @@ class NotificationService {
         signalId: `legacy-${payload.type}-${Date.now()}`,
         title: payload.title,
         body: payload.message,
-        priority: 'MEDIUM',
+        priority: payload.priority,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
