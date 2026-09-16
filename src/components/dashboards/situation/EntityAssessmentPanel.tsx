@@ -14,6 +14,12 @@ import { AssessmentCategorySummary } from './components/AssessmentCategorySummar
 import { AggregationInfoPopup } from './components/AggregationInfoPopup';
 import { IndividualEntityGapInfoPopup } from './components/IndividualEntityGapInfoPopup';
 import { useIncidentSelection, useEntitySelection } from '@/stores/dashboardLayout.store';
+import {
+  buildIndividualGapSummary,
+  GAP_ROWS_PER_CATEGORY_DEFAULT,
+  type CategoryGapSummary,
+  type QuestionTypeMetadata,
+} from '@/lib/questions/gap-summary';
 
 interface EntityAssessmentPanelProps {
   incidentId: string;
@@ -22,39 +28,24 @@ interface EntityAssessmentPanelProps {
   onEntityChange?: (entityId: string) => void;
 }
 
-// Types for aggregated assessment data
+// P7: live registry metadata embedded once per payload (5 gap types).
+// QuestionTypeMetadata is shared with the situation route via gap-summary.
+
+// Types for aggregated assessment data — per-type gap cards carry the ranked
+// CategoryGapSummary; dead totals were dropped alongside fieldGapAnalysis.
+interface AggregatedTypeGaps {
+  totalEntities: number;
+  entitiesWithGaps: number;
+  entitiesWithoutGaps: number;
+  gapSummary: CategoryGapSummary;
+}
+
 interface AggregatedAssessments {
-  health: {
-    totalEntities: number;
-    entitiesWithGaps: number;
-    entitiesWithoutGaps: number;
-    totalHealthFacilities: number;
-    totalQualifiedWorkers: number;
-  };
-  food: {
-    totalEntities: number;
-    entitiesWithGaps: number;
-    entitiesWithoutGaps: number;
-    averageFoodDuration: number;
-    totalAdditionalPersonsRequired: number;
-  };
-  wash: {
-    totalEntities: number;
-    entitiesWithGaps: number;
-    entitiesWithoutGaps: number;
-    totalFunctionalLatrines: number;
-  };
-  shelter: {
-    totalEntities: number;
-    entitiesWithGaps: number;
-    entitiesWithoutGaps: number;
-    totalSheltersRequired: number;
-  };
-  security: {
-    totalEntities: number;
-    entitiesWithGaps: number;
-    entitiesWithoutGaps: number;
-  };
+  health: AggregatedTypeGaps | null;
+  food: AggregatedTypeGaps | null;
+  wash: AggregatedTypeGaps | null;
+  shelter: AggregatedTypeGaps | null;
+  security: AggregatedTypeGaps | null;
   population: {
     totalEntities: number;
     totalPopulation: number;
@@ -148,6 +139,20 @@ export function EntityAssessmentPanel({
   }, [dashboardData?.data?.entityAssessments, includeAllEntities, effectiveEntityId]);
 
   const aggregatedAssessments = dashboardData?.data?.aggregatedAssessments;
+  const questionMetadata = dashboardData?.data?.questionMetadata;
+  const gapRowLimit = dashboardData?.data?.gapRowsPerCategory ?? GAP_ROWS_PER_CATEGORY_DEFAULT;
+
+  // Individual-entity ranked summaries: the stored gapAnalysis joined with the
+  // live registry metadata under the same clamp/chip contract as aggregates.
+  const individualSummaries = useMemo(() => {
+    return entityAssessments.map((entity: any) => ({
+      health: buildIndividualGapSummary(entity.latestAssessments?.health?.gapAnalysis, questionMetadata?.HEALTH?.questions, gapRowLimit),
+      food: buildIndividualGapSummary(entity.latestAssessments?.food?.gapAnalysis, questionMetadata?.FOOD?.questions, gapRowLimit),
+      wash: buildIndividualGapSummary(entity.latestAssessments?.wash?.gapAnalysis, questionMetadata?.WASH?.questions, gapRowLimit),
+      shelter: buildIndividualGapSummary(entity.latestAssessments?.shelter?.gapAnalysis, questionMetadata?.SHELTER?.questions, gapRowLimit),
+      security: buildIndividualGapSummary(entity.latestAssessments?.security?.gapAnalysis, questionMetadata?.SECURITY?.questions, gapRowLimit),
+    }));
+  }, [entityAssessments, questionMetadata, gapRowLimit]);
 
   // Handle entity selection
   const handleEntityChange = (newEntityId: string) => {
@@ -339,20 +344,14 @@ export function EntityAssessmentPanel({
         {/* Assessment Categories */}
         <div className="space-y-3 flex-1 overflow-hidden"> {/* Reduced spacing and made scrollable */}
           {includeAllEntities && aggregatedAssessments ? (
-            // Aggregated view - show aggregated data for each category, always show all 5 categories
+            // Aggregated view - ranked registry-derived gap summaries per category,
+            // always show all 5 categories (null aggregate → "Assessment Missing")
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3"> {/* 5 columns for better space utilization */}
-              {/* Always show all 5 assessment categories - show aggregated data or empty tiles */}
               <AssessmentCategorySummary
                 category="health"
                 assessment={aggregatedAssessments.health}
-                gapAnalysis={aggregatedAssessments.health ? {
-                  hasGap: aggregatedAssessments.health.entitiesWithGaps > 0,
-                  gapFields: aggregatedAssessments.health.fieldGapAnalysis?.gapFields || [],
-                  severity: aggregatedAssessments.health.fieldGapAnalysis?.overallSeverity || 'MEDIUM',
-                  fieldSeverityMap: aggregatedAssessments.health.fieldGapAnalysis?.fieldSeverityMap || {},
-                  fieldCounts: aggregatedAssessments.health.fieldGapAnalysis?.fieldCounts || {},
-                  recommendations: aggregatedAssessments.health.fieldGapAnalysis?.recommendations || []
-                } : undefined}
+                gapSummary={aggregatedAssessments.health?.gapSummary}
+                questions={questionMetadata?.HEALTH?.questions}
                 layout="full"
                 showRecommendations={false}
                 isAggregated={true}
@@ -360,14 +359,8 @@ export function EntityAssessmentPanel({
               <AssessmentCategorySummary
                 category="food"
                 assessment={aggregatedAssessments.food}
-                gapAnalysis={aggregatedAssessments.food ? {
-                  hasGap: aggregatedAssessments.food.entitiesWithGaps > 0,
-                  gapFields: aggregatedAssessments.food.fieldGapAnalysis?.gapFields || [],
-                  severity: aggregatedAssessments.food.fieldGapAnalysis?.overallSeverity || 'MEDIUM',
-                  fieldSeverityMap: aggregatedAssessments.food.fieldGapAnalysis?.fieldSeverityMap || {},
-                  fieldCounts: aggregatedAssessments.food.fieldGapAnalysis?.fieldCounts || {},
-                  recommendations: aggregatedAssessments.food.fieldGapAnalysis?.recommendations || []
-                } : undefined}
+                gapSummary={aggregatedAssessments.food?.gapSummary}
+                questions={questionMetadata?.FOOD?.questions}
                 layout="full"
                 showRecommendations={false}
                 isAggregated={true}
@@ -375,14 +368,8 @@ export function EntityAssessmentPanel({
               <AssessmentCategorySummary
                 category="wash"
                 assessment={aggregatedAssessments.wash}
-                gapAnalysis={aggregatedAssessments.wash ? {
-                  hasGap: aggregatedAssessments.wash.entitiesWithGaps > 0,
-                  gapFields: aggregatedAssessments.wash.fieldGapAnalysis?.gapFields || [],
-                  severity: aggregatedAssessments.wash.fieldGapAnalysis?.overallSeverity || 'MEDIUM',
-                  fieldSeverityMap: aggregatedAssessments.wash.fieldGapAnalysis?.fieldSeverityMap || {},
-                  fieldCounts: aggregatedAssessments.wash.fieldGapAnalysis?.fieldCounts || {},
-                  recommendations: aggregatedAssessments.wash.fieldGapAnalysis?.recommendations || []
-                } : undefined}
+                gapSummary={aggregatedAssessments.wash?.gapSummary}
+                questions={questionMetadata?.WASH?.questions}
                 layout="full"
                 showRecommendations={false}
                 isAggregated={true}
@@ -390,14 +377,8 @@ export function EntityAssessmentPanel({
               <AssessmentCategorySummary
                 category="shelter"
                 assessment={aggregatedAssessments.shelter}
-                gapAnalysis={aggregatedAssessments.shelter ? {
-                  hasGap: aggregatedAssessments.shelter.entitiesWithGaps > 0,
-                  gapFields: aggregatedAssessments.shelter.fieldGapAnalysis?.gapFields || [],
-                  severity: aggregatedAssessments.shelter.fieldGapAnalysis?.overallSeverity || 'MEDIUM',
-                  fieldSeverityMap: aggregatedAssessments.shelter.fieldGapAnalysis?.fieldSeverityMap || {},
-                  fieldCounts: aggregatedAssessments.shelter.fieldGapAnalysis?.fieldCounts || {},
-                  recommendations: aggregatedAssessments.shelter.fieldGapAnalysis?.recommendations || []
-                } : undefined}
+                gapSummary={aggregatedAssessments.shelter?.gapSummary}
+                questions={questionMetadata?.SHELTER?.questions}
                 layout="full"
                 showRecommendations={false}
                 isAggregated={true}
@@ -405,14 +386,8 @@ export function EntityAssessmentPanel({
               <AssessmentCategorySummary
                 category="security"
                 assessment={aggregatedAssessments.security}
-                gapAnalysis={aggregatedAssessments.security ? {
-                  hasGap: aggregatedAssessments.security.entitiesWithGaps > 0,
-                  gapFields: aggregatedAssessments.security.fieldGapAnalysis?.gapFields || [],
-                  severity: aggregatedAssessments.security.fieldGapAnalysis?.overallSeverity || 'MEDIUM',
-                  fieldSeverityMap: aggregatedAssessments.security.fieldGapAnalysis?.fieldSeverityMap || {},
-                  fieldCounts: aggregatedAssessments.security.fieldGapAnalysis?.fieldCounts || {},
-                  recommendations: aggregatedAssessments.security.fieldGapAnalysis?.recommendations || []
-                } : undefined}
+                gapSummary={aggregatedAssessments.security?.gapSummary}
+                questions={questionMetadata?.SECURITY?.questions}
                 layout="full"
                 showRecommendations={false}
                 isAggregated={true}
@@ -431,30 +406,40 @@ export function EntityAssessmentPanel({
                       category="health"
                       assessment={entity.latestAssessments?.health}
                       gapAnalysis={entity.latestAssessments?.health?.gapAnalysis}
+                      gapSummary={individualSummaries[index]?.health}
+                      questions={questionMetadata?.HEALTH?.questions}
                       layout="split"
                     />
                     <AssessmentCategorySummary
                       category="food"
                       assessment={entity.latestAssessments?.food}
                       gapAnalysis={entity.latestAssessments?.food?.gapAnalysis}
+                      gapSummary={individualSummaries[index]?.food}
+                      questions={questionMetadata?.FOOD?.questions}
                       layout="split"
                     />
                     <AssessmentCategorySummary
                       category="wash"
                       assessment={entity.latestAssessments?.wash}
                       gapAnalysis={entity.latestAssessments?.wash?.gapAnalysis}
+                      gapSummary={individualSummaries[index]?.wash}
+                      questions={questionMetadata?.WASH?.questions}
                       layout="split"
                     />
                     <AssessmentCategorySummary
                       category="shelter"
                       assessment={entity.latestAssessments?.shelter}
                       gapAnalysis={entity.latestAssessments?.shelter?.gapAnalysis}
+                      gapSummary={individualSummaries[index]?.shelter}
+                      questions={questionMetadata?.SHELTER?.questions}
                       layout="split"
                     />
                     <AssessmentCategorySummary
                       category="security"
                       assessment={entity.latestAssessments?.security}
                       gapAnalysis={entity.latestAssessments?.security?.gapAnalysis}
+                      gapSummary={individualSummaries[index]?.security}
+                      questions={questionMetadata?.SECURITY?.questions}
                       layout="split"
                     />
                   </div>

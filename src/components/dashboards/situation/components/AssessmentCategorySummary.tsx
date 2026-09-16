@@ -4,27 +4,25 @@ import React, { useMemo, useState } from 'react';
 import { cn, formatNumber, formatArrayValue } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { getBadgeClasses } from '@/components/shared/StatusBadge';
 import { Calendar, User, AlertTriangle, CheckCircle, Info, AlertCircle, Heart, Wheat, Droplets, Home, Shield, Users } from '@/lib/icons';
 import { GapIndicator } from './GapIndicator';
-import type { 
-  HealthAssessmentData, 
-  FoodAssessmentData, 
-  WASHAssessmentData,
-  ShelterAssessmentData,
-  SecurityAssessmentData,
-  PopulationAssessmentData
-} from '@/app/api/v1/dashboard/situation/route';
+import type { CategoryGapRow, CategoryGapSummary, SummaryQuestionMeta } from '@/lib/questions/gap-summary';
 
 interface AssessmentCategorySummaryProps {
   category: 'health' | 'food' | 'wash' | 'shelter' | 'security' | 'population';
+  /** Typed assessment data (individual) or per-type aggregate object (aggregated). */
   assessment: any;
+  /** Stored P3 gap-engine result (individual mode: badge fallback + recommendations). */
   gapAnalysis?: any;
   layout: 'split' | 'full';
   className?: string;
   showRecommendations?: boolean;
-  isAggregated?: boolean; // New prop to indicate this is aggregated data
+  isAggregated?: boolean;
+  /** P7 ranked summary — aggregated cards get it from the route; individual cards get one built from the stored gapAnalysis. */
+  gapSummary?: CategoryGapSummary;
+  /** Live registry projection for this type (labels/meanings/orders). */
+  questions?: SummaryQuestionMeta[];
 }
 
 // Category configuration
@@ -78,18 +76,18 @@ const fieldUnits = {
   // Health
   numberHealthFacilities: 'facilities',
   qualifiedHealthWorkers: 'workers',
-  
+
   // Food
   availableFoodDurationDays: 'days',
   additionalFoodRequiredPersons: 'persons',
   additionalFoodRequiredHouseholds: 'households',
-  
+
   // WASH
   functionalLatrinesAvailable: 'latrines',
-  
+
   // Shelter
   numberSheltersRequired: 'shelters',
-  
+
   // Population
   totalPopulation: 'people',
   totalHouseholds: 'households',
@@ -105,101 +103,21 @@ const fieldUnits = {
   numberInjured: 'people'
 } as const;
 
-// Field definitions for gap vs non-gap indicating fields
-const fieldDefinitions = {
-  health: {
-    gapIndicators: [
-      { key: 'hasFunctionalClinic', label: 'Functional Clinic', boolean: true },
-      { key: 'hasEmergencyServices', label: 'Emergency Services', boolean: true },
-      { key: 'hasTrainedStaff', label: 'Trained Staff', boolean: true },
-      { key: 'hasMedicineSupply', label: 'Medicine Supply', boolean: true },
-      { key: 'hasMedicalSupplies', label: 'Medical Supplies', boolean: true },
-      { key: 'hasMaternalChildServices', label: 'Maternal/Child Services', boolean: true }
-    ],
-    nonGapIndicators: [
-      { key: 'numberHealthFacilities', label: 'Health Facilities', boolean: false },
-      { key: 'healthFacilityType', label: 'Facility Type', boolean: false },
-      { key: 'qualifiedHealthWorkers', label: 'Qualified Workers', boolean: false },
-      { key: 'commonHealthIssues', label: 'Common Issues', boolean: false }
-    ]
-  },
-  food: {
-    gapIndicators: [
-      { key: 'isFoodSufficient', label: 'Food Sufficiency', boolean: true },
-      { key: 'hasRegularMealAccess', label: 'Regular Meal Access', boolean: true },
-      { key: 'hasInfantNutrition', label: 'Infant Nutrition', boolean: true }
-    ],
-    nonGapIndicators: [
-      { key: 'foodSource', label: 'Food Source', boolean: false },
-      { key: 'availableFoodDurationDays', label: 'Food Duration (Days)', boolean: false },
-      { key: 'additionalFoodRequiredPersons', label: 'Additional Food Needed (Persons)', boolean: false },
-      { key: 'additionalFoodRequiredHouseholds', label: 'Additional Food Needed (Households)', boolean: false }
-    ]
-  },
-  wash: {
-    gapIndicators: [
-      { key: 'isWaterSufficient', label: 'Water Sufficiency', boolean: true },
-      { key: 'hasCleanWaterAccess', label: 'Clean Water Access', boolean: true },
-      { key: 'areLatrinesSufficient', label: 'Sufficient Latrines', boolean: true },
-      { key: 'hasHandwashingFacilities', label: 'Handwashing Facilities', boolean: true },
-      { key: 'hasOpenDefecationConcerns', label: 'Open Defecation Concerns', boolean: true, invert: true }
-    ],
-    nonGapIndicators: [
-      { key: 'waterSource', label: 'Water Source', boolean: false },
-      { key: 'functionalLatrinesAvailable', label: 'Functional Latrines', boolean: false }
-    ]
-  },
-  shelter: {
-    gapIndicators: [
-      { key: 'areSheltersSufficient', label: 'Sufficient Shelters', boolean: true },
-      { key: 'hasSafeStructures', label: 'Safe Structures', boolean: true },
-      { key: 'areOvercrowded', label: 'Overcrowding', boolean: true, invert: true },
-      { key: 'provideWeatherProtection', label: 'Weather Protection', boolean: true }
-    ],
-    nonGapIndicators: [
-      { key: 'shelterTypes', label: 'Shelter Types', boolean: false },
-      { key: 'requiredShelterType', label: 'Required Shelter Type', boolean: false },
-      { key: 'numberSheltersRequired', label: 'Shelters Required', boolean: false }
-    ]
-  },
-  security: {
-    gapIndicators: [
-      { key: 'isSafeFromViolence', label: 'Safe from Violence', boolean: true },
-      { key: 'gbvCasesReported', label: 'GBV Cases', boolean: true, invert: true },
-      { key: 'hasSecurityPresence', label: 'Security Presence', boolean: true },
-      { key: 'hasProtectionReportingMechanism', label: 'Protection Reporting', boolean: true },
-      { key: 'vulnerableGroupsHaveAccess', label: 'Vulnerable Groups Access', boolean: true },
-      { key: 'hasLighting', label: 'Lighting', boolean: true }
-    ],
-    nonGapIndicators: []
-  },
-  population: {
-    gapIndicators: [], // Population doesn't have gap indicators
-    nonGapIndicators: [
-      { key: 'totalPopulation', label: 'Total Population', boolean: false },
-      { key: 'totalHouseholds', label: 'Total Households', boolean: false },
-      { key: 'populationMale', label: 'Male Population', boolean: false },
-      { key: 'populationFemale', label: 'Female Population', boolean: false },
-      { key: 'populationUnder5', label: 'Children Under 5', boolean: false },
-      { key: 'pregnantWomen', label: 'Pregnant Women', boolean: false },
-      { key: 'lactatingMothers', label: 'Lactating Mothers', boolean: false },
-      { key: 'personWithDisability', label: 'Persons with Disability', boolean: false },
-      { key: 'elderlyPersons', label: 'Elderly Persons', boolean: false },
-      { key: 'separatedChildren', label: 'Separated Children', boolean: false },
-      { key: 'numberLivesLost', label: 'Lives Lost', boolean: false },
-      { key: 'numberInjured', label: 'Injured', boolean: false }
-    ]
-  }
-} as const;
-
 /**
- * AssessmentCategorySummary Component
- * 
- * Displays assessment data for a specific category with:
- * - Split layout: Non-gap indicators on left, gap indicators on right
- * - Gap analysis with visual indicators
- * - Assessment metadata (date, assessor)
- * - No data state when assessment is missing
+ * AssessmentCategorySummary Component (P7)
+ *
+ * Renders one assessment-type card from RANKED registry-derived gap rows
+ * (never a standing enumeration of hardcoded fields):
+ * - Aggregated ("All Entities") mode: `gapSummary` from the situation route —
+ *   ranked rows with "N of M" spread chips, an expandable
+ *   `+{hidden} more · {count} {SEV}` overflow chip (all overflow rows are
+ *   carried in `rows`), and a `Severities as of registry v{contentVersion}`
+ *   stamp.
+ * - Individual-entity mode: `gapSummary` built client-side from the STORED
+ *   gapAnalysis joined with `questions` metadata; same ranking/limit/chip,
+ *   spread locked to 1, no stamp. Context box from CONTEXT metadata + values.
+ * - Zero confirmed gaps render a collapsed variant (title + green
+ *   "No Gaps" badge, no row list).
  */
 
 const severityIconMap: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -215,6 +133,7 @@ const severityFlashMap: Record<string, string> = {
   MEDIUM: '',
   LOW: ''
 };
+
 export function AssessmentCategorySummary({
   category,
   assessment,
@@ -222,55 +141,32 @@ export function AssessmentCategorySummary({
   layout = 'split',
   className,
   showRecommendations = false,
-  isAggregated = false
+  isAggregated = false,
+  gapSummary,
+  questions
 }: AssessmentCategorySummaryProps) {
   const config = categoryConfig[category];
-  const fieldConfig = fieldDefinitions[category];
-  
-  // Severity comes from the registry-derived `fieldSeverityMap` the situation
-  // route attaches to gapAnalysis (Question.severity at analysis time); the
-  // static lists below are a display-only fallback for legacy payloads.
-  const gapFields = gapAnalysis?.gapFields || [];
-  const fieldSeverityMap = gapAnalysis?.fieldSeverityMap || {};
+  const [expanded, setExpanded] = useState(false);
 
-  const getFieldSeverity = (fieldName: string): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' => {
-    // Registry-derived severity from the gap analysis
-    if (fieldSeverityMap[fieldName]) {
-      return fieldSeverityMap[fieldName];
-    }
+  // Header badge derives from the ranked summary when present (aggregated and
+  // individual alike); the stored gapAnalysis remains the individual fallback.
+  const hasGap = gapSummary ? gapSummary.hasGaps : Boolean(gapAnalysis?.hasGap);
+  const overallSeverity = gapSummary
+    ? gapSummary.overallSeverity
+    : (gapAnalysis?.severity as string | undefined);
 
-    // If this field is not in the gap fields, no gap
-    if (!gapFields.includes(fieldName)) {
-      return 'LOW'; // No gap
-    }
+  // Collapsed view shows rows.length - hiddenCount rows; expanding reveals
+  // every overflow row (the summary carries them all).
+  const visibleRows = useMemo(() => {
+    if (!gapSummary) return [];
+    const collapsedCount = gapSummary.rows.length - gapSummary.hiddenCount;
+    return expanded ? gapSummary.rows : gapSummary.rows.slice(0, collapsedCount);
+  }, [gapSummary, expanded]);
 
-    // Display-only fallback for gap fields without a severity map
-    const criticalFields = [
-      'hasEmergencyServices', 'hasFunctionalClinic', 'isWaterSufficient', 
-      'areSheltersSufficient', 'hasSafetyConcerns', 'hasImmediateThreats'
-    ];
-    
-    const highFields = [
-      'hasCleanWaterAccess', 'hasTrainedStaff', 'hasMedicineSupply',
-      'isFoodSufficient', 'hasRegularMealAccess', 'hasSafeStructures'
-    ];
-    
-    const mediumFields = [
-      'hasHandwashingFacilities', 'areLatrinesSufficient', 'hasMedicalSupplies',
-      'hasInfantNutrition', 'areOvercrowded', 'provideWeatherProtection'
-    ];
-
-    if (criticalFields.includes(fieldName)) {
-      return 'CRITICAL';
-    } else if (highFields.includes(fieldName)) {
-      return 'HIGH';
-    } else if (mediumFields.includes(fieldName)) {
-      return 'MEDIUM';
-    }
-    
-    // Default to HIGH for any other gap fields not explicitly categorized
-    return 'HIGH';
-  };
+  const contextQuestions = useMemo(
+    () => (questions ?? []).filter((question) => question.category === 'CONTEXT'),
+    [questions]
+  );
 
   if (!assessment) {
     return (
@@ -292,107 +188,136 @@ export function AssessmentCategorySummary({
     );
   }
 
-  const renderField = (key: string, label: string, boolean: boolean, invert = false) => {
+  const formatContextValue = (key: string): string => {
     const value = assessment[key];
-    
-    if (boolean) {
-      if (isAggregated && gapAnalysis?.fieldCounts?.[key]) {
-        // For aggregated data, show count of entities with gaps
-        const fieldCount = gapAnalysis.fieldCounts[key];
-        const severity = fieldCount.gaps > 0 ? (gapAnalysis.fieldSeverityMap[key] || 'HIGH') : 'LOW';
-        const hasGap = fieldCount.gaps > 0;
-        
-        return (
-          <div key={key} className="flex items-center justify-between py-1">
-            <span className="text-sm text-muted-foreground">{label}</span>
-            <div className="flex items-center gap-2">
-              {hasGap ? (
-                <>
-                  <GapIndicator hasGap={true} severity={severity} size="sm" />
-                  <span className="text-[11px] text-muted-foreground bg-muted px-2 py-1 rounded">
-                    {fieldCount.gaps} of {fieldCount.total}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <GapIndicator hasGap={false} severity="LOW" size="sm" />
-                  <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded">
-                    No gaps
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      } else {
-        // Individual entity data (original logic)
-        const hasGap = invert ? value : !value;
-        const severity = hasGap ? getFieldSeverity(key) : 'LOW';
-        return (
-          <div key={key} className="flex items-center justify-between py-1">
-            <span className="text-sm text-muted-foreground">{label}</span>
-            <GapIndicator hasGap={hasGap} severity={severity} size="sm" />
-          </div>
-        );
-      }
-    }
 
-    // Format non-boolean values with improved styling
-    let displayValue: string;
-    let unit: string = '';
-    
     if (typeof value === 'number') {
-      displayValue = formatNumber(value);
-      // Add unit if available
-      const fieldKey = key as keyof typeof fieldUnits;
-      if (fieldUnits[fieldKey]) {
-        unit = fieldUnits[fieldKey];
-      }
-    } else if (typeof value === 'object' && value !== null) {
-      displayValue = formatArrayValue(value);
-    } else if (typeof value === 'string' && (value.startsWith('[') || value.includes(','))) {
-      // Handle string arrays
-      displayValue = formatArrayValue(value);
-    } else {
-      displayValue = value ? String(value) : 'N/A';
+      return formatNumber(value);
     }
+    if (typeof value === 'object' && value !== null) {
+      return formatArrayValue(value);
+    }
+    if (typeof value === 'string' && (value.startsWith('[') || value.includes(','))) {
+      return formatArrayValue(value);
+    }
+    return value ? String(value) : 'N/A';
+  };
 
-    // Check if this is being rendered in the Overview section (non-gap fields)
-    const isOverviewField = fieldConfig.nonGapIndicators.some(field => field.key === key);
+  const unitFor = (key: string): string => {
+    const fieldKey = key as keyof typeof fieldUnits;
+    return fieldUnits[fieldKey] || '';
+  };
 
-    if (isOverviewField) {
-      // Overview layout: variable name and value on same row, minimizing vertical space
+  const renderGapRow = (row: CategoryGapRow, showSpread: boolean) => (
+    <div key={row.key} className="py-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm text-muted-foreground flex-1 min-w-0 truncate" title={row.label}>
+          {row.label}
+        </span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {showSpread && row.total > 0 && (
+            <span className="text-[11px] text-muted-foreground bg-muted px-2 py-1 rounded">
+              {row.spread} of {row.total}
+            </span>
+          )}
+          <GapIndicator hasGap severity={row.severity} size="sm" />
+        </div>
+      </div>
+      {row.meaning && (
+        <p className="text-xs text-muted-foreground mt-0.5 pl-1">{row.meaning}</p>
+      )}
+    </div>
+  );
+
+  const renderOverflowChip = () => {
+    if (!gapSummary || gapSummary.hiddenCount <= 0) return null;
+    const hint = gapSummary.hiddenSeverityHint;
+    return (
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="mt-1 text-xs text-blue-600 hover:text-blue-800 hover:underline rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-1"
+        aria-expanded={expanded}
+      >
+        {expanded
+          ? 'Show fewer'
+          : `+${gapSummary.hiddenCount} more${hint ? ` · ${hint.count} ${hint.severity}` : ''}`}
+      </button>
+    );
+  };
+
+  const renderRankedRows = (showSpread: boolean) => {
+    if (!gapSummary) {
       return (
-        <div key={key} className="flex items-center justify-between py-0.5">
-          <div className="text-muted-foreground font-medium uppercase tracking-wide leading-tight" style={{fontSize: '8px'}}>
-            {label}
-          </div>
-          <div className="text-sm font-medium text-foreground">
-            {displayValue}
-            {unit && <span className="text-xs text-muted-foreground ml-1">{unit}</span>}
-          </div>
+        <div className="text-center py-4 text-muted-foreground bg-muted rounded-lg">
+          <Info className="h-6 w-6 mx-auto mb-2 opacity-50" />
+          <p className="text-xs">No gap data</p>
         </div>
       );
     }
 
-    // Gap analysis layout: regular row format
+    if (!gapSummary.hasGaps) {
+      // Collapsed zero-gap variant — never an empty row list.
+      return (
+        <div className="text-center py-4 text-green-700 bg-green-50 rounded-lg border border-green-200">
+          <CheckCircle className="h-6 w-6 mx-auto mb-2 text-green-500" />
+          <p className="text-xs">
+            {isAggregated ? 'No gaps across all entities' : 'No gaps detected'}
+          </p>
+        </div>
+      );
+    }
+
     return (
-      <div key={key} className="flex items-center justify-between py-1">
-        <span className="text-sm text-muted-foreground flex-1">{label}</span>
-        <span className="text-sm font-semibold text-foreground bg-muted px-2 py-1 rounded text-right min-w-0 flex-shrink-0">
-          {displayValue}
-          {unit && <span className="text-xs text-muted-foreground ml-1">{unit}</span>}
-        </span>
+      <div>
+        {visibleRows.map((row) => renderGapRow(row, showSpread))}
+        {renderOverflowChip()}
       </div>
     );
   };
 
-  const gapFieldElements = fieldConfig.gapIndicators.map(field => 
-    renderField(field.key, field.label, field.boolean, (field as any).invert)
-  );
-  
-  const nonGapFieldElements = fieldConfig.nonGapIndicators.map(field => 
-    renderField(field.key, field.label, field.boolean)
+  const renderStamp = () => {
+    if (!isAggregated || !gapSummary?.stamp) return null;
+    const computedAt = new Date(gapSummary.stamp.computedAt).toLocaleString();
+    return (
+      <p className="text-[10px] text-muted-foreground mt-3" data-testid="gap-summary-stamp">
+        Severities as of registry v{gapSummary.stamp.contentVersion} · {computedAt}
+      </p>
+    );
+  };
+
+  const renderContextBox = () => (
+    <div className="space-y-2">
+      {contextQuestions.length > 0 ? (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <h4 className="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-2">
+            <Info className="h-4 w-4" />
+            Context
+          </h4>
+          <div className="space-y-1">
+            {contextQuestions.map((question) => {
+              const unit = unitFor(question.key);
+              return (
+                <div key={question.key} className="flex items-center justify-between py-0.5">
+                  <div className="text-muted-foreground font-medium uppercase tracking-wide leading-tight" style={{ fontSize: '8px' }}>
+                    {question.label}
+                  </div>
+                  <div className="text-sm font-medium text-foreground">
+                    {formatContextValue(question.key)}
+                    {unit && <span className="text-xs text-muted-foreground ml-1">{unit}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="text-center py-4 text-muted-foreground bg-muted rounded-lg">
+          <Info className="h-6 w-6 mx-auto mb-2 opacity-50" />
+          <p className="text-xs">No overview data</p>
+        </div>
+      )}
+    </div>
   );
 
   return (
@@ -403,25 +328,25 @@ export function AssessmentCategorySummary({
             <config.Icon className={cn("h-4 w-4", config.color)} />
             {config.title}
           </CardTitle>
-          {gapAnalysis && (
+          {(hasGap || gapAnalysis) && (
             <div className="flex items-center gap-2">
-              {gapAnalysis.hasGap ? (
+              {hasGap && overallSeverity ? (
                 (() => {
-                  const IconComponent = severityIconMap[gapAnalysis.severity] || Info;
-                  const badgeClass = getBadgeClasses('severity', gapAnalysis.severity);
+                  const IconComponent = severityIconMap[overallSeverity] || Info;
+                  const badgeClass = getBadgeClasses('severity', overallSeverity);
                   return (
-                    <Badge 
-                      variant="outline" 
-                      className={cn("text-xs font-bold", badgeClass, severityFlashMap[gapAnalysis.severity] || '')}
+                    <Badge
+                      variant="outline"
+                      className={cn("text-xs font-bold", badgeClass, severityFlashMap[overallSeverity] || '')}
                     >
                       <IconComponent className="h-3 w-3 mr-1" />
-                      {gapAnalysis.severity}
+                      {overallSeverity}
                     </Badge>
                   );
                 })()
               ) : (
-                <Badge 
-                  variant="outline" 
+                <Badge
+                  variant="outline"
                   className={cn("text-xs font-bold", getBadgeClasses('severity', 'LOW'))}
                 >
                   <CheckCircle className="h-3 w-3 mr-1" />
@@ -431,7 +356,7 @@ export function AssessmentCategorySummary({
             </div>
           )}
         </div>
-        
+
         {/* Assessment metadata */}
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           {assessment.rapidAssessmentDate && (
@@ -451,79 +376,66 @@ export function AssessmentCategorySummary({
               {assessment.verificationStatus}
             </Badge>
           )}
+          {isAggregated && typeof assessment.totalEntities === 'number' && (
+            <div className="flex items-center gap-1">
+              <Users className="h-3 w-3" />
+              {assessment.totalEntities} {assessment.totalEntities === 1 ? 'entity' : 'entities'}
+            </div>
+          )}
         </div>
       </CardHeader>
 
       <CardContent className="pt-0">
         {isAggregated ? (
-          // Aggregated view - show only gap indicators
+          // Aggregated view — ranked gap rows only (registry-derived),
+          // overflow chip, and the registry stamp.
           <div className="space-y-2">
-            {gapFieldElements.length > 0 ? (
-              <>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-medium text-foreground">Gap Analysis (All Entities)</h4>
-                  <span className="text-xs text-muted-foreground">Select entity for details</span>
-                </div>
-                {gapFieldElements}
-              </>
-            ) : (
-              <div className="text-center py-4 text-muted-foreground">
-                <CheckCircle className="h-6 w-6 mx-auto mb-2 text-green-500" />
-                <p className="text-xs">No gap indicators across all entities</p>
+            {gapSummary?.hasGaps && (
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-medium text-foreground">Gap Analysis (All Entities)</h4>
+                <span className="text-xs text-muted-foreground">Select entity for details</span>
               </div>
             )}
+            {renderRankedRows(true)}
+            {renderStamp()}
           </div>
-        ) : layout === 'split' && gapFieldElements.length > 0 ? (
+        ) : layout === 'split' ? (
           <div className="space-y-4">
-            {/* Gap indicators (top section) */}
+            {/* Ranked gap rows (top section) */}
             <div className="space-y-2">
-              {gapFieldElements.length > 0 ? (
-                <>
-                  <div className="border border-border rounded-lg p-3">
-                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4" />
-                      Gap Analysis
-                    </h4>
-                    <div className="space-y-2">
-                      {gapFieldElements}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-4 text-muted-foreground bg-green-50 rounded-lg border border-green-200">
-                  <CheckCircle className="h-6 w-6 mx-auto mb-2 text-green-500" />
-                  <p className="text-xs text-green-700">No gap indicators</p>
-                </div>
-              )}
+              <div className="border border-border rounded-lg p-3">
+                <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Gap Analysis
+                </h4>
+                {renderRankedRows(false)}
+              </div>
             </div>
 
-            {/* Non-gap indicators (bottom section) */}
-            <div className="space-y-2">
-              {nonGapFieldElements.length > 0 ? (
-                <>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <h4 className="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-2">
-                      <Info className="h-4 w-4" />
-                      Context
-                    </h4>
-                    <div className="space-y-1">
-                      {nonGapFieldElements}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-4 text-muted-foreground bg-muted rounded-lg">
-                  <Info className="h-6 w-6 mx-auto mb-2 opacity-50" />
-                  <p className="text-xs">No overview data</p>
-                </div>
-              )}
-            </div>
+            {/* Context box from CONTEXT metadata + assessment values */}
+            {renderContextBox()}
           </div>
         ) : (
-          // Full layout - all fields together
-          <div className="space-y-2">
-            <h4 className="text-sm font-medium text-foreground mb-2">Assessment Details</h4>
-            {[...nonGapFieldElements, ...gapFieldElements]}
+          // Full layout - context rows and ranked gap rows together
+          <div className="space-y-4">
+            <div className="space-y-1">
+              {contextQuestions.map((question) => {
+                const unit = unitFor(question.key);
+                return (
+                  <div key={question.key} className="flex items-center justify-between py-1">
+                    <span className="text-sm text-muted-foreground flex-1">{question.label}</span>
+                    <span className="text-sm font-semibold text-foreground bg-muted px-2 py-1 rounded text-right min-w-0 flex-shrink-0">
+                      {formatContextValue(question.key)}
+                      {unit && <span className="text-xs text-muted-foreground ml-1">{unit}</span>}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-sm font-medium text-foreground mb-2">Gap Analysis</h4>
+              {renderRankedRows(false)}
+            </div>
           </div>
         )}
 

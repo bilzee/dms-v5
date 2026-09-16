@@ -1,0 +1,43 @@
+DQR P7 — Dashboard Registry-Ranked Gap Summaries
+Verification gates — 2026-09-16, branch dynamic-question-registry
+
+GATE  lint .............. PASS   0 errors. 1 pre-existing warning, byte-identical
+                           before/after this change and out of scope:
+                           src/utils/export/gapAnalysisCsv.ts:233
+                           import/no-anonymous-default-export
+GATE  type-check ........ PASS   tsc --noEmit, no output
+GATE  test:unit ......... PASS   16 suites / 336 tests, 0 failures, 0 skips
+                           (includes NEW tests/unit/gap-summary.test.ts —
+                           19 specs: ranking ladder severity>spread>order>key,
+                           limit clamp 1..7 default 5, overflow chip payload,
+                           label ladder + registry-absent fallbacks, stamp
+                           injection, individual vs aggregated variants)
+GATE  db:push:test ...... PASS   drms_test schema in sync
+GATE  test:api .......... PASS   14 suites / 186 tests, 0 failures
+                           (question-registry, severity-inheritance,
+                           severity-and-sync, assessment-*, offline-sync,
+                           auth, incidents, foundation, response-lifecycle,
+                           scoring-config, auth-token)
+GATE  test:baseline:e2e . PASS   9/9 golden journeys in 40.7s
+                           (chromium, port 3100, drms_test, seeded 5 roles /
+                           4 users) — login x7, assessor journeys x2
+
+AC greps (acceptance-criteria sweeps over src/):
+  fieldDefinitions|invertedFields|GapIndicators ... 0 hits (legacy naming gone)
+  getGapFieldSeverity ............................... 1 hit — its own legitimate
+                                                      definition inside
+                                                      src/lib/services/gap-analysis.service.ts
+
+Live-render evidence (dqr-p7-gap-summary-cards.png):
+  Situation dashboard, incident-flood-001, All Entities view:
+  - Health card: ranked rows "No emergency services 1 of 1 MEDIUM" and
+    "Medicine shortage 1 of 1 MEDIUM" with registry gapMeaning text and stamp
+    "Severities as of registry v2 · <computedAt>"
+  - WASH + Security cards: ranked rows with meanings
+  - Shelter card: zero-gap collapsed variant "No gaps across all entities"
+  - Food card: "Assessment Missing" (no assessments of that type)
+  - Aggregated summary: 3 entities with gaps / 1 without
+
+Note on an earlier partial tail ("3 passed"): that run overlapped duplicate
+gate shells sharing port 3100 and the drms_test database. The clean,
+interference-free rerun above is the authoritative result (9/9).

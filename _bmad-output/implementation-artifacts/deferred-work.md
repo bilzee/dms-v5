@@ -96,3 +96,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p6-notification-severity-inheritance.md`
   summary: `src/lib/services/commitment.service.ts:212` dispatches `donorId: data.donorId` (a Donor organization id) where the signal engine consumes `payload.donorId` as a recipient USER id — the donor branch of commitment signals FK-fails silently and kills subsequent responder rows in the same evaluator run.
   evidence: Pre-existing, outside the P6 diff (finding #19, defer route). The real API surface (`donors/[id]/commitments/route.ts:326`) passes a user id correctly; only the service-internal caller conflates ids. Fix belongs to the commitment/signal owner: pass the donor's linked user id (or resolve it) at dispatch.
+
+## From Review (2026-09-16, DQR P7)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p7-dashboard-summaries.md`
+  summary: `IndividualEntityGapInfoPopup.tsx:22-183` still carries a hardcoded static field/explanation list (labels + meanings per assessment type) that will drift from the registry's live `gapLabel`/`gapMeaning` values.
+  evidence: BH1 at review. The popup is static educational help copy explaining what each gap field means — it is NOT on the P7 summary computation path (summaries derive labels/meanings from the live registry projection, pinned by the new unit/api suites). Rewiring the popup to render from `questionMetadata` belongs with the p9 documentation/read-side pass.

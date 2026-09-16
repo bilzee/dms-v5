@@ -2,22 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuth } from '@/lib/auth/middleware';
 import { prisma } from '@/lib/db/client';
 import { z } from 'zod';
-import type { EntityType, AssessmentType } from '@prisma/client';
-import {
-  analyzeHealthGaps,
-  analyzeFoodGaps,
-  analyzeWASHGaps,
-  analyzeShelterGaps,
-  analyzeSecurityGaps,
-  getGapFieldSeverity,
-  type HealthGapAnalysis,
-  type FoodGapAnalysis,
-  type WASHGapAnalysis,
-  type ShelterGapAnalysis,
-  type SecurityGapAnalysis
-} from '@/lib/services/gap-analysis.service';
+import type { EntityType } from '@prisma/client';
 import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/answers';
-import { handleApiError } from '@/lib/api/response'
+import type { GapEngineResult } from '@/lib/questions/gap-engine';
+import { buildCategoryGapSummary, type CategoryGapSummary, type QuestionTypeMetadata, type SummaryQuestionMeta } from '@/lib/questions/gap-summary';
+import { QuestionRegistryService } from '@/lib/services/question-registry.service';
+import { getGapRowsPerCategory } from '@/lib/services/dashboard-config.service';
+import { handleApiError } from '@/lib/api/response';
+
+/** The stored P3 gap-engine result — the single source of truth for summaries. */
+type StoredGapAnalysis = GapEngineResult;
+
+/** The five gap-bearing assessment types rendered as summary cards. */
+type GapAssessmentType = 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY';
+
+const GAP_ASSESSMENT_TYPES: readonly GapAssessmentType[] = ['HEALTH', 'FOOD', 'WASH', 'SHELTER', 'SECURITY'];
+
+const LATEST_ASSESSMENT_KEY: Record<GapAssessmentType, 'health' | 'food' | 'wash' | 'shelter' | 'security'> = {
+  HEALTH: 'health',
+  FOOD: 'food',
+  WASH: 'wash',
+  SHELTER: 'shelter',
+  SECURITY: 'security',
+};
 
 // Rate limiting implementation
 class RateLimiter {
@@ -317,42 +324,14 @@ interface EntityLocationsResponse {
   totalCount: number;
 }
 
-// Gap analysis interfaces are now imported from gap-analysis.service
-
-interface AggregatedHealthAssessment {
+// Per-type gap-bearing aggregate: counts + the ranked, registry-labeled
+// CategoryGapSummary (P7). Dead per-type totals (facilities/latrines/etc.) were
+// dropped — cards render ranked gap rows, not summed context fields.
+interface AggregatedTypeGaps {
   totalEntities: number;
   entitiesWithGaps: number;
   entitiesWithoutGaps: number;
-  totalHealthFacilities: number;
-  totalQualifiedWorkers: number;
-}
-
-interface AggregatedFoodAssessment {
-  totalEntities: number;
-  entitiesWithGaps: number;
-  entitiesWithoutGaps: number;
-  averageFoodDuration: number;
-  totalAdditionalPersonsRequired: number;
-}
-
-interface AggregatedWASHAssessment {
-  totalEntities: number;
-  entitiesWithGaps: number;
-  entitiesWithoutGaps: number;
-  totalFunctionalLatrines: number;
-}
-
-interface AggregatedShelterAssessment {
-  totalEntities: number;
-  entitiesWithGaps: number;
-  entitiesWithoutGaps: number;
-  totalSheltersRequired: number;
-}
-
-interface AggregatedSecurityAssessment {
-  totalEntities: number;
-  entitiesWithGaps: number;
-  entitiesWithoutGaps: number;
+  gapSummary: CategoryGapSummary;
 }
 
 interface AggregatedPopulationAssessment {
@@ -364,11 +343,11 @@ interface AggregatedPopulationAssessment {
 }
 
 interface AggregatedAssessments {
-  health: AggregatedHealthAssessment;
-  food: AggregatedFoodAssessment;
-  wash: AggregatedWASHAssessment;
-  shelter: AggregatedShelterAssessment;
-  security: AggregatedSecurityAssessment;
+  health: AggregatedTypeGaps | null;
+  food: AggregatedTypeGaps | null;
+  wash: AggregatedTypeGaps | null;
+  shelter: AggregatedTypeGaps | null;
+  security: AggregatedTypeGaps | null;
   population: AggregatedPopulationAssessment;
   gapSummary: {
     totalGaps: number;
@@ -404,11 +383,11 @@ interface EntityAssessment {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   severityCount: number;
   latestAssessments: {
-    health?: (HealthAssessmentData & { gapAnalysis: HealthGapAnalysis });
-    food?: (FoodAssessmentData & { gapAnalysis: FoodGapAnalysis });
-    wash?: (WASHAssessmentData & { gapAnalysis: WASHGapAnalysis });
-    shelter?: (ShelterAssessmentData & { gapAnalysis: ShelterGapAnalysis });
-    security?: (SecurityAssessmentData & { gapAnalysis: SecurityGapAnalysis });
+    health?: (HealthAssessmentData & { gapAnalysis: StoredGapAnalysis | null });
+    food?: (FoodAssessmentData & { gapAnalysis: StoredGapAnalysis | null });
+    wash?: (WASHAssessmentData & { gapAnalysis: StoredGapAnalysis | null });
+    shelter?: (ShelterAssessmentData & { gapAnalysis: StoredGapAnalysis | null });
+    security?: (SecurityAssessmentData & { gapAnalysis: StoredGapAnalysis | null });
     population?: PopulationAssessmentData;
   };
   gapSummary: {
@@ -475,6 +454,10 @@ interface SituationDashboardData {
   // Enhanced fields for entity assessment panel
   entityAssessments: EntityAssessment[];
   aggregatedAssessments?: AggregatedAssessments;
+  // P7: live registry projection embedded once per payload (5 gap types) +
+  // the effective category-card row limit (DASHBOARD.gapRowsPerCategory).
+  questionMetadata?: Record<string, QuestionTypeMetadata>;
+  gapRowsPerCategory?: number;
   // Interactive map fields
   entityLocations?: EntityLocationsResponse;
   // Gap analysis summary fields
@@ -874,7 +857,7 @@ async function getEntityAssessments(incidentId: string, entityId?: string): Prom
     const assessmentSeverities: ('CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW')[] = [];
     
     assessments.slice(0, 5).forEach(assessment => { // Exclude population from gap analysis
-      if (assessment && 'gapAnalysis' in assessment && assessment.gapAnalysis.hasGap) {
+      if (assessment && 'gapAnalysis' in assessment && assessment.gapAnalysis?.hasGap) {
         assessmentSeverities.push(assessment.gapAnalysis.severity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW');
       } else if (assessment) {
         assessmentSeverities.push('LOW'); // No gaps means LOW severity
@@ -912,7 +895,7 @@ async function getEntityAssessments(incidentId: string, entityId?: string): Prom
     let criticalGaps = 0;
 
     assessments.slice(0, 5).forEach(assessment => { // Exclude population from gap analysis
-      if (assessment && 'gapAnalysis' in assessment) {
+      if (assessment && 'gapAnalysis' in assessment && assessment.gapAnalysis) {
         if (assessment.gapAnalysis.hasGap) {
           totalGaps++;
           if (assessment.gapAnalysis.severity === 'CRITICAL') {
@@ -931,84 +914,10 @@ async function getEntityAssessments(incidentId: string, entityId?: string): Prom
   return entityAssessments;
 }
 
-async function getAggregatedAssessments(incidentId: string): Promise<AggregatedAssessments> {
-  if (!incidentId || typeof incidentId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(incidentId)) {
-    throw new Error('Invalid incident ID format');
-  }
-
-  // Mock aggregated assessments for now
-  const aggregatedHealth = { 
-    totalEntities: 3, 
-    entitiesWithGaps: 2, 
-    entitiesWithoutGaps: 1,
-    totalHealthFacilities: 5,
-    totalQualifiedWorkers: 12
-  };
-  const aggregatedFood = { 
-    totalEntities: 3, 
-    entitiesWithGaps: 1, 
-    entitiesWithoutGaps: 2,
-    averageFoodDuration: 7,
-    totalAdditionalPersonsRequired: 500
-  };
-  const aggregatedWASH = { 
-    totalEntities: 3, 
-    entitiesWithGaps: 1, 
-    entitiesWithoutGaps: 2,
-    totalFunctionalLatrines: 25
-  };
-  const aggregatedShelter = { 
-    totalEntities: 3, 
-    entitiesWithGaps: 1, 
-    entitiesWithoutGaps: 2,
-    totalSheltersRequired: 150
-  };
-  const aggregatedSecurity = { 
-    totalEntities: 3, 
-    entitiesWithGaps: 0, 
-    entitiesWithoutGaps: 3
-  };
-  const aggregatedPopulation = { 
-    totalEntities: 3, 
-    totalPopulation: 25000, 
-    totalHouseholds: 5000, 
-    totalLivesLost: 0, 
-    totalInjured: 5 
-  };
-
-  // Calculate aggregated gap summary
-  let totalGaps = 0;
-  let totalNoGaps = 0;
-  let criticalGaps = 0;
-  let entitiesWithGaps = 0;
-  let entitiesWithoutGaps = 0;
-
-  // Calculate gap summary - remove this since entityAssessments is not available here
-  totalGaps = 5; // Mock for now
-  totalNoGaps = 10;
-  criticalGaps = 2;
-  entitiesWithGaps = 2;
-  entitiesWithoutGaps = 1;
-
-  return {
-    health: aggregatedHealth,
-    food: aggregatedFood,
-    wash: aggregatedWASH,
-    shelter: aggregatedShelter,
-    security: aggregatedSecurity,
-    population: aggregatedPopulation,
-    gapSummary: {
-      totalGaps,
-      totalNoGaps,
-      criticalGaps,
-      entitiesWithGaps,
-      entitiesWithoutGaps
-    }
-  };
-}
-
 // Individual assessment fetchers — all types now live on RapidAssessment.answers,
 // hydrated back to the legacy typed shape via the registry converter.
+// gapAnalysis is the STORED P3 engine result and is authoritative: no
+// re-derivation happens in the dashboard path.
 interface LatestTypedAssessment {
   id: string;
   rapidAssessmentDate: Date;
@@ -1062,7 +971,7 @@ async function findLatestTypedAssessment(
   };
 }
 
-async function getLatestHealthAssessment(entityId: string, incidentId?: string): Promise<(HealthAssessmentData & { gapAnalysis: HealthGapAnalysis }) | null> {
+async function getLatestHealthAssessment(entityId: string, incidentId?: string): Promise<(HealthAssessmentData & { gapAnalysis: StoredGapAnalysis | null }) | null> {
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'HEALTH');
   if (!assessment) return null;
 
@@ -1075,16 +984,13 @@ async function getLatestHealthAssessment(entityId: string, incidentId?: string):
     assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.gapAnalysis as unknown as HealthGapAnalysis;
-  const gapAnalysis = storedGapAnalysis ?? await analyzeHealthGaps(data);
-
   return {
     ...data,
-    gapAnalysis
+    gapAnalysis: assessment.gapAnalysis as unknown as StoredGapAnalysis | null
   };
 }
 
-async function getLatestFoodAssessment(entityId: string, incidentId?: string): Promise<(FoodAssessmentData & { gapAnalysis: FoodGapAnalysis }) | null> {
+async function getLatestFoodAssessment(entityId: string, incidentId?: string): Promise<(FoodAssessmentData & { gapAnalysis: StoredGapAnalysis | null }) | null> {
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'FOOD');
   if (!assessment) return null;
 
@@ -1097,16 +1003,13 @@ async function getLatestFoodAssessment(entityId: string, incidentId?: string): P
     assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.gapAnalysis as unknown as FoodGapAnalysis;
-  const gapAnalysis = storedGapAnalysis ?? await analyzeFoodGaps(data);
-
   return {
     ...data,
-    gapAnalysis
+    gapAnalysis: assessment.gapAnalysis as unknown as StoredGapAnalysis | null
   };
 }
 
-async function getLatestWASHAssessment(entityId: string, incidentId?: string): Promise<(WASHAssessmentData & { gapAnalysis: WASHGapAnalysis }) | null> {
+async function getLatestWASHAssessment(entityId: string, incidentId?: string): Promise<(WASHAssessmentData & { gapAnalysis: StoredGapAnalysis | null }) | null> {
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'WASH');
   if (!assessment) return null;
 
@@ -1119,16 +1022,13 @@ async function getLatestWASHAssessment(entityId: string, incidentId?: string): P
     assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.gapAnalysis as unknown as WASHGapAnalysis;
-  const gapAnalysis = storedGapAnalysis ?? await analyzeWASHGaps(data);
-
   return {
     ...data,
-    gapAnalysis
+    gapAnalysis: assessment.gapAnalysis as unknown as StoredGapAnalysis | null
   };
 }
 
-async function getLatestShelterAssessment(entityId: string, incidentId?: string): Promise<(ShelterAssessmentData & { gapAnalysis: ShelterGapAnalysis }) | null> {
+async function getLatestShelterAssessment(entityId: string, incidentId?: string): Promise<(ShelterAssessmentData & { gapAnalysis: StoredGapAnalysis | null }) | null> {
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'SHELTER');
   if (!assessment) return null;
 
@@ -1141,16 +1041,13 @@ async function getLatestShelterAssessment(entityId: string, incidentId?: string)
     assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.gapAnalysis as unknown as ShelterGapAnalysis;
-  const gapAnalysis = storedGapAnalysis ?? await analyzeShelterGaps(data);
-
   return {
     ...data,
-    gapAnalysis
+    gapAnalysis: assessment.gapAnalysis as unknown as StoredGapAnalysis | null
   };
 }
 
-async function getLatestSecurityAssessment(entityId: string, incidentId?: string): Promise<(SecurityAssessmentData & { gapAnalysis: SecurityGapAnalysis }) | null> {
+async function getLatestSecurityAssessment(entityId: string, incidentId?: string): Promise<(SecurityAssessmentData & { gapAnalysis: StoredGapAnalysis | null }) | null> {
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'SECURITY');
   if (!assessment) return null;
 
@@ -1163,12 +1060,9 @@ async function getLatestSecurityAssessment(entityId: string, incidentId?: string
     assessorName: assessment.assessorName || assessment.assessorNameFallback || 'Unknown',
   };
 
-  const storedGapAnalysis = assessment.gapAnalysis as unknown as SecurityGapAnalysis;
-  const gapAnalysis = storedGapAnalysis ?? await analyzeSecurityGaps(data);
-
   return {
     ...data,
-    gapAnalysis
+    gapAnalysis: assessment.gapAnalysis as unknown as StoredGapAnalysis | null
   };
 }
 
@@ -1190,242 +1084,80 @@ async function getLatestPopulationAssessment(entityId: string, incidentId?: stri
 
 
 /**
- * Calculate field-level gap analysis based on count-based severity
- * @param assessments Array of assessments for a specific category
- * @param gapIndicators Array of field indicators that represent gaps
- * @returns Field-level gap analysis with severity and recommendations
+ * Live registry projection for the five gap types, embedded once per payload.
+ * Labels/meanings/orders are always CURRENT (deactivation is prospective);
+ * keys that fall out of the live set are still rendered from the stored
+ * gapAnalysis via the gap-summary label ladder. Never throws: a registry
+ * failure for one type degrades to an empty projection (stored fallback
+ * labels, stamp v0) instead of 500-ing the whole dashboard — the same
+ * resilience contract as getGapRowsPerCategory.
  */
-async function calculateFieldLevelGaps(assessments: any[], gapIndicators: Array<{key: string, label: string}>, assessmentType: 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY'): Promise<{
-  gapFields: string[];
-  fieldSeverityMap: Record<string, 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>;
-  overallSeverity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  recommendations: string[];
-  fieldCounts: Record<string, { gaps: number; total: number }>;
-}> {
-  const gapFields: string[] = [];
-  const fieldSeverityMap: Record<string, 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'> = {};
-  const fieldCounts: Record<string, { gaps: number; total: number }> = {};
-  const totalAssessments = assessments.length;
-  
-  if (totalAssessments === 0) {
-    return {
-      gapFields: [],
-      fieldSeverityMap: {},
-      overallSeverity: 'LOW',
-      recommendations: [],
-      fieldCounts: {}
-    };
-  }
-
-  // Define inverted fields (where true indicates a gap)
-  const invertedFields = ['hasOpenDefecationConcerns', 'areOvercrowded', 'gbvCasesReported'];
-
-  // Calculate gaps for each field
-  for (const { key } of gapIndicators) {
-    const gapCount = assessments.filter(assessment => {
-      // Gap exists if field is false (or inverted)
-      const value = assessment[key];
-      const isInverted = invertedFields.includes(key);
-      
-      if (isInverted) {
-        return value === true;
-      } else {
-        return value === false || value === 0 || value === null;
+async function getQuestionMetadata(): Promise<Record<GapAssessmentType, QuestionTypeMetadata>> {
+  const entries = await Promise.all(
+    GAP_ASSESSMENT_TYPES.map(async (assessmentType): Promise<[GapAssessmentType, QuestionTypeMetadata]> => {
+      try {
+        const set = await QuestionRegistryService.getQuestionSet(assessmentType);
+        const questions: SummaryQuestionMeta[] = [];
+        for (const section of set.sections) {
+          for (const question of section.questions) {
+            questions.push({
+              key: question.questionKey,
+              label: question.label,
+              gapLabel: question.gapLabel,
+              gapMeaning: question.gapMeaning,
+              category: question.category,
+              questionType: question.questionType,
+              order: questions.length + 1,
+            });
+          }
+        }
+        return [assessmentType, {
+          questions,
+          structureVersion: set.structureVersion,
+          contentVersion: set.contentVersion,
+        }];
+      } catch (error) {
+        console.warn(`[situation] registry projection failed for ${assessmentType}, degrading to stored gap labels:`, error);
+        return [assessmentType, { questions: [], structureVersion: 0, contentVersion: 0 }];
       }
-    }).length;
-
-    // Store counts for display in badges
-    fieldCounts[key] = {
-      gaps: gapCount,
-      total: totalAssessments
-    };
-
-    if (gapCount > 0) {
-      gapFields.push(key);
-      
-      // Get severity from Gap Field Severity Management instead of hardcoded calculation
-      // This ensures consistency with individual entity assessments
-      const severity = await getFieldSeverityFromDatabase(key, assessmentType);
-      fieldSeverityMap[key] = severity;
-    }
-  }
-
-  // Calculate overall severity from stored gapAnalysis.severity of each assessment
-  // This is the bottom-up max rule: take the highest stored severity across all assessments
-  const SEVERITY_ORDER: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
-  let overallSeverity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' = 'LOW';
-
-  for (const assessment of assessments) {
-    const stored = assessment?.gapAnalysis;
-    if (stored && stored.hasGap && stored.severity) {
-      const sev = stored.severity as string;
-      if (SEVERITY_ORDER[sev] > SEVERITY_ORDER[overallSeverity]) {
-        overallSeverity = sev as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-      }
-    }
-  }
-
-  // Return the analysis results
-  return {
-    gapFields,
-    fieldSeverityMap,
-    overallSeverity,
-    recommendations: [],
-    fieldCounts
-  };
+    })
+  );
+  return Object.fromEntries(entries) as Record<GapAssessmentType, QuestionTypeMetadata>;
 }
 
 /**
- * Get field severity from the Dynamic Question Registry (Question.severity).
- * This ensures consistency between individual entity and "All Entities" views.
+ * Generic per-type aggregate: entitiesWithGaps/WithoutGaps counts plus the
+ * ranked CategoryGapSummary derived from the STORED gapAnalysis of every
+ * latest assessment (no per-field scanning, no severity DB lookups). Returns
+ * null when no entity reported this type (card renders "Assessment Missing").
  */
-async function getFieldSeverityFromDatabase(fieldName: string, assessmentType: 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY'): Promise<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'> {
-  try {
-    return await getGapFieldSeverity(assessmentType as AssessmentType, fieldName);
-  } catch (error) {
-    console.warn(`Error getting field severity for ${fieldName} in ${assessmentType}:`, error);
-    // Fallback to MEDIUM if lookup unavailable
-    return 'MEDIUM';
-  }
-}
+function aggregateTypeGaps(
+  entityAssessments: EntityAssessment[],
+  assessmentType: GapAssessmentType,
+  metadata: SummaryQuestionMeta[],
+  limit: number,
+  contentVersion: number,
+  computedAt: Date
+): AggregatedTypeGaps | null {
+  const assessments = entityAssessments
+    .map((entity) => entity.latestAssessments[LATEST_ASSESSMENT_KEY[assessmentType]])
+    .filter((assessment): assessment is NonNullable<typeof assessment> => Boolean(assessment));
 
-async function aggregateHealthAssessments(entityAssessments: EntityAssessment[]): Promise<any> {
-  const healthAssessments = entityAssessments.map(e => e.latestAssessments.health).filter(Boolean);
-  
-  // Return null if no health assessments exist
-  if (healthAssessments.length === 0) {
+  if (assessments.length === 0) {
     return null;
   }
 
-  // Calculate field-level gap analysis
-  const healthGapIndicators = [
-    { key: 'hasFunctionalClinic', label: 'Functional Clinic' },
-    { key: 'hasEmergencyServices', label: 'Emergency Services' },
-    { key: 'hasTrainedStaff', label: 'Trained Staff' },
-    { key: 'hasMedicineSupply', label: 'Medicine Supply' },
-    { key: 'hasMedicalSupplies', label: 'Medical Supplies' },
-    { key: 'hasMaternalChildServices', label: 'Maternal/Child Services' }
-  ];
-
-  const fieldGapAnalysis = await calculateFieldLevelGaps(healthAssessments, healthGapIndicators, 'HEALTH');
-  
   return {
-    totalEntities: healthAssessments.length,
-    entitiesWithGaps: healthAssessments.filter(a => a && a.gapAnalysis.hasGap).length,
-    entitiesWithoutGaps: healthAssessments.filter(a => a && !a.gapAnalysis.hasGap).length,
-    totalHealthFacilities: healthAssessments.reduce((sum, a) => sum + (a?.numberHealthFacilities || 0), 0),
-    totalQualifiedWorkers: healthAssessments.reduce((sum, a) => sum + (a?.qualifiedHealthWorkers || 0), 0),
-    fieldGapAnalysis
-  };
-}
-
-async function aggregateFoodAssessments(entityAssessments: EntityAssessment[]): Promise<any> {
-  const foodAssessments = entityAssessments.map(e => e.latestAssessments.food).filter(Boolean);
-  
-  // Return null if no food assessments exist
-  if (foodAssessments.length === 0) {
-    return null;
-  }
-
-  // Calculate field-level gap analysis
-  const foodGapIndicators = [
-    { key: 'isFoodSufficient', label: 'Food Sufficiency' },
-    { key: 'hasRegularMealAccess', label: 'Regular Meal Access' },
-    { key: 'hasInfantNutrition', label: 'Infant Nutrition' }
-  ];
-
-  const fieldGapAnalysis = await calculateFieldLevelGaps(foodAssessments, foodGapIndicators, 'FOOD');
-  
-  return {
-    totalEntities: foodAssessments.length,
-    entitiesWithGaps: foodAssessments.filter(a => a && a.gapAnalysis.hasGap).length,
-    entitiesWithoutGaps: foodAssessments.filter(a => a && !a.gapAnalysis.hasGap).length,
-    totalFoodDurationDays: foodAssessments.reduce((sum, a) => sum + (a?.availableFoodDurationDays || 0), 0),
-    additionalFoodRequiredPersons: foodAssessments.reduce((sum, a) => sum + (a?.additionalFoodRequiredPersons || 0), 0),
-    fieldGapAnalysis
-  };
-}
-
-async function aggregateWASHAssessments(entityAssessments: EntityAssessment[]): Promise<any> {
-  const washAssessments = entityAssessments.map(e => e.latestAssessments.wash).filter(Boolean);
-  
-  // Return null if no WASH assessments exist
-  if (washAssessments.length === 0) {
-    return null;
-  }
-
-  // Calculate field-level gap analysis
-  const washGapIndicators = [
-    { key: 'isWaterSufficient', label: 'Water Sufficiency' },
-    { key: 'hasCleanWaterAccess', label: 'Clean Water Access' },
-    { key: 'areLatrinesSufficient', label: 'Sufficient Latrines' },
-    { key: 'hasHandwashingFacilities', label: 'Handwashing Facilities' },
-    { key: 'hasOpenDefecationConcerns', label: 'Open Defecation Concerns' }
-  ];
-
-  const fieldGapAnalysis = await calculateFieldLevelGaps(washAssessments, washGapIndicators, 'WASH');
-  
-  return {
-    totalEntities: washAssessments.length,
-    entitiesWithGaps: washAssessments.filter(a => a && a.gapAnalysis.hasGap).length,
-    entitiesWithoutGaps: washAssessments.filter(a => a && !a.gapAnalysis.hasGap).length,
-    totalFunctionalLatrines: washAssessments.reduce((sum, a) => sum + (a?.functionalLatrinesAvailable || 0), 0),
-    fieldGapAnalysis
-  };
-}
-
-async function aggregateShelterAssessments(entityAssessments: EntityAssessment[]): Promise<any> {
-  const shelterAssessments = entityAssessments.map(e => e.latestAssessments.shelter).filter(Boolean);
-  
-  // Return null if no shelter assessments exist
-  if (shelterAssessments.length === 0) {
-    return null;
-  }
-
-  // Calculate field-level gap analysis
-  const shelterGapIndicators = [
-    { key: 'areSheltersSufficient', label: 'Sufficient Shelters' },
-    { key: 'hasSafeStructures', label: 'Safe Structures' },
-    { key: 'areOvercrowded', label: 'Overcrowding' },
-    { key: 'provideWeatherProtection', label: 'Weather Protection' }
-  ];
-
-  const fieldGapAnalysis = await calculateFieldLevelGaps(shelterAssessments, shelterGapIndicators, 'SHELTER');
-  
-  return {
-    totalEntities: shelterAssessments.length,
-    entitiesWithGaps: shelterAssessments.filter(a => a && a.gapAnalysis.hasGap).length,
-    entitiesWithoutGaps: shelterAssessments.filter(a => a && !a.gapAnalysis.hasGap).length,
-    totalSheltersRequired: shelterAssessments.reduce((sum, a) => sum + (a?.numberSheltersRequired || 0), 0),
-    fieldGapAnalysis
-  };
-}
-
-async function aggregateSecurityAssessments(entityAssessments: EntityAssessment[]): Promise<any> {
-  const securityAssessments = entityAssessments.map(e => e.latestAssessments.security).filter(Boolean);
-  
-  // Return null if no security assessments exist
-  if (securityAssessments.length === 0) {
-    return null;
-  }
-
-  // Calculate field-level gap analysis
-  const securityGapIndicators = [
-    { key: 'isSafeFromViolence', label: 'Safe from Violence' },
-    { key: 'gbvCasesReported', label: 'GBV Cases Reported' },
-    { key: 'hasSecurityPresence', label: 'Security Presence' },
-    { key: 'hasProtectionReportingMechanism', label: 'Protection Reporting' },
-    { key: 'vulnerableGroupsHaveAccess', label: 'Vulnerable Groups Access' },
-    { key: 'hasLighting', label: 'Lighting' }
-  ];
-
-  const fieldGapAnalysis = await calculateFieldLevelGaps(securityAssessments, securityGapIndicators, 'SECURITY');
-  
-  return {
-    totalEntities: securityAssessments.length,
-    entitiesWithGaps: securityAssessments.filter(a => a && a.gapAnalysis.hasGap).length,
-    entitiesWithoutGaps: securityAssessments.filter(a => a && !a.gapAnalysis.hasGap).length,
-    fieldGapAnalysis
+    totalEntities: assessments.length,
+    entitiesWithGaps: assessments.filter((assessment) => assessment.gapAnalysis?.hasGap).length,
+    entitiesWithoutGaps: assessments.filter((assessment) => !assessment.gapAnalysis?.hasGap).length,
+    gapSummary: buildCategoryGapSummary({
+      assessments,
+      metadata,
+      limit,
+      contentVersion,
+      computedAt: computedAt.toISOString(),
+    }),
   };
 }
 
@@ -2071,8 +1803,8 @@ export const GET = withAuth(async (request: NextRequest, context) => {
             verified: healthAssessment.verificationStatus === 'VERIFIED' || healthAssessment.verificationStatus === 'AUTO_VERIFIED',
             assessorName: healthAssessment.assessorName,
             gapIndicators: {
-              hasGap: healthAssessment.gapAnalysis.hasGap,
-              severity: healthAssessment.gapAnalysis.severity,
+              hasGap: healthAssessment.gapAnalysis?.hasGap ?? false,
+              severity: healthAssessment.gapAnalysis?.severity ?? 'LOW',
             }
           };
           lastUpdated = new Date(healthAssessment.rapidAssessmentDate) > lastUpdated ? new Date(healthAssessment.rapidAssessmentDate) : lastUpdated;
@@ -2086,8 +1818,8 @@ export const GET = withAuth(async (request: NextRequest, context) => {
             verified: foodAssessment.verificationStatus === 'VERIFIED' || foodAssessment.verificationStatus === 'AUTO_VERIFIED',
             assessorName: foodAssessment.assessorName,
             gapIndicators: {
-              hasGap: foodAssessment.gapAnalysis.hasGap,
-              severity: foodAssessment.gapAnalysis.severity,
+              hasGap: foodAssessment.gapAnalysis?.hasGap ?? false,
+              severity: foodAssessment.gapAnalysis?.severity ?? 'LOW',
             }
           };
           lastUpdated = new Date(foodAssessment.rapidAssessmentDate) > lastUpdated ? new Date(foodAssessment.rapidAssessmentDate) : lastUpdated;
@@ -2101,8 +1833,8 @@ export const GET = withAuth(async (request: NextRequest, context) => {
             verified: washAssessment.verificationStatus === 'VERIFIED' || washAssessment.verificationStatus === 'AUTO_VERIFIED',
             assessorName: washAssessment.assessorName,
             gapIndicators: {
-              hasGap: washAssessment.gapAnalysis.hasGap,
-              severity: washAssessment.gapAnalysis.severity,
+              hasGap: washAssessment.gapAnalysis?.hasGap ?? false,
+              severity: washAssessment.gapAnalysis?.severity ?? 'LOW',
             }
           };
           lastUpdated = new Date(washAssessment.rapidAssessmentDate) > lastUpdated ? new Date(washAssessment.rapidAssessmentDate) : lastUpdated;
@@ -2116,8 +1848,8 @@ export const GET = withAuth(async (request: NextRequest, context) => {
             verified: shelterAssessment.verificationStatus === 'VERIFIED' || shelterAssessment.verificationStatus === 'AUTO_VERIFIED',
             assessorName: shelterAssessment.assessorName,
             gapIndicators: {
-              hasGap: shelterAssessment.gapAnalysis.hasGap,
-              severity: shelterAssessment.gapAnalysis.severity,
+              hasGap: shelterAssessment.gapAnalysis?.hasGap ?? false,
+              severity: shelterAssessment.gapAnalysis?.severity ?? 'LOW',
             }
           };
           lastUpdated = new Date(shelterAssessment.rapidAssessmentDate) > lastUpdated ? new Date(shelterAssessment.rapidAssessmentDate) : lastUpdated;
@@ -2131,8 +1863,8 @@ export const GET = withAuth(async (request: NextRequest, context) => {
             verified: securityAssessment.verificationStatus === 'VERIFIED' || securityAssessment.verificationStatus === 'AUTO_VERIFIED',
             assessorName: securityAssessment.assessorName,
             gapIndicators: {
-              hasGap: securityAssessment.gapAnalysis.hasGap,
-              severity: securityAssessment.gapAnalysis.severity,
+              hasGap: securityAssessment.gapAnalysis?.hasGap ?? false,
+              severity: securityAssessment.gapAnalysis?.severity ?? 'LOW',
             }
           };
           lastUpdated = new Date(securityAssessment.rapidAssessmentDate) > lastUpdated ? new Date(securityAssessment.rapidAssessmentDate) : lastUpdated;
@@ -2206,7 +1938,7 @@ export const GET = withAuth(async (request: NextRequest, context) => {
           hasGap: assessment.gapIndicators.hasGap,
           severity: assessment.gapIndicators.severity,
           lastAssessed: assessment.date,
-          indicators: getGapIndicatorsByType(type)
+          indicators: []
         };
 
         assessmentGaps[type] = gapAnalysis;
@@ -2257,19 +1989,32 @@ export const GET = withAuth(async (request: NextRequest, context) => {
     // Fetch entity assessment data
     let entityAssessments: EntityAssessment[] = [];
     let aggregatedAssessments: AggregatedAssessments | undefined;
+    let questionMetadata: Record<string, QuestionTypeMetadata> | undefined;
+    let gapRowsPerCategory: number | undefined;
     
     if (queryParams.incidentId) {
+      // Wire the coordinator-tunable row limit (never throws; clamped 1..7)
+      // and embed the live registry projection once per payload (5 gap types).
+      const [resolvedGapRowLimit, metadata] = await Promise.all([
+        getGapRowsPerCategory(),
+        getQuestionMetadata(),
+      ]);
+      gapRowsPerCategory = resolvedGapRowLimit;
+      questionMetadata = metadata;
+
       if (queryParams.entityId === 'all') {
         // Get all entities for this incident
         entityAssessments = await getEntityAssessments(queryParams.incidentId);
-        
-        // Calculate aggregated assessments for all entities
+
+        // Ranked per-type gap summaries derived from the STORED gapAnalysis
+        // (P7 — no per-field scanning, no severity lookups, no dead totals).
+        const computedAt = new Date();
         aggregatedAssessments = {
-          health: await aggregateHealthAssessments(entityAssessments),
-          food: await aggregateFoodAssessments(entityAssessments),
-          wash: await aggregateWASHAssessments(entityAssessments),
-          shelter: await aggregateShelterAssessments(entityAssessments),
-          security: await aggregateSecurityAssessments(entityAssessments),
+          health: aggregateTypeGaps(entityAssessments, 'HEALTH', metadata.HEALTH.questions, resolvedGapRowLimit, metadata.HEALTH.contentVersion, computedAt),
+          food: aggregateTypeGaps(entityAssessments, 'FOOD', metadata.FOOD.questions, resolvedGapRowLimit, metadata.FOOD.contentVersion, computedAt),
+          wash: aggregateTypeGaps(entityAssessments, 'WASH', metadata.WASH.questions, resolvedGapRowLimit, metadata.WASH.contentVersion, computedAt),
+          shelter: aggregateTypeGaps(entityAssessments, 'SHELTER', metadata.SHELTER.questions, resolvedGapRowLimit, metadata.SHELTER.contentVersion, computedAt),
+          security: aggregateTypeGaps(entityAssessments, 'SECURITY', metadata.SECURITY.questions, resolvedGapRowLimit, metadata.SECURITY.contentVersion, computedAt),
           population: aggregatePopulationAssessments(entityAssessments),
           gapSummary: {
             totalGaps: 0,
@@ -2290,26 +2035,26 @@ export const GET = withAuth(async (request: NextRequest, context) => {
         ];
         
         aggregatedAssessments.gapSummary = {
-          totalGaps: allGapBasedAssessments.filter(a => a && a.gapAnalysis.hasGap).length,
-          totalNoGaps: allGapBasedAssessments.filter(a => a && !a.gapAnalysis.hasGap).length,
-          criticalGaps: allGapBasedAssessments.filter(a => a && a.gapAnalysis.severity === 'CRITICAL').length,
+          totalGaps: allGapBasedAssessments.filter(a => a && a.gapAnalysis?.hasGap).length,
+          totalNoGaps: allGapBasedAssessments.filter(a => a && !a.gapAnalysis?.hasGap).length,
+          criticalGaps: allGapBasedAssessments.filter(a => a && a.gapAnalysis?.severity === 'CRITICAL').length,
           entitiesWithGaps: entityAssessments.filter(e => {
             const entityGaps = [
-              e.latestAssessments.health?.gapAnalysis.hasGap,
-              e.latestAssessments.food?.gapAnalysis.hasGap,
-              e.latestAssessments.wash?.gapAnalysis.hasGap,
-              e.latestAssessments.shelter?.gapAnalysis.hasGap,
-              e.latestAssessments.security?.gapAnalysis.hasGap
+              e.latestAssessments.health?.gapAnalysis?.hasGap,
+              e.latestAssessments.food?.gapAnalysis?.hasGap,
+              e.latestAssessments.wash?.gapAnalysis?.hasGap,
+              e.latestAssessments.shelter?.gapAnalysis?.hasGap,
+              e.latestAssessments.security?.gapAnalysis?.hasGap
             ].filter(Boolean);
             return entityGaps.length > 0;
           }).length,
           entitiesWithoutGaps: entityAssessments.filter(e => {
             const entityGaps = [
-              e.latestAssessments.health?.gapAnalysis.hasGap,
-              e.latestAssessments.food?.gapAnalysis.hasGap,
-              e.latestAssessments.wash?.gapAnalysis.hasGap,
-              e.latestAssessments.shelter?.gapAnalysis.hasGap,
-              e.latestAssessments.security?.gapAnalysis.hasGap
+              e.latestAssessments.health?.gapAnalysis?.hasGap,
+              e.latestAssessments.food?.gapAnalysis?.hasGap,
+              e.latestAssessments.wash?.gapAnalysis?.hasGap,
+              e.latestAssessments.shelter?.gapAnalysis?.hasGap,
+              e.latestAssessments.security?.gapAnalysis?.hasGap
             ].filter(Boolean);
             return entityGaps.length === 0;
           }).length
@@ -2346,6 +2091,8 @@ export const GET = withAuth(async (request: NextRequest, context) => {
       selectedIncident: selectedIncidentData,
       entityAssessments,
       aggregatedAssessments,
+      questionMetadata,
+      gapRowsPerCategory,
       entityLocations,
       gapAnalysisSummary
     };
@@ -2384,10 +2131,3 @@ export const GET = withAuth(async (request: NextRequest, context) => {
     return handleApiError(error)
   }
 });
-
-// Helper function
-function getGapIndicatorsByType(assessmentType: string) {
-  // Fallback gap indicators by assessment type - returns empty indicators since
-  // real gap data comes from the actual assessment gapAnalysis, not random generation
-  return [];
-}

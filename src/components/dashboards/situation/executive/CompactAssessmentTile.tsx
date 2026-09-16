@@ -125,9 +125,9 @@ const fetchAssessmentsData = async (incidentId: string): Promise<AssessmentsData
     total = verified;
     pending = 0; // Don't show pending since we can't accurately determine it
     
-    // Get severity from field-level gap analysis
-    if (aggregatedData?.fieldGapAnalysis?.overallSeverity) {
-      maxSeverity = aggregatedData.fieldGapAnalysis.overallSeverity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+    // Get severity from the P7 ranked category gap summary
+    if (aggregatedData?.gapSummary?.overallSeverity) {
+      maxSeverity = aggregatedData.gapSummary.overallSeverity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
     }
     
     // Always include all assessment types, even if they have 0 assessments
