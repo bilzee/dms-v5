@@ -50,6 +50,9 @@ export const POST = withAuth(async (
 
     const results = await SyncProcessingService.processBatch(changes, context.userId);
 
+    // P5: the contract is unchanged except that assessment results may now
+    // carry a per-item `warnings` array (registry drift — the client surfaces
+    // it and never unwinds the submission).
     const successful = results.filter(r => r.status === 'success');
     const conflicts = results.filter(r => r.status === 'conflict');
     const failed = results.filter(r => r.status === 'failed');

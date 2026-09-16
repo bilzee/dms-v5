@@ -1,4 +1,5 @@
 import Dexie, { Table } from 'dexie';
+import type { OfflineSyncWarning } from '@/lib/questions/offline-answers';
 
 // Types for database entities
 export interface Assessment {
@@ -13,6 +14,8 @@ export interface Assessment {
   timestamp: Date;
   syncStatus: 'pending' | 'synced' | 'failed';
   lastModified: Date;
+  /** P5: server-reported registry-drift warnings from the last offline sync. */
+  warnings?: OfflineSyncWarning[];
 }
 
 export interface Response {

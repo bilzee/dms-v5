@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { DRAFTS_STORAGE_KEY } from '@/lib/questions/draft-migration'
 
 export interface RapidAssessmentDraft {
   id: string
@@ -12,13 +13,13 @@ export interface RapidAssessmentDraft {
   autoSaved: boolean
 }
 
-const STORAGE_KEY = 'rapid-assessment-drafts'
+
 const MAX_DRAFTS = 5
 
 function loadDrafts(): RapidAssessmentDraft[] {
   if (typeof window === 'undefined') return []
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(DRAFTS_STORAGE_KEY)
     return raw ? JSON.parse(raw) : []
   } catch {
     return []
@@ -27,7 +28,7 @@ function loadDrafts(): RapidAssessmentDraft[] {
 
 function persistDrafts(drafts: RapidAssessmentDraft[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(drafts))
+    localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(drafts))
   } catch {
     // localStorage may be full or unavailable
   }

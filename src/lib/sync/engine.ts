@@ -1,5 +1,6 @@
 import { offlineDB, SyncQueueItem } from '../db/offline';
 import { apiPost, extractArray } from '@/lib/api';
+import type { OfflineSyncWarning } from '@/lib/questions/offline-answers';
 
 export interface SyncChange {
   type: 'assessment' | 'response' | 'entity';
@@ -16,7 +17,9 @@ export interface SyncResult {
   status: 'success' | 'conflict' | 'failed';
   message?: string;
   conflictData?: any;
+  warnings?: OfflineSyncWarning[];
 }
+
 
 export interface SyncBatchResult {
   successful: SyncResult[];
@@ -305,6 +308,13 @@ export class SyncEngine {
     try {
       // Update the main entity with server ID and sync status
       await this.updateEntitySyncStatus(queueItem, syncResult.serverId, 'synced');
+
+      // P5: surface + persist server-reported registry-drift warnings for
+      // offline-synced assessments (console summary + Dexie record).
+      if (syncResult.warnings && syncResult.warnings.length > 0) {
+        this.reportSyncWarnings(queueItem, syncResult.warnings);
+        await this.persistSyncWarnings(queueItem, syncResult.warnings);
+      }
       
       // Remove from sync queue
       await offlineDB.removeSyncQueueItem(queueItem.uuid);
@@ -315,6 +325,37 @@ export class SyncEngine {
       console.log(`Successfully synced ${queueItem.type} ${queueItem.entityUuid}`);
     } catch (error) {
       console.error('Error handling successful sync:', error);
+    }
+  }
+
+  /** Logs a human-readable drift summary for one synced assessment. */
+  private reportSyncWarnings(
+    queueItem: SyncQueueItem & { decryptedData: any },
+    warnings: OfflineSyncWarning[]
+  ): void {
+    const summarize = (type: OfflineSyncWarning['type']) =>
+      warnings.filter(w => w.type === type).map(w => w.key).join(', ') || 'none';
+    console.warn(
+      `[SyncEngine] offline sync drift for assessment ${queueItem.decryptedData?.id ?? queueItem.entityUuid}: ` +
+      `${warnings.length} warning(s) — added: [${summarize('added')}], ` +
+      `removed: [${summarize('removed')}], unknown: [${summarize('unknown')}]`
+    );
+    for (const warning of warnings) {
+      console.warn(`[SyncEngine] drift warning (${warning.type}): ${warning.message}`);
+    }
+  }
+
+  /** Persists drift warnings onto the Dexie assessment record. */
+  private async persistSyncWarnings(
+    queueItem: SyncQueueItem & { decryptedData: any },
+    warnings: OfflineSyncWarning[]
+  ): Promise<void> {
+    try {
+      if (queueItem.type !== 'assessment' || warnings.length === 0) return;
+      const assessmentUuid = queueItem.decryptedData?.id || queueItem.entityUuid;
+      await offlineDB.updateAssessment(assessmentUuid, { warnings });
+    } catch (error) {
+      console.error('Error persisting sync warnings:', error);
     }
   }
 

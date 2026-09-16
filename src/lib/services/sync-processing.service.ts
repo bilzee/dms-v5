@@ -1,5 +1,8 @@
 import { prisma } from '@/lib/db/client'
 import { SyncStatus } from '@prisma/client'
+import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
+import type { CreateRapidAssessmentInput } from '@/lib/validation/rapid-assessment'
+import type { OfflineSyncWarning } from '@/lib/questions/offline-answers'
 
 interface SyncChange {
   type: 'assessment' | 'response' | 'entity'
@@ -16,6 +19,8 @@ interface SyncResult {
   status: 'success' | 'conflict' | 'failed'
   message?: string
   conflictData?: unknown
+  /** P5: per-item offline registry-drift warnings (assessments only). */
+  warnings?: OfflineSyncWarning[]
 }
 
 export class SyncProcessingService {
@@ -61,39 +66,73 @@ export class SyncProcessingService {
     const data = change.data
 
     if (change.action === 'create') {
+      // Idempotent replay (ruling 7): the queue may re-send a create whose
+      // server write already landed (e.g. the response was lost offline).
+      // The row id the offline path creates with — never a conflict.
+      const rowId = change.offlineId || change.entityUuid
       const existing = await prisma.rapidAssessment.findUnique({
-        where: { id: change.entityUuid }
+        where: { id: rowId },
+        select: { id: true, assessorId: true }
       })
 
       if (existing) {
-        return SyncProcessingService.handleConflict(change, existing)
+        // The row id is client-controlled — never echo a foreign row as an
+        // idempotent success (that would silently drop the syncing user's
+        // own submission).
+        if (existing.assessorId !== userId) {
+          return {
+            offlineId: change.offlineId,
+            serverId: '',
+            status: 'failed',
+            message: 'Not authorized to sync this assessment'
+          }
+        }
+        return {
+          offlineId: change.offlineId,
+          serverId: existing.id,
+          status: 'success',
+          message: 'Assessment already synced'
+        }
       }
 
-      const assessment = await prisma.rapidAssessment.create({
-        data: {
-          id: change.offlineId || change.entityUuid,
-          rapidAssessmentType: (data.type as any) || 'HEALTH',
-          rapidAssessmentDate: data.rapidAssessmentDate ? new Date(data.rapidAssessmentDate as string) : new Date(),
-          assessorId: userId,
+      // P5: delegate to the offline ingestion path for full registry
+      // processing — CURRENT-snapshot freeze, drift reconciliation with
+      // warnings (never-reject), gap analysis + derived priority. Shape-level
+      // failures (unknown type, unassigned entity, empty registry) throw and
+      // surface as failed results through processBatch's catch.
+      const { assessment, warnings } = await RapidAssessmentService.createOfflineAssessment(
+        {
+          type: (data.type || 'HEALTH') as CreateRapidAssessmentInput['type'],
+          rapidAssessmentDate: data.rapidAssessmentDate
+            ? new Date(data.rapidAssessmentDate as string)
+            : new Date(),
           assessorName: (data.assessorName as string) || 'Unknown',
-          entityId: change.entityUuid,
+          ...(data.location ? { location: data.location as string } : {}),
+          ...(data.coordinates
+            ? { coordinates: data.coordinates as CreateRapidAssessmentInput['coordinates'] }
+            : {}),
+          ...(data.mediaAttachments
+            ? { mediaAttachments: data.mediaAttachments as string[] }
+            : {}),
+          entityId: (data.entityId as string) || change.entityUuid,
           incidentId: (data.incidentId as string) || change.entityUuid,
-          location: (data.location as string) || null,
-          coordinates: data.coordinates as any || null,
-          priority: (data.priority as any) || 'MEDIUM',
-          mediaAttachments: (data.mediaAttachments as any) || [],
-          versionNumber: change.versionNumber,
-          isOfflineCreated: true,
-          syncStatus: 'SYNCED' as SyncStatus,
-          verificationStatus: 'DRAFT'
-        }
-      })
+          answers:
+            data.answers && typeof data.answers === 'object' && !Array.isArray(data.answers)
+              ? (data.answers as Record<string, unknown>)
+              : {},
+          questionKeys: Array.isArray(data.questionKeys) ? (data.questionKeys as string[]) : null,
+          offlineId: change.offlineId || change.entityUuid,
+        },
+        userId,
+        typeof data.structureVersion === 'number' ? data.structureVersion : null
+      )
 
       return {
         offlineId: change.offlineId,
         serverId: assessment.id,
         status: 'success',
-        message: 'Assessment created from offline sync'
+        message: 'Assessment created from offline sync',
+        ...(warnings.length > 0 ? { warnings } : {})
       }
     }
 
@@ -111,6 +150,43 @@ export class SyncProcessingService {
 
       if (existing.versionNumber > change.versionNumber) {
         return SyncProcessingService.handleConflict(change, existing)
+      }
+
+      // P5: answers-carrying updates go through the never-reject ingestion
+      // path (lenient re-ingest, CURRENT-snapshot re-freeze, re-derived
+      // priority + gapAnalysis, client structureVersion recorded).
+      if (data.answers && typeof data.answers === 'object' && !Array.isArray(data.answers)) {
+        const { assessment, warnings } = await RapidAssessmentService.updateOfflineAssessment(
+          change.entityUuid,
+          {
+            type: (data.type || existing.rapidAssessmentType) as CreateRapidAssessmentInput['type'],
+            rapidAssessmentDate: data.rapidAssessmentDate
+              ? new Date(data.rapidAssessmentDate as string)
+              : undefined,
+            assessorName: (data.assessorName as string) || undefined,
+            location: (data.location as string) || undefined,
+            coordinates: data.coordinates as CreateRapidAssessmentInput['coordinates'],
+            mediaAttachments: data.mediaAttachments as string[],
+            entityId: (data.entityId as string) || undefined,
+            incidentId: (data.incidentId as string) || undefined,
+            answers: data.answers as Record<string, unknown>,
+          },
+          userId,
+          typeof data.structureVersion === 'number' ? data.structureVersion : null
+        )
+
+        await prisma.rapidAssessment.update({
+          where: { id: change.entityUuid },
+          data: { versionNumber: change.versionNumber, syncStatus: 'SYNCED' as SyncStatus }
+        })
+
+        return {
+          offlineId: change.offlineId,
+          serverId: assessment.id,
+          status: 'success',
+          message: 'Assessment updated from offline sync',
+          ...(warnings.length > 0 ? { warnings } : {})
+        }
       }
 
       const updated = await prisma.rapidAssessment.update({

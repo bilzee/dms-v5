@@ -76,3 +76,17 @@
   summary: `test:api` (jest, drms_test@5435) and `test:baseline:e2e` (Playwright, port 3100) share the `drms_test` database; running them concurrently truncates rows under each other.
   evidence: Both suites truncate/assert against `drms_test` by design (separate npm scripts, sequential in local runs); no CI pipeline exists yet. Fix belongs to CI pipeline setup: serialize the suites (or give e2e its own DB) when the pipeline is added.
 
+
+## From Review (2026-09-16, DQR P5)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p5-offline-sync-draft-migration.md`
+  summary: Offline create falls back to `incidentId: (data.incidentId as string) || change.entityUuid`, so a payload without an incident id silently stores an ENTITY id in the incident column.
+  evidence: Verbatim baseline line in `sync-processing.service.ts` predating the P5 diff (BH11/E3 at review); pre-P5 offline creates already wrote it, so tightening is a behavior change to the sync owner. Fix: drop the fallback or validate the id shape as an incident.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p5-offline-sync-draft-migration.md`
+  summary: The offline update producer (`assessment-offline.service.ts`) enqueues changes keyed by `entityId`, but the sync update branch resolves rows by row-id `entityUuid` — no current producer can reach the update path.
+  evidence: Pre-existing legacy wiring (O-3b at review): the queue stores `entityId` while `processOfflineChange` updates `findUnique({ where: { id: change.entityUuid } })`. Latent until a producer sends update changes; fix by enqueueing the assessment row id.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p5-offline-sync-draft-migration.md`
+  summary: Offline update accepts `data.entityId`/`data.incidentId` without re-validating the syncing user's entity assignment (only assessment ownership is checked).
+  evidence: BH12 at review: mirrors the ONLINE update path, which also accepts re-pointed entity/incident ids without assignment checks — accepted parity, not a P5 regression. Fix belongs to a cross-cutting sync-authorization pass covering both paths.

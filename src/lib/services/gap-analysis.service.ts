@@ -33,7 +33,9 @@ export interface GapAnalysisRow {
   label: string
   gapLabel: string | null
   severity: FieldSeverity
-  source: 'registry' | 'snapshot' | 'unmapped'
+  /** 'unknown' = offline-sync drift: an answer key mappable to neither the
+   * snapshot nor the live registry (P5 offline ingestion reports it). */
+  source: 'registry' | 'snapshot' | 'unmapped' | 'unknown'
   recommendation: string | null
   unanswered: boolean
 }
@@ -191,6 +193,10 @@ export async function analyzeGaps(
  * against (the live `QuestionSnapshot` for fresh writes, or the stored
  * `RapidAssessment.questionSnapshot` JSON for re-derivation), resolving
  * severities against ALL live registry rows of the type.
+ *
+ * Answered keys absent from the snapshot structure (P5 never-reject offline
+ * drift, persisted verbatim in `answers`) self-derive as source-'unknown'
+ * informational rows inside the engine — never scored.
  */
 export async function analyzeGapsFromSnapshot(
   assessmentType: AssessmentType,

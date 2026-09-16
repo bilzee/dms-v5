@@ -16,6 +16,11 @@ import {
  * - POPULATION-like structures (zero GAP questions) derive LOW via the same rule
  * - gap surfaces ordered severity DESC then presentation order ASC
  * - output is a pure, byte-identical function of its inputs
+ *
+ * P5 unknown rows (offline drift): answered keys absent from the snapshot
+ * SELF-DERIVE source-'unknown' informational rows — never in gapFields,
+ * severity, fieldSeverityMap or recommendations (intersection only), so
+ * re-derivation passes reproduce them byte-for-byte.
  */
 
 const structure: GapEngineSnapshotStructure = {
@@ -309,7 +314,10 @@ describe('unit — pure gap engine (analyzeGaps)', () => {
       const result = analyzeGaps(degenerate as GapEngineSnapshotStructure, { any: false }, registryRows)
       expect(result.hasGap).toBe(false)
       expect(result.severity).toBe('LOW')
-      expect(result.rows).toEqual([])
+      // no structure → the answered key self-derives one informational row
+      expect(result.rows.map((row) => row.key)).toEqual(['any'])
+      expect(result.rows[0].source).toBe('unknown')
+      expect(result.rows[0].severity).toBe('MEDIUM') // no registry row for 'any'
     }
   })
 
@@ -323,5 +331,82 @@ describe('unit — pure gap engine (analyzeGaps)', () => {
     const first = analyzeGaps(structure, answers, registryRows)
     const second = analyzeGaps(structure, answers, registryRows)
     expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+  })
+})
+
+describe('unit — pure gap engine unknown-source rows (P5 offline ingestion)', () => {
+  test('answered keys absent from the snapshot self-derive unknown rows that are NEVER scored', () => {
+    const result = analyzeGaps(
+      structure,
+      { hasFunctionalClinic: true, mysteryKey: false, anotherKey: true },
+      registryRows
+    )
+    // intersection only — unknowns never gap, never score, never recommend
+    expect(result.gapFields).toEqual([])
+    expect(result.hasGap).toBe(false)
+    expect(result.severity).toBe('LOW')
+    expect(result.fieldSeverityMap).toEqual({})
+    expect(result.recommendations).toEqual([])
+    const row = result.rows.find((r) => r.key === 'mysteryKey')
+    expect(row).toMatchObject({
+      key: 'mysteryKey',
+      label: 'mysteryKey',
+      gapLabel: null,
+      severity: 'MEDIUM', // no registry row → MEDIUM floor
+      source: 'unknown',
+      recommendation: null,
+      unanswered: false,
+    })
+    // unknown rows append AFTER the mapped rows, in answers order
+    expect(result.rows.map((r) => r.key)).toEqual([
+      'hasFunctionalClinic',
+      'hasOpenDefecationConcerns',
+      'areOvercrowded',
+      'isWaterSufficient',
+      'mysteryKey',
+      'anotherKey',
+    ])
+    // unknown rows are never flagged unanswered; only never-answered GAP keys are
+    expect(result.unanswered).toEqual([
+      'hasOpenDefecationConcerns',
+      'areOvercrowded',
+      'isWaterSufficient',
+    ])
+  })
+
+  test('unknown rows resolve severity from a registry row when one exists (else MEDIUM)', () => {
+    const result = analyzeGaps(
+      structure,
+      { mysteryKey: false },
+      [...registryRows, { questionKey: 'mysteryKey', severity: 'HIGH' }]
+    )
+    const row = result.rows.find((r) => r.key === 'mysteryKey')
+    expect(row?.source).toBe('unknown')
+    expect(row?.severity).toBe('HIGH')
+    // severity on the row is informational only — scoring stays intersection-only
+    expect(result.gapFields).toEqual([])
+    expect(result.severity).toBe('LOW')
+    expect(result.fieldSeverityMap).toEqual({})
+  })
+
+  test('snapshot-present keys (any category) and null/undefined/empty answers never derive unknown rows', () => {
+    const result = analyzeGaps(
+      structure,
+      { numberHealthFacilities: 5, ghostA: null, ghostB: undefined, '': 'x', hasFunctionalClinic: true },
+      registryRows
+    )
+    expect(result.rows.filter((r) => r.source === 'unknown')).toEqual([])
+    expect(result.rows).toHaveLength(4) // the four mapped GAP rows only
+  })
+
+  test('real gaps and unknown rows coexist without unknowns affecting order or severity', () => {
+    const answers = { hasFunctionalClinic: false, mysteryKey: true, areOvercrowded: true }
+    const result = analyzeGaps(structure, answers, registryRows)
+    expect(result.gapFields).toEqual(['hasFunctionalClinic', 'areOvercrowded'])
+    expect(result.severity).toBe('CRITICAL') // max over gapped intersection only
+    expect(result.rows.slice(-1)[0]).toMatchObject({ key: 'mysteryKey', source: 'unknown' })
+    // self-derived (not caller-reported): re-derivation is byte-identical, so
+    // recompute passes (triggerGapAnalysis, severity recompute) reproduce them
+    expect(JSON.stringify(analyzeGaps(structure, answers, registryRows))).toBe(JSON.stringify(result))
   })
 })

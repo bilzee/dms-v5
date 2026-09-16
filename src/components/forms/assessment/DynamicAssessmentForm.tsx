@@ -31,6 +31,7 @@ import { AlertTriangle, Droplets, Home, Hospital, Loader2, Save, Shield, Users, 
 import type { AnswerValue, RapidAssessmentType } from '@/lib/questions/answers'
 import { coerceArray } from '@/lib/questions/answers'
 import { analyzeGaps } from '@/lib/questions/gap-engine'
+import { applyDraftMigration, restoreOfflineDraft, type UnmappedAnswer } from '@/lib/questions/draft-migration'
 import { crossFieldSuperRefine, evaluateCrossFieldRules, type CrossFieldViolation } from '@/lib/questions/cross-field-rules'
 import { buildAssessmentSchema } from '@/lib/validation/dynamic-assessment'
 import { useQuestionSet, type QuestionDef, type QuestionSectionDef } from '@/hooks/useQuestionSet'
@@ -75,6 +76,10 @@ export interface AssessmentFormSubmitPayload {
   entityId: string
   incidentId: string
   answers: Record<string, AnswerValue>
+  /** Registry structure the answers were captured against (P5 offline sync). */
+  structureVersion: number | null
+  /** Client-declared question-key view (drift detection + draft migration). */
+  questionKeys: string[]
 }
 
 export interface DynamicAssessmentFormProps {
@@ -195,6 +200,32 @@ function buildDefaultValues(
 /** Sections whose questions are all free-text render as Z6 "Additional Details". */
 function isAdditionalTextSection(section: QuestionSectionDef): boolean {
   return section.questions.length > 0 && section.questions.every((q) => q.type === 'TEXT_LONG')
+}
+
+/**
+ * Dismissable-banner state (ZoomAdjustmentHint pattern): a null key renders
+ * nothing, a localStorage-backed key survives reloads until re-triggered.
+ */
+function useDismissableBanner(storageKey: string | null) {
+  const [dismissed, setDismissed] = useState(false)
+  useEffect(() => {
+    if (!storageKey) return
+    try {
+      if (window.localStorage.getItem(storageKey) === 'true') setDismissed(true)
+    } catch {
+      // localStorage unavailable — banner simply shows until dismissed
+    }
+  }, [storageKey])
+  const dismiss = useCallback(() => {
+    setDismissed(true)
+    if (!storageKey) return
+    try {
+      window.localStorage.setItem(storageKey, 'true')
+    } catch {
+      // ignore — in-memory dismissal still applies for this mount
+    }
+  }, [storageKey])
+  return { dismissed, dismiss }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +504,126 @@ function DynamicAssessmentFormInner(props: InnerProps) {
   )
 
   // ---- drafts (30s autosave + manual save + flash + count) ------------------
-  const { drafts, saveDraft } = useRapidAssessmentDrafts(assessmentType)
+  const { drafts, saveDraft, deleteDraft } = useRapidAssessmentDrafts(assessmentType)
+
+  // ---- P5 draft restore (latest autosave for this type) --------------------
+  // Reconciles the newest stored draft against the CURRENT registry snapshot:
+  // mapped keys hydrate the form (legacy typed drafts map by question key),
+  // unmapped answers are kept in storage and surfaced, and the draft's
+  // declared structureVersion drives the staleness banner (never blocks).
+  // Restores happen ONCE per mount and never on edit/reassessment hydrations.
+  const restoredDraftRef = useRef(false)
+  const [restoredDraftMeta, setRestoredDraftMeta] = useState<{
+    draftId: string
+    structureVersion: number
+    questionKeys: string[]
+    unmappedAnswers: UnmappedAnswer[]
+  } | null>(null)
+  const [migrationReceipt, setMigrationReceipt] = useState<string | null>(null)
+  const [draftRestored, setDraftRestored] = useState(false)
+
+  useEffect(() => {
+    if (restoredDraftRef.current || initialAnswers || isReassessment) return
+    const latest = drafts[0]
+    if (!latest) return
+    const data = latest.data ?? {}
+    const rawAnswers = (data.answers ?? {}) as Record<string, unknown>
+    const hasContent =
+      Object.values(rawAnswers).some((value) => value !== undefined && value !== null && value !== '') ||
+      (Array.isArray(data.unmappedAnswers) && data.unmappedAnswers.length > 0) ||
+      Object.entries(data).some(
+        ([key, value]) =>
+          key !== 'answers' &&
+          typeof value === 'boolean' && value === true // legacy flat booleans
+      ) ||
+      Array.isArray(data.photos) && data.photos.length > 0 ||
+      Boolean(data.gpsLocation)
+    if (!hasContent) return
+    restoredDraftRef.current = true
+
+    const restored = restoreOfflineDraft(assessmentType, engineStructure, latest)
+    // Normalize storage (unmapped answers KEPT under data.unmappedAnswers).
+    applyDraftMigration(latest, { assessmentType, snapshot: engineStructure })
+    form.reset(buildDefaultValues(questions, restored.answers))
+    const touched = new Set<string>()
+    for (const question of questions) {
+      const value = restored.answers[question.key]
+      if (value !== undefined && value !== null) touched.add(question.key)
+    }
+    setTouchedKeys(touched)
+
+    if (typeof data.assessorName === 'string' && data.assessorName.length > 0) {
+      setAssessorName(data.assessorName)
+    }
+    if (typeof data.rapidAssessmentDate === 'string' && data.rapidAssessmentDate.length > 0) {
+      setAssessmentDate(data.rapidAssessmentDate.split('T')[0])
+    }
+    if (typeof data.location === 'string') setLocationName(data.location)
+    if (Array.isArray(data.photos)) setPhotos(data.photos.filter((p): p is string => typeof p === 'string'))
+    if (data.gpsLocation && typeof data.gpsLocation === 'object') {
+      setGpsLocation(data.gpsLocation as AssessmentFormSubmitPayload['coordinates'])
+    }
+    // Draft's captured context (draft record fields, not data).
+    if (latest.entityId) setSelectedEntity(latest.entityId)
+    if (latest.incidentId) setSelectedIncident(latest.incidentId)
+
+    setRestoredDraftMeta({
+      draftId: latest.id,
+      structureVersion: restored.structureVersion,
+      questionKeys: restored.questionKeys,
+      unmappedAnswers: restored.unmappedAnswers,
+    })
+    setDraftRestored(true)
+    setTimeout(() => setDraftRestored(false), 3000)
+
+    // Plain-language migration receipt, ONCE per draft (spec §5 copy).
+    const stale = structureVersion !== null && restored.structureVersion < structureVersion
+    if (restored.legacy || stale) {
+      const receiptKey = `dqr-draft-migrated:${latest.id}`
+      try {
+        if (window.localStorage.getItem(receiptKey) !== 'true') {
+          const unmapped = restored.unmappedAnswers.length
+          setMigrationReceipt(
+            `Your draft was updated to the new question set — ${restored.carried} answers carried over` +
+              (unmapped > 0 ? `, ${unmapped} unmapped` : '')
+          )
+          window.localStorage.setItem(receiptKey, 'true')
+        }
+      } catch {
+        // localStorage unavailable — receipt still shows this mount
+        setMigrationReceipt(
+          `Your draft was updated to the new question set — ${restored.carried} answers carried over` +
+            (restored.unmappedAnswers.length > 0 ? `, ${restored.unmappedAnswers.length} unmapped` : '')
+        )
+      }
+    }
+  }, [drafts, initialAnswers, isReassessment, assessmentType, engineStructure, questions, form, structureVersion])
+
+  const staleBanner = useDismissableBanner(
+    restoredDraftMeta && structureVersion !== null && restoredDraftMeta.structureVersion < structureVersion
+      ? `dqr-draft-stale-dismissed:${restoredDraftMeta.draftId}`
+      : null
+  )
+  const draftIsStale =
+    restoredDraftMeta !== null &&
+    structureVersion !== null &&
+    restoredDraftMeta.structureVersion < structureVersion
+  // Plain key lists: what the current set has that the draft lacked (added)
+  // and what the draft knew that the current set no longer has (removed).
+  const currentQuestionKeys = useMemo(
+    () => new Set(questions.map((question) => question.key)),
+    [questions]
+  )
+  const staleAddedKeys = useMemo(() => {
+    if (!restoredDraftMeta) return []
+    return questions
+      .map((question) => question.key)
+      .filter((key) => !restoredDraftMeta.questionKeys.includes(key))
+  }, [restoredDraftMeta, questions])
+  const staleRemovedKeys = useMemo(() => {
+    if (!restoredDraftMeta) return []
+    return restoredDraftMeta.questionKeys.filter((key) => !currentQuestionKeys.has(key))
+  }, [restoredDraftMeta, currentQuestionKeys])
 
   const draftSnapshot = useCallback(() => {
     return {
@@ -483,8 +633,13 @@ function DynamicAssessmentFormInner(props: InnerProps) {
       location: locationName,
       photos,
       gpsLocation,
+      structureVersion,
+      questionKeys: questions.map((question) => question.key),
+      // Unmapped answers ride along in storage until the draft is submitted
+      // (never silently dropped — spec).
+      unmappedAnswers: restoredDraftMeta?.unmappedAnswers ?? [],
     }
-  }, [getValues, assessorName, assessmentDate, locationName, photos, gpsLocation])
+  }, [getValues, assessorName, assessmentDate, locationName, photos, gpsLocation, structureVersion, questions, restoredDraftMeta])
 
   const flashDraftSaved = useCallback(() => {
     setDraftSaved(true)
@@ -527,7 +682,15 @@ function DynamicAssessmentFormInner(props: InnerProps) {
         entityId: selectedEntity,
         incidentId: selectedIncident,
         answers: data as Record<string, AnswerValue>,
+        structureVersion,
+        questionKeys: questions.map((question) => question.key),
       })
+      // Consume this type's drafts — the work they held just submitted, and
+      // leaving them behind would re-restore answered data into the next
+      // blank form on mount.
+      for (const draft of drafts) {
+        deleteDraft(draft.id)
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -560,6 +723,70 @@ function DynamicAssessmentFormInner(props: InnerProps) {
           ) : undefined
         }
       />
+
+      {/* P5 — migration receipt + staleness banner + unmapped block (never block submit) */}
+      {migrationReceipt !== null && (
+        <p className="text-sm font-medium text-green-700" data-testid="draft-migration-receipt">
+          {migrationReceipt}.
+        </p>
+      )}
+      {draftRestored && (
+        <p className="text-sm font-medium text-green-600" data-testid="draft-restored-flash">
+          Draft restored
+        </p>
+      )}
+      {draftIsStale && !staleBanner.dismissed && (
+        <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:bg-amber-950/30" data-testid="draft-stale-banner">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span data-testid="draft-stale-banner-text">
+              The questions have changed since this draft was started. You can still submit — review the
+              changes below.
+              {staleAddedKeys.length > 0 && (
+                <span className="block">
+                  Added: {staleAddedKeys.join(', ')}
+                </span>
+              )}
+              {staleRemovedKeys.length > 0 && (
+                <span className="block">
+                  Removed: {staleRemovedKeys.join(', ')}
+                </span>
+              )}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={staleBanner.dismiss}
+              data-testid="draft-stale-dismiss"
+            >
+              Don&apos;t show again
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+      {restoredDraftMeta !== null && restoredDraftMeta.unmappedAnswers.length > 0 && (
+        <details
+          className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
+          data-testid="draft-unmapped-block"
+        >
+          <summary className="cursor-pointer font-medium">
+            Unmapped answers ({restoredDraftMeta.unmappedAnswers.length})
+          </summary>
+          <ul className="mt-2 list-disc pl-5">
+            {restoredDraftMeta.unmappedAnswers.map((entry) => (
+              <li key={entry.key}>
+                <span className="font-mono text-xs">{entry.key}</span>: {JSON.stringify(entry.value)}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-slate-500">
+            These answers no longer match a question in the current set. They are kept with the draft
+            and never deleted.
+          </p>
+        </details>
+      )}
 
       <Form {...form}>
         <form onSubmit={handleFormSubmit} className="space-y-6 pb-8">

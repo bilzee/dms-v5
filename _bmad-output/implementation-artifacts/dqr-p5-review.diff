@@ -1,0 +1,3244 @@
+diff --git a/scripts/dqr-p5-sync-evidence.ts b/scripts/dqr-p5-sync-evidence.ts
+new file mode 100644
+index 0000000..72b31dd
+--- /dev/null
++++ b/scripts/dqr-p5-sync-evidence.ts
+@@ -0,0 +1,451 @@
++/**
++ * DQR P5 evidence run — proves the offline-sync never-reject ingestion
++ * contract through the real batch route + processing service:
++ *
++ *   1. POST /api/v1/sync/batch with a drifted offline payload (stale
++ *      structureVersion, answered retired key, unknown key, MULTI_SELECT
++ *      JSON-string replay): ACCEPTED — never 422/207 — every non-null answer
++ *      persists VERBATIM (nothing discarded), warnings classify added /
++ *      removed / unknown, the row records the CLIENT's structureVersion
++ *      handshake, gaps derive from the INTERSECTION only (hasEmergencyServices
++ *      false is the one real gap; the retired + unknown keys render as
++ *      source-'unknown' informational rows, never scored), and the
++ *      MULTI_SELECT string normalizes to an array.
++ *   2. Replay of the same create: "Assessment already synced" success —
++ *      idempotent, never a conflict, no duplicate row.
++ *   3. SyncProcessingService.processBatch update (answers-carrying):
++ *      delegates to the never-reject ingestion path — answers replaced,
++ *      warnings recomputed, client version re-stamped.
++ *   4. Zero online behavior change: the ONLINE /rapid-assessments POST
++ *      strips the P5 payload fields (zod) and derives exactly as before.
++ *
++ * Run:  npx tsx scripts/dqr-p5-sync-evidence.ts
++ * Log:  _bmad-output/implementation-artifacts/dqr-p5-sync-evidence.log
++ *
++ * Env bootstrap mirrors scripts/dqr-p4-form-evidence.ts: .env.test is parsed
++ * manually and the script REFUSES to run unless DATABASE_URL targets
++ * drms_test. Route handlers and services are dynamic-imported only after the
++ * env is set so every PrismaClient binds to the test database.
++ */
++
++import { readFileSync } from 'fs'
++import { resolve } from 'path'
++
++function loadEnvTestFile(): void {
++  const envPath = resolve(__dirname, '..', '.env.test')
++  let raw: string
++  try {
++    raw = readFileSync(envPath, 'utf-8')
++  } catch {
++    return
++  }
++  for (const line of raw.split(/\r?\n/)) {
++    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\r\n]*)"?\s*$/)
++    if (match && process.env[match[1]] === undefined) {
++      process.env[match[1]] = match[2]
++    }
++  }
++}
++
++loadEnvTestFile()
++
++const databaseUrl = process.env.DATABASE_URL || ''
++if (!databaseUrl.includes('drms_test')) {
++  console.error(
++    `REFUSING to run: DATABASE_URL must target drms_test (got: "${databaseUrl}").`
++  )
++  process.exit(1)
++}
++
++let failures = 0
++
++function log(step: string, detail: Record<string, unknown>): void {
++  console.log(`\n[${step}]`)
++  for (const [key, value] of Object.entries(detail)) {
++    console.log(`  ${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`)
++  }
++}
++
++function check(step: string, condition: boolean, message: string): void {
++  if (!condition) {
++    failures += 1
++    console.error(`  FAIL: ${message}`)
++  }
++}
++
++async function main(): Promise<void> {
++  // Imports after env bootstrap (PrismaClient binds to DATABASE_URL at import).
++  const { PrismaClient } = await import('@prisma/client')
++  const bcrypt = (await import('bcryptjs')).default
++  const { NextRequest } = await import('next/server')
++  const { AuthService } = await import('../src/lib/auth/service')
++  const { seedQuestions } = await import('../prisma/seed-questions')
++  const { POST: batchRoute } = await import('../src/app/api/v1/sync/batch/route')
++  const { POST: onlineCreateRoute } = await import('../src/app/api/v1/rapid-assessments/route')
++  const { SyncProcessingService } = await import('../src/lib/services/sync-processing.service')
++
++  const db = new PrismaClient()
++  const fixtureIds = {
++    assessments: [] as string[],
++    incidents: [] as string[],
++    entities: [] as string[],
++    users: [] as string[],
++    questions: [] as string[],
++  }
++
++  try {
++    const runId = Date.now().toString(36)
++    console.log(`DQR P5 offline-sync evidence run ${runId}`)
++    console.log(`DATABASE_URL: ${databaseUrl.replace(/:[^:@/]+@/, ':***@')}`)
++
++    if ((await db.question.count()) === 0) {
++      await seedQuestions(db)
++      console.log('Seeded question registry (was empty).')
++    }
++
++    // Deterministic derivation: pin the two HEALTH GAP keys this run scores.
++    await db.question.updateMany({
++      where: { assessmentType: 'HEALTH', questionKey: { in: ['hasFunctionalClinic', 'hasEmergencyServices'] } },
++      data: { severity: 'MEDIUM' },
++    })
++
++    // A retired question: registry row exists but is INACTIVE → answering it
++    // classifies as `removed` while the answer itself is RETAINED verbatim.
++    const healthSection = await db.questionSection.findFirstOrThrow({
++      where: { assessmentType: 'HEALTH' },
++    })
++    const retiredQuestion = await db.question.create({
++      data: {
++        questionKey: 'legacyHealthQuestion',
++        assessmentType: 'HEALTH',
++        sectionId: healthSection.id,
++        questionType: 'BOOLEAN',
++        label: 'Retired health question',
++        category: 'CONTEXT',
++        order: 999,
++        isActive: false,
++      },
++    })
++    fixtureIds.questions.push(retiredQuestion.id)
++
++    const role = await db.role.upsert({
++      where: { name: 'ASSESSOR' },
++      update: {},
++      create: { name: 'ASSESSOR', description: 'ASSESSOR (p5 evidence)' },
++    })
++    const assessor = await db.user.create({
++      data: {
++        email: `p5-evidence-assessor-${runId}@dms.test`,
++        username: `p5-evidence-assessor-${runId}`,
++        passwordHash: await bcrypt.hash('EvidencePass123!', 10),
++        name: `P5 Evidence Assessor ${runId}`,
++        isActive: true,
++        isLocked: false,
++        roles: { create: [{ roleId: role.id, assignedBy: 'evidence-script' }] },
++      },
++      include: {
++        roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
++      },
++    })
++    fixtureIds.users.push(assessor.id)
++    const token = AuthService.generateToken({
++      userId: assessor.id,
++      email: assessor.email,
++      roles: ['ASSESSOR'],
++      permissions: [],
++    })
++
++    const entity = await db.entity.create({
++      data: {
++        name: `P5 Evidence Entity ${runId}`,
++        type: 'COMMUNITY',
++        location: 'P5 Evidence Location',
++        coordinates: { latitude: 11.8, longitude: 13.1 },
++        autoApproveEnabled: false,
++      },
++    })
++    fixtureIds.entities.push(entity.id)
++    await db.entityAssignment.create({
++      data: { userId: assessor.id, entityId: entity.id, assignedBy: 'evidence-script' },
++    })
++    const incident = await db.incident.create({
++      data: {
++        name: `P5 Evidence Incident ${runId}`,
++        type: 'FLOOD',
++        description: 'P5 evidence incident',
++        location: 'P5 Evidence Location',
++        severity: 'UNCLASSIFIED',
++        status: 'ACTIVE',
++        createdBy: assessor.id,
++      },
++    })
++    fixtureIds.incidents.push(incident.id)
++
++    function request(method: string, path: string, body: unknown): NextRequest {
++      return new NextRequest(new URL(path, 'http://localhost:3000').toString(), {
++        method,
++        body: body === undefined ? undefined : JSON.stringify(body),
++        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
++      }) as NextRequest
++    }
++
++    const activeHealthKeys = (
++      await db.question.findMany({
++        where: { assessmentType: 'HEALTH', isActive: true },
++        select: { questionKey: true, questionType: true },
++        orderBy: [{ order: 'asc' }],
++      })
++    )
++    const multiSelectKey =
++      activeHealthKeys.find((q) => q.questionType === 'MULTI_SELECT')?.questionKey ?? null
++    const activeKeyNames = activeHealthKeys.map((q) => q.questionKey)
++
++    // The client's declared view predates the registry edits above.
++    const clientView = ['hasFunctionalClinic', 'hasEmergencyServices', 'legacyHealthQuestion']
++
++    const driftedPayload = {
++      type: 'HEALTH',
++      rapidAssessmentDate: new Date().toISOString(),
++      assessorName: 'P5 Evidence Assessor',
++      location: 'P5 Evidence Location',
++      entityId: entity.id,
++      incidentId: incident.id,
++      questionKeys: clientView,
++      structureVersion: 1, // deliberately stale — recorded as the client handshake
++      answers: {
++        hasFunctionalClinic: true, // known GAP key, resolved
++        hasEmergencyServices: false, // known GAP key → the one REAL gap
++        legacyHealthQuestion: 'captured before the question was retired', // removed + retained
++        clientGapA: true, // the server cannot map this key at all (unknown)
++        ...(multiSelectKey ? { [multiSelectKey]: '["Malaria","Measles"]' } : {}), // BH-6 replay
++      },
++    }
++
++    // ---- 1. Offline batch create with full drift (never-reject) -----------
++    const offlineId = `offline-evidence-${runId}`
++    const batchChange = {
++      type: 'assessment',
++      action: 'create',
++      data: { ...driftedPayload, id: offlineId },
++      versionNumber: 1,
++      entityUuid: entity.id,
++      offlineId,
++    }
++    const createResponse = await batchRoute(
++      request('POST', '/api/v1/sync/batch', { changes: [batchChange] }),
++      {} as never
++    )
++    const createBody = await createResponse.json()
++    const createResult = createBody?.data?.results?.[0] as
++      | {
++          status?: string
++          message?: string
++          warnings?: Array<{ key: string; type: string }>
++        }
++      | undefined
++    fixtureIds.assessments.push(offlineId)
++    const createdRow = await db.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    const createdGap = (createdRow.gapAnalysis ?? {}) as {
++      hasGap?: boolean
++      gapFields?: string[]
++      severity?: string
++      rows?: Array<{ key: string; severity: string; source: string; unanswered: boolean }>
++    }
++    const createdAnswers = (createdRow.answers ?? {}) as Record<string, unknown>
++    const snapshotVersions = (createdRow.questionSnapshot ?? {}) as {
++      structureVersion?: number
++      contentVersion?: number
++    }
++    const createdWarnings = createResult?.warnings ?? []
++    const warningTypes = [...new Set(createdWarnings.map((w) => w.type))]
++    log('1. POST /api/v1/sync/batch (drifted offline create)', {
++      status: createResponse.status,
++      httpContract: {
++        summary: createBody?.data?.summary,
++        result: { status: createResult?.status, message: createResult?.message },
++      },
++      row: {
++        id: createdRow.id,
++        priority: createdRow.priority,
++        structureVersion: createdRow.structureVersion,
++        snapshotVersions,
++        isOfflineCreated: createdRow.isOfflineCreated,
++        syncStatus: createdRow.syncStatus,
++        verificationStatus: createdRow.verificationStatus,
++        gapFields: createdGap.gapFields,
++        severity: createdGap.severity,
++        unknownRows: createdGap.rows?.filter((row) => row.source === 'unknown'),
++        answersRetainedRemovedKey: createdAnswers.legacyHealthQuestion,
++        answersRetainedUnknownKey: createdAnswers.clientGapA,
++        multiSelectNormalized: multiSelectKey ? createdAnswers[multiSelectKey] : '(none)',
++      },
++      warnings: {
++        types: warningTypes,
++        removed: createdWarnings.filter((w) => w.type === 'removed').map((w) => w.key),
++        unknown: createdWarnings.filter((w) => w.type === 'unknown').map((w) => w.key),
++        addedCount: createdWarnings.filter((w) => w.type === 'added').length,
++      },
++    })
++    check('1', createResponse.status === 200, `registry drift must NEVER reject (expected 200, got ${createResponse.status})`)
++    check('1', createResult?.status === 'success', `results[0] must be success (got ${createResult?.status})`)
++    check('1', createdRow.isOfflineCreated === true && createdRow.syncStatus === 'SYNCED', 'offline-created rows carry isOfflineCreated + SYNCED')
++    check('1', createdRow.structureVersion === 1, `row records the CLIENT handshake structureVersion 1 (got ${createdRow.structureVersion})`)
++    check('1', JSON.stringify(createdGap.gapFields) === JSON.stringify(['hasEmergencyServices']), `intersection gap only — gapFields must be exactly ['hasEmergencyServices'] (got ${JSON.stringify(createdGap.gapFields)})`)
++    check('1', createdGap.hasGap === true && createdGap.severity === 'MEDIUM', 'the real gap scores MEDIUM')
++    const unknownKeys = (createdGap.rows ?? []).filter((row) => row.source === 'unknown').map((row) => row.key).sort()
++    check('1', JSON.stringify(unknownKeys) === JSON.stringify(['clientGapA', 'legacyHealthQuestion']), `retired + unknown keys render as informational source-'unknown' rows (got ${JSON.stringify(unknownKeys)})`)
++    check('1', createdAnswers.legacyHealthQuestion === 'captured before the question was retired', 'REMOVED key answer retained verbatim (nothing discarded)')
++    check('1', createdAnswers.clientGapA === true, 'UNKNOWN key answer retained verbatim (nothing discarded)')
++    check('1', createdWarnings.some((w) => w.key === 'legacyHealthQuestion' && w.type === 'removed'), 'removed warning reported')
++    check('1', createdWarnings.some((w) => w.key === 'clientGapA' && w.type === 'unknown'), 'unknown warning reported')
++    const answeredActive = ['hasFunctionalClinic', 'hasEmergencyServices', multiSelectKey].filter(Boolean)
++    const expectedAdded = activeKeyNames.filter((key) => !answeredActive.includes(key)).length
++    check(
++      '1',
++      createdWarnings.filter((w) => w.type === 'added').length === expectedAdded,
++      `added warnings cover the unanswered active keys (expected ${expectedAdded}, got ${createdWarnings.filter((w) => w.type === 'added').length})`
++    )
++    if (multiSelectKey) {
++      check('1', JSON.stringify(createdAnswers[multiSelectKey]) === JSON.stringify(['Malaria', 'Measles']), 'MULTI_SELECT JSON-string replay normalizes to an array')
++    }
++
++    // ---- 2. Replay of the same create: idempotent, never a conflict -------
++    const replayResponse = await batchRoute(
++      request('POST', '/api/v1/sync/batch', { changes: [batchChange] }),
++      {} as never
++    )
++    const replayBody = await replayResponse.json()
++    const replayResult = replayBody?.data?.results?.[0] as
++      | { status?: string; message?: string; warnings?: unknown[] }
++      | undefined
++    log('2. POST /api/v1/sync/batch (create replay)', {
++      status: replayResponse.status,
++      summary: replayBody?.data?.summary,
++      result: { status: replayResult?.status, message: replayResult?.message, warnings: replayResult?.warnings ?? '(none)' },
++      rowCount: await db.rapidAssessment.count({ where: { id: offlineId } }),
++    })
++    check('2', replayResponse.status === 200, `replay must be 200 (got ${replayResponse.status})`)
++    check('2', replayResult?.status === 'success' && replayResult?.message === 'Assessment already synced', `replay is an idempotent success (got ${replayResult?.status}/${replayResult?.message})`)
++    check('2', replayResult?.warnings === undefined, 'replay reports no fresh warnings')
++    check('2', (await db.rapidAssessment.count({ where: { id: offlineId } })) === 1, 'replay must not duplicate the row')
++
++    // ---- 3. Answers-carrying update through the processing service -------
++    const updateResults = await SyncProcessingService.processBatch(
++      [
++        {
++          type: 'assessment',
++          action: 'update',
++          data: {
++            type: 'HEALTH',
++            assessorName: 'P5 Evidence Assessor',
++            entityId: entity.id,
++            incidentId: incident.id,
++            structureVersion: 2,
++            answers: {
++              hasFunctionalClinic: true,
++              hasEmergencyServices: false,
++              legacyHealthQuestion: 'still here on update',
++              clientGapB: 7, // NEW unknown key replaces clientGapA
++            },
++          },
++          versionNumber: 2,
++          entityUuid: offlineId,
++          offlineId,
++        },
++      ],
++      assessor.id
++    )
++    const updatedRow = await db.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    const updatedGap = (updatedRow.gapAnalysis ?? {}) as {
++      gapFields?: string[]
++      rows?: Array<{ key: string; source: string }>
++    }
++    const updatedAnswers = (updatedRow.answers ?? {}) as Record<string, unknown>
++    const updateWarnings = (updateResults[0].warnings ?? []) as Array<{ key: string; type: string }>
++    log('3. SyncProcessingService.processBatch (answers-carrying update)', {
++      result: updateResults[0],
++      row: {
++        structureVersion: updatedRow.structureVersion,
++        versionNumber: updatedRow.versionNumber,
++        syncStatus: updatedRow.syncStatus,
++        priority: `${createdRow.priority} → ${updatedRow.priority}`,
++        gapFields: updatedGap.gapFields,
++        unknownRows: updatedGap.rows?.filter((row) => row.source === 'unknown').map((row) => row.key),
++        answersRetainedClientGapB: updatedAnswers.clientGapB,
++        answersRetainedRemovedKey: updatedAnswers.legacyHealthQuestion,
++        answersDroppedClientGapA: updatedAnswers.clientGapA === undefined,
++      },
++      warnings: {
++        removed: updateWarnings.filter((w) => w.type === 'removed').map((w) => w.key),
++        unknown: updateWarnings.filter((w) => w.type === 'unknown').map((w) => w.key),
++      },
++    })
++    check('3', updateResults[0].status === 'success', `update must succeed (got ${updateResults[0].status})`)
++    check('3', updatedAnswers.clientGapA === undefined && updatedAnswers.clientGapB === 7 && updatedAnswers.legacyHealthQuestion === 'still here on update', 'update answers are a full INGESTED replace — drift retained verbatim')
++    check('3', JSON.stringify(updatedGap.gapFields) === JSON.stringify(['hasEmergencyServices']), `update re-derives the same intersection gap (got ${JSON.stringify(updatedGap.gapFields)})`)
++    check('3', updatedRow.structureVersion === 2 && updatedRow.versionNumber === 2, 'client version re-stamped + versionNumber advanced')
++    check('3', updateWarnings.some((w) => w.key === 'clientGapB' && w.type === 'unknown') && updateWarnings.some((w) => w.key === 'legacyHealthQuestion' && w.type === 'removed'), 'update warnings recomputed for the new answers')
++
++    // ---- 4. Zero online behavior change ------------------------------------
++    const onlineAnswers = {
++      hasFunctionalClinic: true,
++      hasEmergencyServices: false, // single MEDIUM gap — identical derivation
++      numberHealthFacilities: 2,
++      healthFacilityType: 'Clinic',
++      qualifiedHealthWorkers: 5,
++      hasTrainedStaff: true,
++      hasMedicineSupply: true,
++      hasMedicalSupplies: true,
++      hasMaternalChildServices: true,
++      commonHealthIssues: ['Malaria'],
++    }
++    const onlineResponse = await onlineCreateRoute(
++      request('POST', '/api/v1/rapid-assessments', {
++        type: 'HEALTH',
++        rapidAssessmentDate: new Date().toISOString(),
++        assessorName: 'P5 Evidence Assessor',
++        entityId: entity.id,
++        incidentId: incident.id,
++        answers: onlineAnswers,
++        questionKeys: Object.keys(onlineAnswers), // P5 fields in an ONLINE payload
++        structureVersion: 99,
++      }),
++      {} as never
++    )
++    const onlineBody = await onlineResponse.json()
++    if (onlineBody?.data?.id) fixtureIds.assessments.push(onlineBody.data.id)
++    const onlineRow = onlineBody?.data?.id
++      ? await db.rapidAssessment.findUniqueOrThrow({ where: { id: onlineBody.data.id } })
++      : null
++    log('4. POST /api/v1/rapid-assessments (online, P5 fields present)', {
++      status: onlineResponse.status,
++      row: onlineRow && {
++        priority: onlineRow.priority,
++        isOfflineCreated: onlineRow.isOfflineCreated,
++        structureVersion: onlineRow.structureVersion,
++        gapFields: ((onlineRow.gapAnalysis ?? {}) as { gapFields?: string[] }).gapFields,
++      },
++    })
++    check('4', onlineResponse.status === 201, `online create must be unaffected (expected 201, got ${onlineResponse.status})`)
++    check('4', onlineRow?.isOfflineCreated === false, 'online rows never carry offline flags (zod strips the P5 fields)')
++    check('4', JSON.stringify(((onlineRow?.gapAnalysis ?? {}) as { gapFields?: string[] }).gapFields) === JSON.stringify(['hasEmergencyServices']), 'online derivation unchanged (single known MEDIUM gap)')
++    check('4', onlineRow?.priority === 'MEDIUM', 'online priority derivation unchanged')
++
++    console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)
++    process.exitCode = failures === 0 ? 0 : 1
++  } finally {
++    // Crash-safe best-effort cleanup (API suites truncate drms_test anyway).
++    await db.actionSignal.deleteMany({ where: { entityId: { in: fixtureIds.entities } } }).catch(() => {})
++    await db.rapidAssessment.deleteMany({ where: { id: { in: fixtureIds.assessments } } }).catch(() => {})
++    await db.question.deleteMany({ where: { id: { in: fixtureIds.questions } } }).catch(() => {})
++    await db.incident.deleteMany({ where: { id: { in: fixtureIds.incidents } } }).catch(() => {})
++    await db.entity.deleteMany({ where: { id: { in: fixtureIds.entities } } }).catch(() => {})
++    await db.user.deleteMany({ where: { id: { in: fixtureIds.users } } }).catch(() => {})
++    await db.$disconnect()
++  }
++}
++
++main().catch((error) => {
++  console.error('Evidence run crashed:', error)
++  process.exit(1)
++})
+diff --git a/src/app/api/v1/sync/batch/route.ts b/src/app/api/v1/sync/batch/route.ts
+index 4706a01..ca00aba 100644
+--- a/src/app/api/v1/sync/batch/route.ts
++++ b/src/app/api/v1/sync/batch/route.ts
+@@ -50,6 +50,9 @@ export const POST = withAuth(async (
+ 
+     const results = await SyncProcessingService.processBatch(changes, context.userId);
+ 
++    // P5: the contract is unchanged except that assessment results may now
++    // carry a per-item `warnings` array (registry drift — the client surfaces
++    // it and never unwinds the submission).
+     const successful = results.filter(r => r.status === 'success');
+     const conflicts = results.filter(r => r.status === 'conflict');
+     const failed = results.filter(r => r.status === 'failed');
+diff --git a/src/components/forms/assessment/DynamicAssessmentForm.tsx b/src/components/forms/assessment/DynamicAssessmentForm.tsx
+index 4e80b05..d352ecc 100644
+--- a/src/components/forms/assessment/DynamicAssessmentForm.tsx
++++ b/src/components/forms/assessment/DynamicAssessmentForm.tsx
+@@ -31,6 +31,7 @@ import { AlertTriangle, Droplets, Home, Hospital, Loader2, Save, Shield, Users,
+ import type { AnswerValue, RapidAssessmentType } from '@/lib/questions/answers'
+ import { coerceArray } from '@/lib/questions/answers'
+ import { analyzeGaps } from '@/lib/questions/gap-engine'
++import { applyDraftMigration, restoreOfflineDraft, type UnmappedAnswer } from '@/lib/questions/draft-migration'
+ import { crossFieldSuperRefine, evaluateCrossFieldRules, type CrossFieldViolation } from '@/lib/questions/cross-field-rules'
+ import { buildAssessmentSchema } from '@/lib/validation/dynamic-assessment'
+ import { useQuestionSet, type QuestionDef, type QuestionSectionDef } from '@/hooks/useQuestionSet'
+@@ -75,6 +76,10 @@ export interface AssessmentFormSubmitPayload {
+   entityId: string
+   incidentId: string
+   answers: Record<string, AnswerValue>
++  /** Registry structure the answers were captured against (P5 offline sync). */
++  structureVersion: number | null
++  /** Client-declared question-key view (drift detection + draft migration). */
++  questionKeys: string[]
+ }
+ 
+ export interface DynamicAssessmentFormProps {
+@@ -197,6 +202,32 @@ function isAdditionalTextSection(section: QuestionSectionDef): boolean {
+   return section.questions.length > 0 && section.questions.every((q) => q.type === 'TEXT_LONG')
+ }
+ 
++/**
++ * Dismissable-banner state (ZoomAdjustmentHint pattern): a null key renders
++ * nothing, a localStorage-backed key survives reloads until re-triggered.
++ */
++function useDismissableBanner(storageKey: string | null) {
++  const [dismissed, setDismissed] = useState(false)
++  useEffect(() => {
++    if (!storageKey) return
++    try {
++      if (window.localStorage.getItem(storageKey) === 'true') setDismissed(true)
++    } catch {
++      // localStorage unavailable — banner simply shows until dismissed
++    }
++  }, [storageKey])
++  const dismiss = useCallback(() => {
++    setDismissed(true)
++    if (!storageKey) return
++    try {
++      window.localStorage.setItem(storageKey, 'true')
++    } catch {
++      // ignore — in-memory dismissal still applies for this mount
++    }
++  }, [storageKey])
++  return { dismissed, dismiss }
++}
++
+ // ---------------------------------------------------------------------------
+ // Component (loader shell → inner form)
+ // ---------------------------------------------------------------------------
+@@ -473,7 +504,126 @@ function DynamicAssessmentFormInner(props: InnerProps) {
+   )
+ 
+   // ---- drafts (30s autosave + manual save + flash + count) ------------------
+-  const { drafts, saveDraft } = useRapidAssessmentDrafts(assessmentType)
++  const { drafts, saveDraft, deleteDraft } = useRapidAssessmentDrafts(assessmentType)
++
++  // ---- P5 draft restore (latest autosave for this type) --------------------
++  // Reconciles the newest stored draft against the CURRENT registry snapshot:
++  // mapped keys hydrate the form (legacy typed drafts map by question key),
++  // unmapped answers are kept in storage and surfaced, and the draft's
++  // declared structureVersion drives the staleness banner (never blocks).
++  // Restores happen ONCE per mount and never on edit/reassessment hydrations.
++  const restoredDraftRef = useRef(false)
++  const [restoredDraftMeta, setRestoredDraftMeta] = useState<{
++    draftId: string
++    structureVersion: number
++    questionKeys: string[]
++    unmappedAnswers: UnmappedAnswer[]
++  } | null>(null)
++  const [migrationReceipt, setMigrationReceipt] = useState<string | null>(null)
++  const [draftRestored, setDraftRestored] = useState(false)
++
++  useEffect(() => {
++    if (restoredDraftRef.current || initialAnswers || isReassessment) return
++    const latest = drafts[0]
++    if (!latest) return
++    const data = latest.data ?? {}
++    const rawAnswers = (data.answers ?? {}) as Record<string, unknown>
++    const hasContent =
++      Object.values(rawAnswers).some((value) => value !== undefined && value !== null && value !== '') ||
++      (Array.isArray(data.unmappedAnswers) && data.unmappedAnswers.length > 0) ||
++      Object.entries(data).some(
++        ([key, value]) =>
++          key !== 'answers' &&
++          typeof value === 'boolean' && value === true // legacy flat booleans
++      ) ||
++      Array.isArray(data.photos) && data.photos.length > 0 ||
++      Boolean(data.gpsLocation)
++    if (!hasContent) return
++    restoredDraftRef.current = true
++
++    const restored = restoreOfflineDraft(assessmentType, engineStructure, latest)
++    // Normalize storage (unmapped answers KEPT under data.unmappedAnswers).
++    applyDraftMigration(latest, { assessmentType, snapshot: engineStructure })
++    form.reset(buildDefaultValues(questions, restored.answers))
++    const touched = new Set<string>()
++    for (const question of questions) {
++      const value = restored.answers[question.key]
++      if (value !== undefined && value !== null) touched.add(question.key)
++    }
++    setTouchedKeys(touched)
++
++    if (typeof data.assessorName === 'string' && data.assessorName.length > 0) {
++      setAssessorName(data.assessorName)
++    }
++    if (typeof data.rapidAssessmentDate === 'string' && data.rapidAssessmentDate.length > 0) {
++      setAssessmentDate(data.rapidAssessmentDate.split('T')[0])
++    }
++    if (typeof data.location === 'string') setLocationName(data.location)
++    if (Array.isArray(data.photos)) setPhotos(data.photos.filter((p): p is string => typeof p === 'string'))
++    if (data.gpsLocation && typeof data.gpsLocation === 'object') {
++      setGpsLocation(data.gpsLocation as AssessmentFormSubmitPayload['coordinates'])
++    }
++    // Draft's captured context (draft record fields, not data).
++    if (latest.entityId) setSelectedEntity(latest.entityId)
++    if (latest.incidentId) setSelectedIncident(latest.incidentId)
++
++    setRestoredDraftMeta({
++      draftId: latest.id,
++      structureVersion: restored.structureVersion,
++      questionKeys: restored.questionKeys,
++      unmappedAnswers: restored.unmappedAnswers,
++    })
++    setDraftRestored(true)
++    setTimeout(() => setDraftRestored(false), 3000)
++
++    // Plain-language migration receipt, ONCE per draft (spec §5 copy).
++    const stale = structureVersion !== null && restored.structureVersion < structureVersion
++    if (restored.legacy || stale) {
++      const receiptKey = `dqr-draft-migrated:${latest.id}`
++      try {
++        if (window.localStorage.getItem(receiptKey) !== 'true') {
++          const unmapped = restored.unmappedAnswers.length
++          setMigrationReceipt(
++            `Your draft was updated to the new question set — ${restored.carried} answers carried over` +
++              (unmapped > 0 ? `, ${unmapped} unmapped` : '')
++          )
++          window.localStorage.setItem(receiptKey, 'true')
++        }
++      } catch {
++        // localStorage unavailable — receipt still shows this mount
++        setMigrationReceipt(
++          `Your draft was updated to the new question set — ${restored.carried} answers carried over` +
++            (restored.unmappedAnswers.length > 0 ? `, ${restored.unmappedAnswers.length} unmapped` : '')
++        )
++      }
++    }
++  }, [drafts, initialAnswers, isReassessment, assessmentType, engineStructure, questions, form, structureVersion])
++
++  const staleBanner = useDismissableBanner(
++    restoredDraftMeta && structureVersion !== null && restoredDraftMeta.structureVersion < structureVersion
++      ? `dqr-draft-stale-dismissed:${restoredDraftMeta.draftId}`
++      : null
++  )
++  const draftIsStale =
++    restoredDraftMeta !== null &&
++    structureVersion !== null &&
++    restoredDraftMeta.structureVersion < structureVersion
++  // Plain key lists: what the current set has that the draft lacked (added)
++  // and what the draft knew that the current set no longer has (removed).
++  const currentQuestionKeys = useMemo(
++    () => new Set(questions.map((question) => question.key)),
++    [questions]
++  )
++  const staleAddedKeys = useMemo(() => {
++    if (!restoredDraftMeta) return []
++    return questions
++      .map((question) => question.key)
++      .filter((key) => !restoredDraftMeta.questionKeys.includes(key))
++  }, [restoredDraftMeta, questions])
++  const staleRemovedKeys = useMemo(() => {
++    if (!restoredDraftMeta) return []
++    return restoredDraftMeta.questionKeys.filter((key) => !currentQuestionKeys.has(key))
++  }, [restoredDraftMeta, currentQuestionKeys])
+ 
+   const draftSnapshot = useCallback(() => {
+     return {
+@@ -483,8 +633,13 @@ function DynamicAssessmentFormInner(props: InnerProps) {
+       location: locationName,
+       photos,
+       gpsLocation,
++      structureVersion,
++      questionKeys: questions.map((question) => question.key),
++      // Unmapped answers ride along in storage until the draft is submitted
++      // (never silently dropped — spec).
++      unmappedAnswers: restoredDraftMeta?.unmappedAnswers ?? [],
+     }
+-  }, [getValues, assessorName, assessmentDate, locationName, photos, gpsLocation])
++  }, [getValues, assessorName, assessmentDate, locationName, photos, gpsLocation, structureVersion, questions, restoredDraftMeta])
+ 
+   const flashDraftSaved = useCallback(() => {
+     setDraftSaved(true)
+@@ -527,7 +682,15 @@ function DynamicAssessmentFormInner(props: InnerProps) {
+         entityId: selectedEntity,
+         incidentId: selectedIncident,
+         answers: data as Record<string, AnswerValue>,
++        structureVersion,
++        questionKeys: questions.map((question) => question.key),
+       })
++      // Consume this type's drafts — the work they held just submitted, and
++      // leaving them behind would re-restore answered data into the next
++      // blank form on mount.
++      for (const draft of drafts) {
++        deleteDraft(draft.id)
++      }
+     } finally {
+       setIsSubmitting(false)
+     }
+@@ -561,6 +724,70 @@ function DynamicAssessmentFormInner(props: InnerProps) {
+         }
+       />
+ 
++      {/* P5 — migration receipt + staleness banner + unmapped block (never block submit) */}
++      {migrationReceipt !== null && (
++        <p className="text-sm font-medium text-green-700" data-testid="draft-migration-receipt">
++          {migrationReceipt}.
++        </p>
++      )}
++      {draftRestored && (
++        <p className="text-sm font-medium text-green-600" data-testid="draft-restored-flash">
++          Draft restored
++        </p>
++      )}
++      {draftIsStale && !staleBanner.dismissed && (
++        <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:bg-amber-950/30" data-testid="draft-stale-banner">
++          <AlertTriangle className="h-4 w-4" />
++          <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
++            <span data-testid="draft-stale-banner-text">
++              The questions have changed since this draft was started. You can still submit — review the
++              changes below.
++              {staleAddedKeys.length > 0 && (
++                <span className="block">
++                  Added: {staleAddedKeys.join(', ')}
++                </span>
++              )}
++              {staleRemovedKeys.length > 0 && (
++                <span className="block">
++                  Removed: {staleRemovedKeys.join(', ')}
++                </span>
++              )}
++            </span>
++            <Button
++              type="button"
++              variant="outline"
++              size="sm"
++              className="shrink-0"
++              onClick={staleBanner.dismiss}
++              data-testid="draft-stale-dismiss"
++            >
++              Don&apos;t show again
++            </Button>
++          </AlertDescription>
++        </Alert>
++      )}
++      {restoredDraftMeta !== null && restoredDraftMeta.unmappedAnswers.length > 0 && (
++        <details
++          className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
++          data-testid="draft-unmapped-block"
++        >
++          <summary className="cursor-pointer font-medium">
++            Unmapped answers ({restoredDraftMeta.unmappedAnswers.length})
++          </summary>
++          <ul className="mt-2 list-disc pl-5">
++            {restoredDraftMeta.unmappedAnswers.map((entry) => (
++              <li key={entry.key}>
++                <span className="font-mono text-xs">{entry.key}</span>: {JSON.stringify(entry.value)}
++              </li>
++            ))}
++          </ul>
++          <p className="mt-2 text-xs text-slate-500">
++            These answers no longer match a question in the current set. They are kept with the draft
++            and never deleted.
++          </p>
++        </details>
++      )}
++
+       <Form {...form}>
+         <form onSubmit={handleFormSubmit} className="space-y-6 pb-8">
+           {/* Z2 — incident & entity context */}
+diff --git a/src/hooks/useRapidAssessmentDrafts.ts b/src/hooks/useRapidAssessmentDrafts.ts
+index 5f219f9..7e9d42a 100644
+--- a/src/hooks/useRapidAssessmentDrafts.ts
++++ b/src/hooks/useRapidAssessmentDrafts.ts
+@@ -1,6 +1,7 @@
+ 'use client'
+ 
+ import { useCallback, useEffect, useRef, useState } from 'react'
++import { DRAFTS_STORAGE_KEY } from '@/lib/questions/draft-migration'
+ 
+ export interface RapidAssessmentDraft {
+   id: string
+@@ -12,13 +13,13 @@ export interface RapidAssessmentDraft {
+   autoSaved: boolean
+ }
+ 
+-const STORAGE_KEY = 'rapid-assessment-drafts'
++
+ const MAX_DRAFTS = 5
+ 
+ function loadDrafts(): RapidAssessmentDraft[] {
+   if (typeof window === 'undefined') return []
+   try {
+-    const raw = localStorage.getItem(STORAGE_KEY)
++    const raw = localStorage.getItem(DRAFTS_STORAGE_KEY)
+     return raw ? JSON.parse(raw) : []
+   } catch {
+     return []
+@@ -27,7 +28,7 @@ function loadDrafts(): RapidAssessmentDraft[] {
+ 
+ function persistDrafts(drafts: RapidAssessmentDraft[]) {
+   try {
+-    localStorage.setItem(STORAGE_KEY, JSON.stringify(drafts))
++    localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(drafts))
+   } catch {
+     // localStorage may be full or unavailable
+   }
+diff --git a/src/lib/db/offline.ts b/src/lib/db/offline.ts
+index 3d5a0b5..fd2e0d8 100644
+--- a/src/lib/db/offline.ts
++++ b/src/lib/db/offline.ts
+@@ -1,4 +1,5 @@
+ import Dexie, { Table } from 'dexie';
++import type { OfflineSyncWarning } from '@/lib/questions/offline-answers';
+ 
+ // Types for database entities
+ export interface Assessment {
+@@ -13,6 +14,8 @@ export interface Assessment {
+   timestamp: Date;
+   syncStatus: 'pending' | 'synced' | 'failed';
+   lastModified: Date;
++  /** P5: server-reported registry-drift warnings from the last offline sync. */
++  warnings?: OfflineSyncWarning[];
+ }
+ 
+ export interface Response {
+diff --git a/src/lib/questions/draft-migration.ts b/src/lib/questions/draft-migration.ts
+new file mode 100644
+index 0000000..2890bb7
+--- /dev/null
++++ b/src/lib/questions/draft-migration.ts
+@@ -0,0 +1,212 @@
++/**
++ * Dynamic Question Registry — P5 offline draft migration.
++ *
++ * localStorage drafts (`rapid-assessment-drafts`, written by
++ * `useRapidAssessmentDrafts`) predate the registry in the wild. Two shapes
++ * exist in storage:
++ *
++ *   LEGACY (typed forms, pre-p1) — `data` IS the answers map: flat typed
++ *     fields keyed by (what became) question keys, no `answers` wrapper, no
++ *     `structureVersion`/`questionKeys`.
++ *   REGISTRY — `data = { answers, assessorName?, rapidAssessmentDate?,
++ *     location?, photos?, gpsLocation?, structureVersion?, questionKeys? }`
++ *     (older registry drafts may lack the version fields).
++ *
++ * Migration maps BY QUESTION KEY against the CURRENT snapshot:
++ *   - keys present in the snapshot hydrate the form (carried);
++ *   - keys absent from the snapshot are UNMAPPED: they never hydrate (no
++ *     widget exists) but are KEPT in storage under `data.unmappedAnswers` —
++ *     never silently dropped (ruling 7's spirit) — and surfaced in the UI;
++ *   - `structureVersion` defaults to 1 and `questionKeys` falls back to the
++ *     seed catalog (`questionKeysForType`) when the draft predates versioning.
++ *
++ * `restoreOfflineDraft` is pure and DOM-free (Node-testable); callers provide
++ * the snapshot. `applyDraftMigration` persists the normalized draft through
++ * the drafts-hook storage (localStorage `rapid-assessment-drafts`) unless a
++ * custom `migrate` writer is injected (tests).
++ */
++
++import { questionKeysForType, type RapidAssessmentType } from './answers'
++import { snapshotQuestionKeys } from './offline-answers'
++
++/** Any snapshot-shaped object with sections[].questions[].key. */
++type SnapshotLike = { sections?: Array<{ questions?: Array<{ key?: unknown }> }> } | null | undefined
++
++/** localStorage key shared with `useRapidAssessmentDrafts`. */
++export const DRAFTS_STORAGE_KEY = 'rapid-assessment-drafts'
++
++/** Structural shape of a stored draft record (subset the migration reads). */
++export interface DraftRecord {
++  id: string
++  assessmentType?: string
++  entityId?: string
++  incidentId?: string
++  data?: Record<string, unknown> | null
++}
++
++/** An unmapped answer — kept in storage, never dropped, never hydrated. */
++export interface UnmappedAnswer {
++  key: string
++  value: unknown
++}
++
++/** Result of reconciling a stored draft against the current snapshot. */
++export interface RestoredOfflineDraft {
++  /** Snapshot-mapped answers only (unmapped keys never hydrate the form). */
++  answers: Record<string, unknown>
++  /** Answers that no longer map to a question — kept in storage. */
++  unmappedAnswers: UnmappedAnswer[]
++  /** How many answers carried over (the receipt's N). */
++  carried: number
++  /** The draft's declared structure version (1 when it predates versioning). */
++  structureVersion: number
++  /** The draft's declared question-key view (catalog fallback for legacy drafts). */
++  questionKeys: string[]
++  /** True when the draft predated the answers shape (typed-forms era). */
++  legacy: boolean
++}
++
++/** Draft meta keys that are not answers in registry-shaped drafts. */
++const META_KEYS = new Set([
++  'answers',
++  'assessorName',
++  'rapidAssessmentDate',
++  'location',
++  'photos',
++  'gpsLocation',
++  'structureVersion',
++  'questionKeys',
++  'unmappedAnswers',
++])
++
++function isPlainObject(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null && !Array.isArray(value)
++}
++
++/**
++ * Reconciles a stored offline draft against the CURRENT registry snapshot.
++ * Pure: no I/O, no DOM, no clock. Legacy typed drafts (flat `data`) map by
++ * question key; unmapped answers are reported, never dropped.
++ */
++export function restoreOfflineDraft(
++  assessmentType: RapidAssessmentType,
++  snapshot: SnapshotLike,
++  draft: DraftRecord | null | undefined
++): RestoredOfflineDraft {
++  const data = isPlainObject(draft?.data) ? draft!.data : {}
++  const answersWrapper = isPlainObject(data.answers) ? data.answers : null
++  const legacy = answersWrapper === null
++  const rawAnswers: Record<string, unknown> = legacy
++    ? Object.fromEntries(Object.entries(data).filter(([key]) => !META_KEYS.has(key)))
++    : answersWrapper
++
++  const structureVersion =
++    typeof data.structureVersion === 'number' && Number.isFinite(data.structureVersion)
++      ? data.structureVersion
++      : 1
++
++  const questionKeys = Array.isArray(data.questionKeys)
++    ? data.questionKeys.filter((key): key is string => typeof key === 'string')
++    : questionKeysForType(assessmentType)
++
++  // Previously stored unmapped answers survive every re-migration — the
++  // reconciliation below only appends keys newly absent from the snapshot.
++  const priorUnmapped: UnmappedAnswer[] = Array.isArray(data.unmappedAnswers)
++    ? data.unmappedAnswers.filter(
++        (entry): entry is UnmappedAnswer =>
++          isPlainObject(entry) && typeof entry.key === 'string' && entry.key.length > 0 && 'value' in entry
++      )
++    : []
++  const unmappedByKey = new Map<string, UnmappedAnswer>(
++    priorUnmapped.map((entry) => [entry.key, entry])
++  )
++
++  const snapshotKeys = new Set(snapshotQuestionKeys(snapshot))
++  const answers: Record<string, unknown> = {}
++  for (const [key, value] of Object.entries(rawAnswers)) {
++    if (value === undefined || value === null) continue
++    if (snapshotKeys.has(key)) {
++      answers[key] = value
++    } else if (!unmappedByKey.has(key)) {
++      unmappedByKey.set(key, { key, value })
++    }
++  }
++  const unmappedAnswers = [...unmappedByKey.values()]
++
++  return {
++    answers,
++    unmappedAnswers,
++    carried: Object.keys(answers).length,
++    structureVersion,
++    questionKeys,
++    legacy,
++  }
++}
++
++/** Normalized draft payload persisted by the migration (unmapped kept). */
++export interface NormalizedDraftData {
++  answers: Record<string, unknown>
++  structureVersion: number
++  questionKeys: string[]
++  unmappedAnswers: UnmappedAnswer[]
++}
++
++export interface DraftMigrationOptions {
++  assessmentType: RapidAssessmentType
++  snapshot: SnapshotLike
++  /** Storage writer; defaults to the drafts-hook localStorage persistence. */
++  migrate?: (normalized: NormalizedDraftData) => void
++}
++
++/**
++ * Reconciles a stored draft against the current snapshot and persists the
++ * normalized `{ answers, structureVersion, questionKeys, unmappedAnswers }`
++ * payload — unmapped answers are KEPT under `unmappedAnswers`, never dropped.
++ * Returns the same reconciliation result as `restoreOfflineDraft` so callers
++ * drive their receipt/banners from it.
++ */
++export function applyDraftMigration(
++  draft: DraftRecord | null | undefined,
++  options: DraftMigrationOptions
++): RestoredOfflineDraft {
++  const restored = restoreOfflineDraft(options.assessmentType, options.snapshot, draft)
++
++  const normalized: NormalizedDraftData = {
++    answers: restored.answers,
++    structureVersion: restored.structureVersion,
++    questionKeys: restored.questionKeys,
++    unmappedAnswers: restored.unmappedAnswers,
++  }
++
++  if (options.migrate) {
++    options.migrate(normalized)
++    return restored
++  }
++
++  // Default writer: update the draft record in the shared localStorage store.
++  if (typeof window !== 'undefined' && draft) {
++    try {
++      const raw = window.localStorage.getItem(DRAFTS_STORAGE_KEY)
++      const drafts = raw ? (JSON.parse(raw) as DraftRecord[]) : []
++      const index = drafts.findIndex((entry) => entry.id === draft.id)
++      if (index !== -1) {
++        drafts[index] = {
++          ...drafts[index],
++          data: {
++            ...drafts[index].data,
++            answers: normalized.answers,
++            structureVersion: normalized.structureVersion,
++            questionKeys: normalized.questionKeys,
++            unmappedAnswers: normalized.unmappedAnswers,
++          },
++        }
++        window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(drafts))
++      }
++    } catch {
++      // localStorage may be full, unavailable, or hold corrupted JSON — the
++      // in-memory reconciliation result still drives the UI.
++    }
++  }
++
++  return restored
++}
+diff --git a/src/lib/questions/gap-engine.ts b/src/lib/questions/gap-engine.ts
+index 670e208..27cc066 100644
+--- a/src/lib/questions/gap-engine.ts
++++ b/src/lib/questions/gap-engine.ts
+@@ -36,8 +36,14 @@
+ /** The four severities a GAP field can carry (never UNCLASSIFIED). */
+ export type GapSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+ 
+-/** Where a row's resolved severity came from — the ladder audit surface. */
+-export type GapRowSource = 'registry' | 'snapshot' | 'unmapped'
++/**
++ * Where a row's resolved severity came from — the ladder audit surface.
++ * 'unknown' rows are offline-sync drift: answered keys absent from the
++ * snapshot structure entirely (P5 never-reject ingestion persists them
++ * verbatim in `answers`; the engine keeps them visible without scoring
++ * them — gaps derive from the intersection only).
++ */
++export type GapRowSource = 'registry' | 'snapshot' | 'unmapped' | 'unknown'
+ 
+ const SEVERITY_WEIGHT: Record<GapSeverity, number> = {
+   CRITICAL: 4,
+@@ -103,7 +109,9 @@ export interface GapEngineResult {
+   severity: GapSeverity
+   recommendations: string[]
+   fieldSeverityMap: Record<string, GapSeverity>
+-  /** Truth table: one row per GAP question in the snapshot, presentation order. */
++  /** Truth table: one row per GAP question in the snapshot (presentation
++   * order), followed by one source-'unknown' row per answered key that is
++   * absent from the snapshot structure (offline drift — informational). */
+   rows: GapEngineRow[]
+   /** Keys of GAP questions with no answer (never gaps, flagged not fabricated). */
+   unanswered: string[]
+@@ -187,6 +195,43 @@ export function analyzeGaps(
+     })
+   }
+ 
++  // Unknown keys (P5 never-reject): answered keys absent from the snapshot
++  // structure (any category) persist verbatim in `answers`; the engine emits
++  // one informational row each — AFTER the mapped rows, in answers order —
++  // with source 'unknown'. They are NEVER gapped: gapFields, severity,
++  // fieldSeverityMap and recommendations derive from the intersection only.
++  // Self-derived (not caller-reported) so re-derivation passes (severity
++  // recompute, triggerGapAnalysis) reproduce the same rows byte-for-byte.
++  const snapshotKeys = new Set<string>()
++  for (const section of snapshotStructure?.sections ?? []) {
++    for (const question of section?.questions ?? []) {
++      if (typeof question?.key === 'string') snapshotKeys.add(question.key)
++    }
++  }
++  const seenKeys = new Set(rows.map((row) => row.key))
++  let unknownIndex = 0
++  for (const [answerKey, answerValue] of Object.entries(answerMap)) {
++    if (answerValue === undefined || answerValue === null) continue
++    if (answerKey.length === 0 || snapshotKeys.has(answerKey) || seenKeys.has(answerKey)) continue
++    seenKeys.add(answerKey)
++    rows.push({
++      key: answerKey,
++      label: answerKey,
++      gapLabel: null,
++      severity: normalizeGapSeverity(registryByQuestionKey.get(answerKey)?.severity),
++      source: 'unknown',
++      recommendation: null,
++      unanswered: false,
++      candidate: {
++        question: { key: answerKey },
++        sectionOrder: Number.POSITIVE_INFINITY,
++        order: Number.POSITIVE_INFINITY,
++        index: unknownIndex++,
++      },
++      isGap: false,
++    })
++  }
++
+   const gapped = rows.filter((row) => row.isGap)
+   // Gap surfaces are ordered severity DESC, then presentation order ASC —
+   // deterministic, so identical inputs produce byte-identical output.
+diff --git a/src/lib/questions/offline-answers.ts b/src/lib/questions/offline-answers.ts
+new file mode 100644
+index 0000000..7a3679c
+--- /dev/null
++++ b/src/lib/questions/offline-answers.ts
+@@ -0,0 +1,183 @@
++/**
++ * Dynamic Question Registry — P5 offline answer ingestion.
++ *
++ * Offline submissions are NEVER REJECTED for registry drift (ruling 7): a
++ * field assessor's answers were captured against the client's registry view,
++ * which may be older than the server's current registry. Instead of the
++ * online path's strict strip/422 semantics, offline ingestion:
++ *
++ *   - keeps EVERY non-null answer verbatim — nothing is discarded. Known
++ *     MULTI_SELECT values that replayed as JSON strings (p4 deferred BH-6)
++ *     are normalized to arrays; anything not safely coercible is kept as-is.
++ *   - classifies drift into warnings (never errors):
++ *       added   — active registry keys absent from answers (the assessor
++ *                 never saw them; they render unanswered)
++ *       removed — answered keys whose registry row exists but is inactive
++ *       unknown — answered keys with no registry row at all
++ *
++ * Classification needs ALL registry rows of the type (active + inactive);
++ * the gap engine separately renders answered keys that fall outside the
++ * frozen snapshot as source-'unknown' informational rows.
++ *
++ * Pure module (like the gap engine): deterministic, no I/O, no clock.
++ */
++
++import type { RapidAssessmentType } from './answers'
++
++export type OfflineSyncWarningType = 'added' | 'removed' | 'unknown'
++
++/** Drift record surfaced per assessment sync result (response-only). */
++export interface OfflineSyncWarning {
++  assessmentId: string
++  key: string
++  type: OfflineSyncWarningType
++  message: string
++}
++
++/** Per-list drift buckets surfaced to the syncing client. */
++export interface OfflineIngestWarnings {
++  added: string[]
++  removed: string[]
++  unknown: string[]
++}
++
++export interface OfflineIngestResult {
++  /** The ingested answers map — every non-null value, verbatim (normalized MULTI_SELECTs included). */
++  answers: Record<string, unknown>
++  warnings: OfflineIngestWarnings
++}
++
++/** Live registry row projection used for warning classification. */
++export interface OfflineRegistryRow {
++  questionKey: string
++  isActive: boolean
++}
++
++/** Snapshot-shaped object with sections[].questions[] carrying key + type. */
++type SnapshotLike = {
++  sections?: Array<{ questions?: Array<{ key?: unknown; type?: unknown }> }>
++} | null | undefined
++
++/** Extracts the question keys of a snapshot in presentation order. */
++export function snapshotQuestionKeys(snapshot: SnapshotLike): string[] {
++  const keys: string[] = []
++  for (const section of snapshot?.sections ?? []) {
++    for (const question of section.questions ?? []) {
++      if (typeof question?.key === 'string' && question.key.length > 0) keys.push(question.key)
++    }
++  }
++  return keys
++}
++
++/** Question key → question type map for a snapshot. */
++function snapshotTypeMap(snapshot: SnapshotLike): Map<string, string> {
++  const map = new Map<string, string>()
++  for (const section of snapshot?.sections ?? []) {
++    for (const question of section.questions ?? []) {
++      if (typeof question?.key === 'string' && typeof question.type === 'string') {
++        map.set(question.key, question.type)
++      }
++    }
++  }
++  return map
++}
++
++/**
++ * Normalizes a JSON-string multi-select replay (p4 deferred BH-6):
++ * `'["Malaria"]'` → `['Malaria']`. Unparseable or non-array payloads are
++ * kept verbatim (never-reject — offline data wins).
++ */
++function normalizeMultiSelect(value: unknown): unknown {
++  if (typeof value !== 'string') return value
++  try {
++    const parsed: unknown = JSON.parse(value)
++    // Only a clean string-array replay normalizes; anything else (unparseable,
++    // non-array, or entries the form could not have produced) stays verbatim —
++    // filtering in place would silently discard captured data.
++    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')
++      ? parsed
++      : value
++  } catch {
++    return value
++  }
++}
++
++/**
++ * Ingests an offline answers map against the CURRENT frozen snapshot and ALL
++ * live registry rows of the type. Never throws, never drops a non-null
++ * answer — the result is always a storable answers map plus warnings.
++ */
++export function ingestOfflineAnswers(
++  assessmentType: RapidAssessmentType,
++  answers: Record<string, unknown> | null | undefined,
++  snapshot: SnapshotLike,
++  registryRows: readonly OfflineRegistryRow[] | null | undefined
++): OfflineIngestResult {
++  const types = snapshotTypeMap(snapshot)
++  const rowByKey = new Map<string, OfflineRegistryRow>()
++  for (const row of registryRows ?? []) {
++    if (row && typeof row.questionKey === 'string') rowByKey.set(row.questionKey, row)
++  }
++
++  const ingested: Record<string, unknown> = {}
++  const removed: string[] = []
++  const unknown: string[] = []
++
++  for (const [key, value] of Object.entries(answers ?? {})) {
++    // Never materialize undefined/null into storage (answers contract parity).
++    if (value === undefined || value === null) continue
++    const stored = types.get(key) === 'MULTI_SELECT' ? normalizeMultiSelect(value) : value
++    ingested[key] = stored
++
++    const row = rowByKey.get(key)
++    if (!row) unknown.push(key)
++    else if (!row.isActive) removed.push(key)
++  }
++
++  // ADDED: active registry keys the answers carry no value for (documented
++  // over-warning proxy — optional skipped answers also land here).
++  const answered = new Set(Object.keys(ingested))
++  const added: string[] = []
++  for (const row of registryRows ?? []) {
++    if (!row || !row.isActive || answered.has(row.questionKey)) continue
++    if (!types.has(row.questionKey)) continue // active rows must be in the frozen snapshot
++    added.push(row.questionKey)
++  }
++
++  void assessmentType
++  return { answers: ingested, warnings: { added, removed, unknown } }
++}
++
++/** Builds the drift warning records for one assessment. */
++export function toOfflineSyncWarnings(
++  assessmentId: string,
++  assessmentType: RapidAssessmentType,
++  warnings: OfflineIngestWarnings
++): OfflineSyncWarning[] {
++  const records: OfflineSyncWarning[] = []
++  for (const key of warnings.added) {
++    records.push({
++      assessmentId,
++      key,
++      type: 'added',
++      message: `Question "${key}" was added to the ${assessmentType} registry after this assessment was captured offline; it is recorded as unanswered.`,
++    })
++  }
++  for (const key of warnings.removed) {
++    records.push({
++      assessmentId,
++      key,
++      type: 'removed',
++      message: `Question "${key}" is no longer active in the ${assessmentType} registry; its offline answer is retained unchanged.`,
++    })
++  }
++  for (const key of warnings.unknown) {
++    records.push({
++      assessmentId,
++      key,
++      type: 'unknown',
++      message: `Answer key "${key}" does not match any question in the ${assessmentType} registry; the value was retained unchanged.`,
++    })
++  }
++  return records
++}
+diff --git a/src/lib/services/gap-analysis.service.ts b/src/lib/services/gap-analysis.service.ts
+index 03074e0..c786c8f 100644
+--- a/src/lib/services/gap-analysis.service.ts
++++ b/src/lib/services/gap-analysis.service.ts
+@@ -33,7 +33,9 @@ export interface GapAnalysisRow {
+   label: string
+   gapLabel: string | null
+   severity: FieldSeverity
+-  source: 'registry' | 'snapshot' | 'unmapped'
++  /** 'unknown' = offline-sync drift: an answer key mappable to neither the
++   * snapshot nor the live registry (P5 offline ingestion reports it). */
++  source: 'registry' | 'snapshot' | 'unmapped' | 'unknown'
+   recommendation: string | null
+   unanswered: boolean
+ }
+@@ -191,6 +193,10 @@ export async function analyzeGaps(
+  * against (the live `QuestionSnapshot` for fresh writes, or the stored
+  * `RapidAssessment.questionSnapshot` JSON for re-derivation), resolving
+  * severities against ALL live registry rows of the type.
++ *
++ * Answered keys absent from the snapshot structure (P5 never-reject offline
++ * drift, persisted verbatim in `answers`) self-derive as source-'unknown'
++ * informational rows inside the engine — never scored.
+  */
+ export async function analyzeGapsFromSnapshot(
+   assessmentType: AssessmentType,
+diff --git a/src/lib/services/rapid-assessment.service.ts b/src/lib/services/rapid-assessment.service.ts
+index 45f2e55..cee468d 100644
+--- a/src/lib/services/rapid-assessment.service.ts
++++ b/src/lib/services/rapid-assessment.service.ts
+@@ -7,6 +7,11 @@ import {
+   AssessmentTypeName,
+ } from '@/lib/validation/rapid-assessment'
+ import { buildAssessmentSchema } from '@/lib/validation/dynamic-assessment'
++import {
++  ingestOfflineAnswers,
++  toOfflineSyncWarnings,
++  type OfflineSyncWarning,
++} from '@/lib/questions/offline-answers'
+ import {
+   analyzeGaps,
+   analyzeGapsFromSnapshot,
+@@ -82,6 +87,52 @@ function validateAnswersAgainstSnapshot(
+   return parsed.data as Record<string, unknown>
+ }
+ 
++/** Offline-sync payloads additionally declare the client's registry view. */
++export type CreateOfflineRapidAssessmentInput = CreateRapidAssessmentInput & {
++  questionKeys?: readonly string[] | null
++  /** Client-generated row id (Dexie uuid) for idempotent batch replay. */
++  offlineId?: string | null
++}
++
++export type UpdateOfflineRapidAssessmentInput = UpdateRapidAssessmentInput & {
++  questionKeys?: readonly string[] | null
++}
++
++/** Offline create/update outcome: the row plus its drift warnings. */
++export interface OfflineAssessmentSyncResult {
++  assessment: RapidAssessmentWithData
++  warnings: OfflineSyncWarning[]
++}
++
++/**
++ * Never-reject re-validation of INGESTED offline answers against the fresh
++ * snapshot (P5): `added` questions are treated as unanswered/optional — a
++ * missing required question is drift, not an error — and any residual
++ * value-level findings are logged, never thrown. Offline field data wins;
++ * the INGESTED map (retained unknown keys included) is what gets stored.
++ */
++function relaxedValidateOfflineAnswers(
++  snapshot: QuestionSnapshot,
++  answers: Record<string, unknown>,
++  addedKeys: readonly string[]
++): void {
++  const questionSet = snapshotAsQuestionSet(snapshot)
++  const relaxed = {
++    sections: questionSet.sections.map((section) => ({
++      questions: section.questions.map((question) =>
++        addedKeys.includes(question.key) ? { ...question, required: false } : question
++      ),
++    })),
++  }
++  const parsed = buildAssessmentSchema(relaxed).safeParse(answers)
++  if (!parsed.success) {
++    console.warn(
++      '[RapidAssessmentService] offline answers retained despite validation findings:',
++      JSON.stringify(parsed.error.flatten().fieldErrors)
++    )
++  }
++}
++
+ export class RapidAssessmentService {
+   static async create(
+     input: CreateRapidAssessmentInput,
+@@ -170,6 +221,231 @@ export class RapidAssessmentService {
+     return rapidAssessment
+   }
+ 
++  /**
++   * Creates an assessment from an OFFLINE submission (P5) — the never-reject
++   * mirror of `create`. The CURRENT live snapshot is frozen exactly like the
++   * online path; answers are then INGESTED instead of strictly validated:
++   * every non-null answer persists verbatim (MULTI_SELECT JSON-string
++   * replays normalized), and drift is reported as warnings —
++   *   added (unanswered new questions) / removed (now-inactive keys) /
++   *   unknown (keys with no registry row).
++   *
++   * The row records the CLIENT's `structureVersion` (the handshake the
++   * answers were captured against; falls back to the frozen snapshot's).
++   * Registry drift NEVER rejects the submission; only shape-level failures
++   * (unknown type, unassigned entity, empty registry) throw.
++   */
++  static async createOfflineAssessment(
++    input: CreateOfflineRapidAssessmentInput,
++    createdBy: string,
++    clientStructureVersion?: number | null
++  ): Promise<OfflineAssessmentSyncResult> {
++    const { type, entityId, answers, offlineId } = input
++
++    // Verify user is assigned to this entity (same gate as the online path).
++    await this.validateEntityAssignment(createdBy, entityId)
++
++    const entity = await prisma.entity.findUnique({
++      where: { id: entityId },
++      select: { autoApproveEnabled: true }
++    })
++
++    if (!entity) {
++      throw new Error('Entity not found')
++    }
++
++    const verificationStatus = entity.autoApproveEnabled ? 'AUTO_VERIFIED' : 'SUBMITTED'
++
++    // Freeze the per-assessment snapshot from the registry service (single
++    // source) — identical to `create`, so the drift report is computed against
++    // the registry this row actually froze.
++    const questionSnapshot = await QuestionRegistryService.getSnapshot(type)
++    if (snapshotQuestionCount(questionSnapshot) === 0) {
++      throw new Error(`No active registry questions found for assessment type ${type}`)
++    }
++
++    // Ingest the offline answers against the frozen snapshot + ALL live
++    // registry rows (active + inactive) for drift classification.
++    const registryRows = await prisma.question.findMany({
++      where: { assessmentType: type },
++      select: { questionKey: true, isActive: true },
++    })
++    const { answers: ingestedAnswers, warnings } = ingestOfflineAnswers(
++      type,
++      answers ?? {},
++      questionSnapshot,
++      registryRows
++    )
++
++    // Diagnostics-only re-validation (added questions optional; never throws).
++    relaxedValidateOfflineAnswers(questionSnapshot, ingestedAnswers, warnings.added)
++
++    // Derive gap analysis + priority against the frozen snapshot; answered
++    // keys outside the snapshot self-derive as source-'unknown' rows.
++    const gapAnalysis = await analyzeGapsFromSnapshot(type, questionSnapshot, ingestedAnswers)
++    const priority = derivePriorityFromGaps(type, gapAnalysis)
++
++    const rapidAssessment = await prisma.rapidAssessment.create({
++      data: {
++        // Idempotent batch replay: honor the client's row id when supplied.
++        ...(offlineId ? { id: offlineId } : {}),
++        rapidAssessmentType: type,
++        rapidAssessmentDate: input.rapidAssessmentDate,
++        assessorId: createdBy,
++        assessorName: input.assessorName,
++        entityId: input.entityId,
++        incidentId: input.incidentId,
++        location: input.location,
++        coordinates: input.coordinates as unknown as Prisma.InputJsonValue | undefined,
++        priority,
++        mediaAttachments: input.mediaAttachments || [],
++        versionNumber: 1,
++        isOfflineCreated: true,
++        syncStatus: 'SYNCED',
++        verificationStatus,
++        verifiedAt: entity.autoApproveEnabled ? new Date() : null,
++        answers: ingestedAnswers as unknown as Prisma.InputJsonValue,
++        // Client handshake: the structure the answers were captured against
++        // (spec: row records the client's version; snapshot JSON carries its own).
++        structureVersion: clientStructureVersion ?? questionSnapshot.structureVersion,
++        contentVersion: questionSnapshot.contentVersion,
++        questionSnapshot: questionSnapshot as unknown as Prisma.InputJsonValue,
++        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
++      },
++    })
++
++    // Response-scoped drift records (never persisted to a column — the
++    // client surfaces them and gapAnalysis rows carry source-'unknown').
++    const warningRecords = toOfflineSyncWarnings(rapidAssessment.id, type, warnings)
++
++    // Recalculate incident severity bottom-up
++    if (input.incidentId) {
++      try {
++        const { incidentSeverityService } = await import('@/lib/services/incident-severity.service');
++        await incidentSeverityService.recalculateIncidentSeverity(input.incidentId)
++      } catch {}
++    }
++
++    try {
++      const { ActionSignalService } = await import('@/lib/services/action-signal.service');
++      await ActionSignalService.evaluateAndGenerate({
++        trigger: entity.autoApproveEnabled ? 'assessment-verified' : 'assessment-created',
++        entityId: input.entityId,
++        incidentId: input.incidentId,
++        assessmentId: rapidAssessment.id,
++        assessmentType: type,
++        assessmentPriority: rapidAssessment.priority,
++      });
++    } catch (e) {
++      console.error('[RapidAssessmentService] signal hook error:', e);
++    }
++
++    return { assessment: rapidAssessment, warnings: warningRecords }
++  }
++
++  /**
++   * Updates an assessment from an OFFLINE submission (P5) — the never-reject
++   * mirror of `update`. Ownership + type-change + transition validations are
++   * identical to the online path; answers go through the same ingestion as
++   * `createOfflineAssessment` (full replace, drift warned, never rejected).
++   */
++  static async updateOfflineAssessment(
++    id: string,
++    input: UpdateOfflineRapidAssessmentInput,
++    updatedByAssessor: string,
++    clientStructureVersion?: number | null
++  ): Promise<OfflineAssessmentSyncResult> {
++    const existingAssessment = await prisma.rapidAssessment.findUnique({
++      where: { id },
++      select: {
++        id: true,
++        assessorId: true,
++        rapidAssessmentType: true,
++      }
++    })
++    if (!existingAssessment) {
++      throw new Error('Assessment not found')
++    }
++
++    if (existingAssessment.assessorId !== updatedByAssessor) {
++      throw new Error('Not authorized to update this assessment')
++    }
++
++    // `questionKeys` is a client-view declaration — destructured OUT so it can
++    // never leak into the Prisma update payload (unknown-argument runtime error).
++    const { type, answers, questionKeys: _clientQuestionKeys, ...baseData } = input
++
++    const assessmentType = existingAssessment.rapidAssessmentType as AssessmentTypeName
++    if (type !== assessmentType) {
++      throw new ApiError(
++        `Assessment type cannot change on update (stored ${assessmentType}, payload ${type})`,
++        422
++      )
++    }
++
++    // Answers are a full replace through offline ingestion: freeze the
++    // CURRENT snapshot, reconcile drift, re-derive gap analysis + priority.
++    const snapshot = await QuestionRegistryService.getSnapshot(assessmentType)
++    if (snapshotQuestionCount(snapshot) === 0) {
++      throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
++    }
++    const registryRows = await prisma.question.findMany({
++      where: { assessmentType: assessmentType },
++      select: { questionKey: true, isActive: true },
++    })
++    const { answers: ingestedAnswers, warnings } = ingestOfflineAnswers(
++      assessmentType,
++      answers ?? {},
++      snapshot,
++      registryRows
++    )
++    relaxedValidateOfflineAnswers(snapshot, ingestedAnswers, warnings.added)
++    const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, ingestedAnswers)
++    const priority = derivePriorityFromGaps(assessmentType, gapAnalysis)
++
++    const { verificationStatus, ...safeBaseData } = baseData as Omit<UpdateOfflineRapidAssessmentInput, 'type' | 'answers' | 'questionKeys'> & {
++      verificationStatus?: UpdateOfflineRapidAssessmentInput['verificationStatus']
++    }
++    const statusUpdate: Record<string, unknown> = {}
++    if (verificationStatus !== undefined) {
++      statusUpdate.verificationStatus = verificationStatus
++      if (verificationStatus === 'SUBMITTED') {
++        statusUpdate.rejectionReason = null
++        statusUpdate.rejectionFeedback = null
++        statusUpdate.verifiedAt = null
++        statusUpdate.verifiedBy = null
++      }
++    }
++
++    const warningRecords = toOfflineSyncWarnings(id, assessmentType, warnings)
++    const updatedAssessment = await prisma.rapidAssessment.update({
++      where: { id },
++      data: {
++        ...(safeBaseData as Record<string, never>),
++        ...statusUpdate,
++        answers: ingestedAnswers as unknown as Prisma.InputJsonValue,
++        // Client handshake (spec): record the version the answers were
++        // captured against; the frozen snapshot JSON carries its own.
++        structureVersion: clientStructureVersion ?? snapshot.structureVersion,
++        contentVersion: snapshot.contentVersion,
++        questionSnapshot: snapshot as unknown as Prisma.InputJsonValue,
++        priority,
++        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
++        updatedAt: new Date()
++      }
++    })
++
++    // Recalculate incident severity bottom-up
++    if (updatedAssessment.incidentId) {
++      try {
++        const { incidentSeverityService } = await import('@/lib/services/incident-severity.service');
++        await incidentSeverityService.recalculateIncidentSeverity(updatedAssessment.incidentId)
++      } catch {}
++    }
++
++    return { assessment: updatedAssessment, warnings: warningRecords }
++  }
++
+   static async findById(id: string): Promise<RapidAssessmentWithData | null> {
+     const assessment = await prisma.rapidAssessment.findUnique({
+       where: { id },
+diff --git a/src/lib/services/sync-processing.service.ts b/src/lib/services/sync-processing.service.ts
+index 6f9a431..4b77fda 100644
+--- a/src/lib/services/sync-processing.service.ts
++++ b/src/lib/services/sync-processing.service.ts
+@@ -1,5 +1,8 @@
+ import { prisma } from '@/lib/db/client'
+ import { SyncStatus } from '@prisma/client'
++import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
++import type { CreateRapidAssessmentInput } from '@/lib/validation/rapid-assessment'
++import type { OfflineSyncWarning } from '@/lib/questions/offline-answers'
+ 
+ interface SyncChange {
+   type: 'assessment' | 'response' | 'entity'
+@@ -16,6 +19,8 @@ interface SyncResult {
+   status: 'success' | 'conflict' | 'failed'
+   message?: string
+   conflictData?: unknown
++  /** P5: per-item offline registry-drift warnings (assessments only). */
++  warnings?: OfflineSyncWarning[]
+ }
+ 
+ export class SyncProcessingService {
+@@ -61,39 +66,73 @@ export class SyncProcessingService {
+     const data = change.data
+ 
+     if (change.action === 'create') {
++      // Idempotent replay (ruling 7): the queue may re-send a create whose
++      // server write already landed (e.g. the response was lost offline).
++      // The row id the offline path creates with — never a conflict.
++      const rowId = change.offlineId || change.entityUuid
+       const existing = await prisma.rapidAssessment.findUnique({
+-        where: { id: change.entityUuid }
++        where: { id: rowId },
++        select: { id: true, assessorId: true }
+       })
+ 
+       if (existing) {
+-        return SyncProcessingService.handleConflict(change, existing)
++        // The row id is client-controlled — never echo a foreign row as an
++        // idempotent success (that would silently drop the syncing user's
++        // own submission).
++        if (existing.assessorId !== userId) {
++          return {
++            offlineId: change.offlineId,
++            serverId: '',
++            status: 'failed',
++            message: 'Not authorized to sync this assessment'
++          }
++        }
++        return {
++          offlineId: change.offlineId,
++          serverId: existing.id,
++          status: 'success',
++          message: 'Assessment already synced'
++        }
+       }
+ 
+-      const assessment = await prisma.rapidAssessment.create({
+-        data: {
+-          id: change.offlineId || change.entityUuid,
+-          rapidAssessmentType: (data.type as any) || 'HEALTH',
+-          rapidAssessmentDate: data.rapidAssessmentDate ? new Date(data.rapidAssessmentDate as string) : new Date(),
+-          assessorId: userId,
++      // P5: delegate to the offline ingestion path for full registry
++      // processing — CURRENT-snapshot freeze, drift reconciliation with
++      // warnings (never-reject), gap analysis + derived priority. Shape-level
++      // failures (unknown type, unassigned entity, empty registry) throw and
++      // surface as failed results through processBatch's catch.
++      const { assessment, warnings } = await RapidAssessmentService.createOfflineAssessment(
++        {
++          type: (data.type || 'HEALTH') as CreateRapidAssessmentInput['type'],
++          rapidAssessmentDate: data.rapidAssessmentDate
++            ? new Date(data.rapidAssessmentDate as string)
++            : new Date(),
+           assessorName: (data.assessorName as string) || 'Unknown',
+-          entityId: change.entityUuid,
++          ...(data.location ? { location: data.location as string } : {}),
++          ...(data.coordinates
++            ? { coordinates: data.coordinates as CreateRapidAssessmentInput['coordinates'] }
++            : {}),
++          ...(data.mediaAttachments
++            ? { mediaAttachments: data.mediaAttachments as string[] }
++            : {}),
++          entityId: (data.entityId as string) || change.entityUuid,
+           incidentId: (data.incidentId as string) || change.entityUuid,
+-          location: (data.location as string) || null,
+-          coordinates: data.coordinates as any || null,
+-          priority: (data.priority as any) || 'MEDIUM',
+-          mediaAttachments: (data.mediaAttachments as any) || [],
+-          versionNumber: change.versionNumber,
+-          isOfflineCreated: true,
+-          syncStatus: 'SYNCED' as SyncStatus,
+-          verificationStatus: 'DRAFT'
+-        }
+-      })
++          answers:
++            data.answers && typeof data.answers === 'object' && !Array.isArray(data.answers)
++              ? (data.answers as Record<string, unknown>)
++              : {},
++          questionKeys: Array.isArray(data.questionKeys) ? (data.questionKeys as string[]) : null,
++          offlineId: change.offlineId || change.entityUuid,
++        },
++        userId,
++        typeof data.structureVersion === 'number' ? data.structureVersion : null
++      )
+ 
+       return {
+         offlineId: change.offlineId,
+         serverId: assessment.id,
+         status: 'success',
+-        message: 'Assessment created from offline sync'
++        message: 'Assessment created from offline sync',
++        ...(warnings.length > 0 ? { warnings } : {})
+       }
+     }
+ 
+@@ -113,6 +152,43 @@ export class SyncProcessingService {
+         return SyncProcessingService.handleConflict(change, existing)
+       }
+ 
++      // P5: answers-carrying updates go through the never-reject ingestion
++      // path (lenient re-ingest, CURRENT-snapshot re-freeze, re-derived
++      // priority + gapAnalysis, client structureVersion recorded).
++      if (data.answers && typeof data.answers === 'object' && !Array.isArray(data.answers)) {
++        const { assessment, warnings } = await RapidAssessmentService.updateOfflineAssessment(
++          change.entityUuid,
++          {
++            type: (data.type || existing.rapidAssessmentType) as CreateRapidAssessmentInput['type'],
++            rapidAssessmentDate: data.rapidAssessmentDate
++              ? new Date(data.rapidAssessmentDate as string)
++              : undefined,
++            assessorName: (data.assessorName as string) || undefined,
++            location: (data.location as string) || undefined,
++            coordinates: data.coordinates as CreateRapidAssessmentInput['coordinates'],
++            mediaAttachments: data.mediaAttachments as string[],
++            entityId: (data.entityId as string) || undefined,
++            incidentId: (data.incidentId as string) || undefined,
++            answers: data.answers as Record<string, unknown>,
++          },
++          userId,
++          typeof data.structureVersion === 'number' ? data.structureVersion : null
++        )
++
++        await prisma.rapidAssessment.update({
++          where: { id: change.entityUuid },
++          data: { versionNumber: change.versionNumber, syncStatus: 'SYNCED' as SyncStatus }
++        })
++
++        return {
++          offlineId: change.offlineId,
++          serverId: assessment.id,
++          status: 'success',
++          message: 'Assessment updated from offline sync',
++          ...(warnings.length > 0 ? { warnings } : {})
++        }
++      }
++
+       const updated = await prisma.rapidAssessment.update({
+         where: { id: change.entityUuid },
+         data: {
+diff --git a/src/lib/sync/engine.ts b/src/lib/sync/engine.ts
+index f7afabe..7ab7114 100644
+--- a/src/lib/sync/engine.ts
++++ b/src/lib/sync/engine.ts
+@@ -1,5 +1,6 @@
+ import { offlineDB, SyncQueueItem } from '../db/offline';
+ import { apiPost, extractArray } from '@/lib/api';
++import type { OfflineSyncWarning } from '@/lib/questions/offline-answers';
+ 
+ export interface SyncChange {
+   type: 'assessment' | 'response' | 'entity';
+@@ -16,8 +17,10 @@ export interface SyncResult {
+   status: 'success' | 'conflict' | 'failed';
+   message?: string;
+   conflictData?: any;
++  warnings?: OfflineSyncWarning[];
+ }
+ 
++
+ export interface SyncBatchResult {
+   successful: SyncResult[];
+   conflicts: SyncResult[];
+@@ -305,6 +308,13 @@ export class SyncEngine {
+     try {
+       // Update the main entity with server ID and sync status
+       await this.updateEntitySyncStatus(queueItem, syncResult.serverId, 'synced');
++
++      // P5: surface + persist server-reported registry-drift warnings for
++      // offline-synced assessments (console summary + Dexie record).
++      if (syncResult.warnings && syncResult.warnings.length > 0) {
++        this.reportSyncWarnings(queueItem, syncResult.warnings);
++        await this.persistSyncWarnings(queueItem, syncResult.warnings);
++      }
+       
+       // Remove from sync queue
+       await offlineDB.removeSyncQueueItem(queueItem.uuid);
+@@ -318,6 +328,37 @@ export class SyncEngine {
+     }
+   }
+ 
++  /** Logs a human-readable drift summary for one synced assessment. */
++  private reportSyncWarnings(
++    queueItem: SyncQueueItem & { decryptedData: any },
++    warnings: OfflineSyncWarning[]
++  ): void {
++    const summarize = (type: OfflineSyncWarning['type']) =>
++      warnings.filter(w => w.type === type).map(w => w.key).join(', ') || 'none';
++    console.warn(
++      `[SyncEngine] offline sync drift for assessment ${queueItem.decryptedData?.id ?? queueItem.entityUuid}: ` +
++      `${warnings.length} warning(s) — added: [${summarize('added')}], ` +
++      `removed: [${summarize('removed')}], unknown: [${summarize('unknown')}]`
++    );
++    for (const warning of warnings) {
++      console.warn(`[SyncEngine] drift warning (${warning.type}): ${warning.message}`);
++    }
++  }
++
++  /** Persists drift warnings onto the Dexie assessment record. */
++  private async persistSyncWarnings(
++    queueItem: SyncQueueItem & { decryptedData: any },
++    warnings: OfflineSyncWarning[]
++  ): Promise<void> {
++    try {
++      if (queueItem.type !== 'assessment' || warnings.length === 0) return;
++      const assessmentUuid = queueItem.decryptedData?.id || queueItem.entityUuid;
++      await offlineDB.updateAssessment(assessmentUuid, { warnings });
++    } catch (error) {
++      console.error('Error persisting sync warnings:', error);
++    }
++  }
++
+   private async handleSyncConflict(
+     queueItem: SyncQueueItem & { decryptedData: any }, 
+     syncResult: SyncResult
+diff --git a/tests/api/offline-sync.test.ts b/tests/api/offline-sync.test.ts
+new file mode 100644
+index 0000000..12ae9db
+--- /dev/null
++++ b/tests/api/offline-sync.test.ts
+@@ -0,0 +1,521 @@
++import { POST as syncBatch } from '@/app/api/v1/sync/batch/route'
++import { POST as onlineCreate } from '@/app/api/v1/rapid-assessments/route'
++import { SyncProcessingService } from '@/lib/services/sync-processing.service'
++import { makeRequest, tokenFor, type AuthedUser } from '../helpers/api'
++import {
++  createUser,
++  createEntity,
++  createIncident,
++  createEntityAssignment,
++  ensureQuestionRegistry,
++} from '../factories'
++import { testDb, truncateTestDb } from '../helpers/test-db'
++
++/**
++ * P5 — offline sync is NEVER-REJECT for registry drift, exercised through
++ * the real batch route + processing service:
++ *
++ * - drifted creates are ACCEPTED: every non-null answer persists VERBATIM
++ *   (removed/unknown keys included), warnings classify the drift
++ *   (added = unanswered active keys, removed = answered inactive keys,
++ *   unknown = answered keys with no registry row), and the row records the
++ *   CLIENT's structureVersion handshake
++ * - unknown/removed answered keys self-derive source-'unknown' gap rows —
++ *   never in gapFields/severity (intersection only)
++ * - MULTI_SELECT JSON-string replays normalize to arrays (BH-6)
++ * - create replays are idempotent ("already synced", never a conflict)
++ * - answers-carrying updates delegate to the never-reject ingestion path
++ * - shape-level failures still fail: unassigned entity (route 403 / service
++ *   failed → 207), foreign ownership on update
++ */
++
++describe('P5 offline sync ingestion (never-reject)', () => {
++  let assessor: AuthedUser
++  let entityId: string
++  let incidentId: string
++  let stableKey: string
++  let multiSelectKey: string | null
++  let activeWashKeys: string[]
++
++  const removedKey = 'legacyRemovedKey'
++
++  beforeAll(async () => {
++    await truncateTestDb()
++    await ensureQuestionRegistry()
++    assessor = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
++    const entity = await createEntity()
++    const incident = await createIncident({ createdBy: assessor.id })
++    entityId = entity.id
++    incidentId = incident.id
++    await createEntityAssignment({ userId: assessor.id, entityId, assignedBy: assessor.id })
++
++    const washQuestions = await testDb.question.findMany({
++      where: { assessmentType: 'WASH', isActive: true },
++      select: { questionKey: true, questionType: true },
++      orderBy: [{ order: 'asc' }],
++    })
++    activeWashKeys = washQuestions.map((q) => q.questionKey)
++    stableKey = activeWashKeys[0]
++    multiSelectKey =
++      washQuestions.find((q) => q.questionType === 'MULTI_SELECT')?.questionKey ?? null
++
++    // A retired question: registry row exists but is INACTIVE → answering it
++    // classifies as `removed` (and, being absent from the active-only
++    // snapshot, self-derives a source-'unknown' gap row).
++    const washSection = await testDb.questionSection.findFirstOrThrow({
++      where: { assessmentType: 'WASH' },
++    })
++    await testDb.question.create({
++      data: {
++        questionKey: removedKey,
++        assessmentType: 'WASH',
++        sectionId: washSection.id,
++        questionType: 'BOOLEAN',
++        label: 'Retired question',
++        category: 'CONTEXT',
++        order: 999,
++        isActive: false,
++      },
++    })
++  })
++
++  afterAll(async () => {
++    await truncateTestDb()
++    await testDb.$disconnect()
++  })
++
++  function driftedAnswers() {
++    return {
++      [stableKey]: 'stable answer',
++      [removedKey]: 'retained verbatim',
++      clientOnlyMysteryKey: true,
++      ...(multiSelectKey ? { [multiSelectKey]: '["Borehole"]' } : {}),
++    }
++  }
++
++  function driftedData(offlineId: string) {
++    return {
++      type: 'WASH',
++      rapidAssessmentDate: new Date().toISOString(),
++      assessorName: 'Field Officer',
++      entityId,
++      incidentId,
++      location: 'Offline location',
++      questionKeys: [stableKey, removedKey],
++      structureVersion: 1, // deliberately stale — recorded as the client handshake
++      answers: driftedAnswers(),
++      id: offlineId,
++    }
++  }
++
++  async function postBatch(changes: unknown[], user: AuthedUser = assessor) {
++    return syncBatch(
++      makeRequest('POST', '/api/v1/sync/batch', {
++        body: { changes },
++        token: tokenFor(user),
++      })
++    )
++  }
++
++  test('drifted offline create is accepted: verbatim answers, warnings, client version handshake', async () => {
++    const offlineId = `offline-drift-${Date.now()}`
++    const response = await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        data: driftedData(offlineId),
++        versionNumber: 1,
++        entityUuid: entityId,
++        offlineId,
++      },
++    ])
++    expect(response.status).toBe(200)
++    const body = await response.json()
++
++    // Original response contract + per-item warnings.
++    expect(body.data.summary).toEqual({ totalProcessed: 1, successful: 1, conflicts: 0, failed: 0 })
++    const result = body.data.results[0]
++    expect(result).toMatchObject({
++      offlineId,
++      serverId: offlineId,
++      status: 'success',
++      message: 'Assessment created from offline sync',
++    })
++
++    const warningTypes = (w: { type: string }) => w.type
++    const warnings = result.warnings as Array<{ type: string; key: string }>
++    expect(warnings.map(warningTypes)).toContain('removed')
++    expect(warnings.find((w) => w.key === removedKey)).toMatchObject({ type: 'removed' })
++    expect(warnings.find((w) => w.key === 'clientOnlyMysteryKey')).toMatchObject({ type: 'unknown' })
++    // added = active registry keys the ANSWERS lack (documented proxy) — every
++    // active key except the stable (+ multi-select) ones answered above.
++    const answeredActive = multiSelectKey ? 2 : 1
++    const added = warnings.filter((w) => w.type === 'added')
++    expect(added).toHaveLength(activeWashKeys.length - answeredActive)
++
++    const stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    expect(stored).toMatchObject({
++      isOfflineCreated: true,
++      syncStatus: 'SYNCED',
++      verificationStatus: 'SUBMITTED',
++      structureVersion: 1, // the CLIENT's handshake, not the current registry's
++    })
++    // Never-reject: removed + unknown answers are KEPT verbatim.
++    const storedAnswers = stored.answers as Record<string, unknown>
++    expect(storedAnswers[stableKey]).toBe('stable answer')
++    expect(storedAnswers[removedKey]).toBe('retained verbatim')
++    expect(storedAnswers.clientOnlyMysteryKey).toBe(true)
++    if (multiSelectKey) {
++      // MULTI_SELECT JSON-string replay normalizes to an array.
++      expect(storedAnswers[multiSelectKey]).toEqual(['Borehole'])
++    }
++
++    // Unknown drift renders as informational rows — never scored.
++    const gap = stored.gapAnalysis as {
++      gapFields: string[]
++      severity: string
++      rows?: Array<{ key: string; source: string; unanswered: boolean }>
++    }
++    expect(gap.gapFields).toEqual([])
++    expect(gap.severity).toBe('LOW')
++    const unknownRows = (gap.rows ?? []).filter((row) => row.source === 'unknown')
++    expect(unknownRows.map((row) => row.key).sort()).toEqual(['clientOnlyMysteryKey', removedKey].sort())
++    expect(unknownRows.every((row) => !row.unanswered)).toBe(true)
++    // Added questions are never injected.
++    expect(storedAnswers).not.toHaveProperty(added[0].key)
++  })
++
++  test('create replay is idempotent: "already synced" success, never a conflict', async () => {
++    const offlineId = `offline-replay-${Date.now()}`
++    const change = {
++      type: 'assessment',
++      action: 'create',
++      data: driftedData(offlineId),
++      versionNumber: 1,
++      entityUuid: entityId,
++      offlineId,
++    }
++    await postBatch([change])
++    const replay = await postBatch([change])
++    expect(replay.status).toBe(200)
++    const body = await replay.json()
++    expect(body.data.summary).toEqual({ totalProcessed: 1, successful: 1, conflicts: 0, failed: 0 })
++    expect(body.data.results[0]).toMatchObject({
++      serverId: offlineId,
++      status: 'success',
++      message: 'Assessment already synced',
++    })
++    expect(body.data.results[0].warnings).toBeUndefined()
++    expect(await testDb.rapidAssessment.count({ where: { id: offlineId } })).toBe(1)
++  })
++
++  test('route still 403s for unassigned entity uuids (shape gate, not drift)', async () => {
++    const foreignEntity = await createEntity()
++    const response = await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        data: { ...driftedData(`offline-403-${Date.now()}`), entityId: foreignEntity.id },
++        versionNumber: 1,
++        entityUuid: foreignEntity.id,
++        offlineId: `offline-403-${Date.now()}`,
++      },
++    ])
++    expect(response.status).toBe(403)
++  })
++
++  test('shape-level service failures surface as failed results (207 when all fail)', async () => {
++    const foreignEntity = await createEntity()
++    const response = await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        // entityUuid passes the route gate; data.entityId is unassigned →
++        // createOfflineAssessment throws → failed result.
++        data: { ...driftedData(`offline-207-${Date.now()}`), entityId: foreignEntity.id },
++        versionNumber: 1,
++        entityUuid: entityId,
++        offlineId: `offline-207-${Date.now()}`,
++      },
++    ])
++    expect(response.status).toBe(207)
++    const body = await response.json()
++    expect(body.data.summary).toEqual({ totalProcessed: 1, successful: 0, conflicts: 0, failed: 1 })
++    expect(body.data.results[0].status).toBe('failed')
++  })
++
++  test('answers-carrying updates delegate to ingestion: replace, re-warn, re-stamp version', async () => {
++    const offlineId = `offline-update-${Date.now()}`
++    const createChange = {
++      type: 'assessment',
++      action: 'create',
++      data: driftedData(offlineId),
++      versionNumber: 1,
++      entityUuid: entityId,
++      offlineId,
++    }
++    await postBatch([createChange])
++
++    // Update through the processing service (the route's entity gate keys on
++    // entity uuids; assessment updates resolve the row by change.entityUuid).
++    const results = await SyncProcessingService.processBatch(
++      [
++        {
++          type: 'assessment',
++          action: 'update',
++          data: {
++            type: 'WASH',
++            assessorName: 'Field Officer',
++            entityId,
++            incidentId,
++            structureVersion: 2,
++            answers: { [stableKey]: 'updated answer', freshMysteryKey: 7 },
++          },
++          versionNumber: 2,
++          entityUuid: offlineId,
++          offlineId,
++        },
++      ],
++      assessor.id
++    )
++    expect(results[0]).toMatchObject({
++      serverId: offlineId,
++      status: 'success',
++      message: 'Assessment updated from offline sync',
++    })
++    const warnings = results[0].warnings as Array<{ type: string; key: string }>
++    expect(warnings.find((w) => w.key === 'freshMysteryKey')).toMatchObject({ type: 'unknown' })
++    expect(warnings.filter((w) => w.type === 'removed')).toEqual([]) // retired key no longer answered
++
++    const stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    expect(stored.answers).toEqual({ [stableKey]: 'updated answer', freshMysteryKey: 7 })
++    expect(stored.structureVersion).toBe(2) // client handshake re-stamped
++    expect(stored.versionNumber).toBe(2)
++    expect(stored.syncStatus).toBe('SYNCED')
++    const gap = stored.gapAnalysis as { rows?: Array<{ key: string; source: string }> }
++    expect(gap.rows?.find((row) => row.key === 'freshMysteryKey')).toMatchObject({ source: 'unknown' })
++  })
++
++  test('foreign assessors cannot update through the offline path (ownership guard)', async () => {
++    const offlineId = `offline-owner-${Date.now()}`
++    await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        data: driftedData(offlineId),
++        versionNumber: 1,
++        entityUuid: entityId,
++        offlineId,
++      },
++    ])
++    const other = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
++    const results = await SyncProcessingService.processBatch(
++      [
++        {
++          type: 'assessment',
++          action: 'update',
++          data: { type: 'WASH', answers: { [stableKey]: 'hijack' } },
++          versionNumber: 2,
++          entityUuid: offlineId,
++          offlineId,
++        },
++      ],
++      other.id
++    )
++    expect(results[0].status).toBe('failed')
++    expect(results[0].message).toMatch(/not authorized/i)
++  })
++
++  test('replay guard refuses foreign rows: a client-controlled offlineId never echoes another assessor\'s row', async () => {
++    const offlineId = `offline-replay-guard-${Date.now()}`
++    await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        data: driftedData(offlineId),
++        versionNumber: 1,
++        entityUuid: entityId,
++        offlineId,
++      },
++    ])
++    const other = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
++    const results = await SyncProcessingService.processBatch(
++      [
++        {
++          type: 'assessment',
++          action: 'create',
++          data: driftedData(offlineId), // same row id — replay path
++          versionNumber: 1,
++          entityUuid: entityId,
++          offlineId,
++        },
++      ],
++      other.id
++    )
++    expect(results[0].status).toBe('failed')
++    expect(results[0].message).toMatch(/not authorized/i)
++    // The original row is untouched.
++    const stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    expect(stored.assessorId).toBe(assessor.id)
++  })
++
++  test('offline creates on auto-approve entities mirror the online path: AUTO_VERIFIED + verifiedAt', async () => {
++    const autoEntity = await createEntity({ autoApproveEnabled: true })
++    await createEntityAssignment({ userId: assessor.id, entityId: autoEntity.id, assignedBy: assessor.id })
++    const offlineId = `offline-auto-${Date.now()}`
++    const response = await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        data: { ...driftedData(offlineId), entityId: autoEntity.id },
++        versionNumber: 1,
++        entityUuid: autoEntity.id,
++        offlineId,
++      },
++    ])
++    expect(response.status).toBe(200)
++    const stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    expect(stored.verificationStatus).toBe('AUTO_VERIFIED')
++    expect(stored.verifiedAt).not.toBeNull()
++  })
++
++  test('online create tolerates the form\'s P5 payload fields (zod strips, derivation unchanged)', async () => {
++    // Build a fully valid HEALTH answers map from the live registry so the
++    // strict online path accepts it, then attach the offline-shaped fields.
++    const healthQuestions = await testDb.question.findMany({
++      where: { assessmentType: 'HEALTH', isActive: true },
++      select: { questionKey: true, questionType: true, options: true },
++    })
++    const answers: Record<string, unknown> = {}
++    for (const question of healthQuestions) {
++      const options = (question.options ?? []) as Array<{ value: string }>
++      switch (question.questionType) {
++        case 'BOOLEAN':
++          answers[question.questionKey] = true
++          break
++        case 'NUMBER':
++          answers[question.questionKey] = 1
++          break
++        case 'SINGLE_CHOICE':
++          if (options[0]) answers[question.questionKey] = options[0].value
++          break
++        case 'MULTI_SELECT':
++          if (options[0]) answers[question.questionKey] = [options[0].value]
++          break
++        case 'TEXT_LONG':
++        case 'TEXT':
++          answers[question.questionKey] = 'online'
++          break
++      }
++    }
++    const body = (structureVersion: number | null) => ({
++      type: 'HEALTH',
++      rapidAssessmentDate: new Date().toISOString(),
++      assessorName: 'Field Officer',
++      entityId,
++      incidentId,
++      location: 'Online location',
++      answers,
++      questionKeys: Object.keys(answers),
++      structureVersion,
++    })
++
++    for (const structureVersion of [null, 99] as const) {
++      const response = await onlineCreate(
++        makeRequest('POST', '/api/v1/rapid-assessments', { body: body(structureVersion), token: tokenFor(assessor) })
++      )
++      expect(response.status).toBe(201)
++      const created = await response.json()
++      const stored = await testDb.rapidAssessment.findUniqueOrThrow({
++        where: { id: created.data.id },
++      })
++      expect(stored.isOfflineCreated).toBe(false)
++      // The P5 fields never reach derivation: the row stamps the CURRENT
++      // registry version from its frozen snapshot — never the client's 99.
++      expect(stored.structureVersion).not.toBe(99)
++      const snapshot = stored.questionSnapshot as { structureVersion: number }
++      expect(stored.structureVersion).toBe(snapshot.structureVersion)
++    }
++  })
++
++  test('empty answers never reject: row created with {}, LOW derivation, no fabricated gaps', async () => {
++    const offlineId = `offline-empty-${Date.now()}`
++    const response = await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        data: {
++          type: 'WASH',
++          rapidAssessmentDate: new Date().toISOString(),
++          assessorName: 'Field Officer',
++          entityId,
++          incidentId,
++          location: 'Offline location',
++          structureVersion: 4,
++          answers: {}, // nothing answered — required questions are NOT re-enforced
++          id: offlineId,
++        },
++        versionNumber: 1,
++        entityUuid: entityId,
++        offlineId,
++      },
++    ])
++    expect(response.status).toBe(200)
++    const body = await response.json()
++    const result = body.data.results[0]
++    expect(result.status).toBe('success')
++    // Every active key reports as added (unanswered); nothing else is flagged.
++    const warnings = result.warnings as Array<{ type: string; key: string }>
++    expect(warnings).toHaveLength(activeWashKeys.length)
++    expect(warnings.every((warning) => warning.type === 'added')).toBe(true)
++
++    const stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    expect(stored.answers).toEqual({})
++    expect(stored.structureVersion).toBe(4) // client handshake recorded
++    const gap = stored.gapAnalysis as {
++      gapFields: string[]
++      severity: string
++      rows?: Array<{ source: string; unanswered: boolean }>
++    }
++    expect(gap.gapFields).toEqual([]) // unanswered ≠ gap
++    expect(gap.severity).toBe('LOW')
++    expect((gap.rows ?? []).every((row) => row.source !== 'unknown')).toBe(true)
++  })
++
++  test('a clean offline submission (no drift) carries no warnings', async () => {
++    const offlineId = `offline-clean-${Date.now()}`
++    const answers = activeWashKeys.reduce<Record<string, unknown>>((acc, key) => {
++      acc[key] = true
++      return acc
++    }, {})
++    const response = await postBatch([
++      {
++        type: 'assessment',
++        action: 'create',
++        data: {
++          type: 'WASH',
++          rapidAssessmentDate: new Date().toISOString(),
++          assessorName: 'Field Officer',
++          entityId,
++          incidentId,
++          questionKeys: activeWashKeys,
++          structureVersion: 5,
++          answers,
++          id: offlineId,
++        },
++        versionNumber: 1,
++        entityUuid: entityId,
++        offlineId,
++      },
++    ])
++    expect(response.status).toBe(200)
++    const body = await response.json()
++    expect(body.data.results[0].status).toBe('success')
++    expect(body.data.results[0].warnings).toBeUndefined()
++
++    const stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
++    expect(stored.structureVersion).toBe(5)
++    const gap = stored.gapAnalysis as { rows?: Array<{ source: string }> }
++    expect((gap.rows ?? []).every((row) => row.source !== 'unknown')).toBe(true)
++  })
++})
+diff --git a/tests/unit/components/DynamicAssessmentForm.test.tsx b/tests/unit/components/DynamicAssessmentForm.test.tsx
+index 2fd107f..e884acf 100644
+--- a/tests/unit/components/DynamicAssessmentForm.test.tsx
++++ b/tests/unit/components/DynamicAssessmentForm.test.tsx
+@@ -352,6 +352,7 @@ const WASH_QUESTIONS = WASH_SECTIONS.flatMap((section) => section.questions)
+ const mockUseQuestionSet = useQuestionSet as jest.Mock
+ const mockUseDrafts = useRapidAssessmentDrafts as jest.Mock
+ const mockSaveDraft = jest.fn()
++const mockDeleteDraft = jest.fn()
+ let mockDrafts: Array<Record<string, unknown>> = []
+ 
+ beforeEach(() => {
+@@ -376,7 +377,7 @@ beforeEach(() => {
+     currentDraft: null,
+     saveDraft: mockSaveDraft,
+     loadDraft: jest.fn(),
+-    deleteDraft: jest.fn(),
++    deleteDraft: mockDeleteDraft,
+     clearCurrentDraft: jest.fn(),
+   }))
+ })
+@@ -629,6 +630,11 @@ describe('DynamicAssessmentForm — submit payload', () => {
+     expect(payload.answers).not.toHaveProperty('additionalWashDetails')
+     expect(payload.answers).not.toHaveProperty('additionalHealthDetails')
+     expect(payload.answers).not.toHaveProperty('washData') // legacy typed transport is gone
++
++    // P5: submits carry the registry view (structureVersion + questionKeys)
++    // so offline sync drift detection has the client's declared key set.
++    expect(payload.structureVersion).toBe(3)
++    expect(payload.questionKeys).toEqual(WASH_QUESTIONS.map((entry) => entry.key))
+   })
+ 
+   test('submit does not call onSubmit while a cross-field violation is live', async () => {
+@@ -658,6 +664,9 @@ describe('DynamicAssessmentForm — drafts', () => {
+     expect(snapshot).toMatchObject({
+       answers: expect.objectContaining({ isWaterSufficient: false, functionalLatrinesAvailable: 0 }),
+       rapidAssessmentDate: expect.any(String),
++      // P5: draft saves carry the registry view for drift detection + migration.
++      structureVersion: 3,
++      questionKeys: WASH_QUESTIONS.map((entry) => entry.key),
+     })
+     expect(entityId).toBe('entity-1')
+     expect(incidentId).toBe('incident-1')
+@@ -752,6 +761,238 @@ const POPULATION_SECTIONS: QuestionSectionDef[] = [
+   },
+ ]
+ 
++// ---------------------------------------------------------------------------
++// P5 draft migration — restore-on-mount, migration receipt (once per draft),
++// staleness banner with plain Added/Removed lists (dismissable, never
++// blocking submit), collapsed unmapped-answers block (kept, never deleted),
++// and the version-carrying submit payload.
++// ---------------------------------------------------------------------------
++
++describe('DynamicAssessmentForm — P5 draft migration UX', () => {
++  beforeEach(() => {
++    mockDrafts = [
++      {
++        id: 'draft-legacy',
++        assessmentType: 'WASH',
++        entityId: 'entity-1',
++        incidentId: 'incident-1',
++        timestamp: 1,
++        autoSaved: true,
++        data: {
++          answers: { isWaterSufficient: false, ghostQuestion: true },
++          assessorName: 'Restored Officer',
++          structureVersion: 2,
++          questionKeys: ['isWaterSufficient', 'ghostQuestion'],
++        },
++      },
++    ]
++  })
++
++  test('restores the latest draft on mount: flash, receipt, hydration, stale banner, unmapped block', async () => {
++    renderForm()
++
++    expect(screen.getByTestId('draft-restored-flash')).toHaveTextContent('Draft restored')
++
++    // Pinned receipt copy (spec §5): carried count + unmapped count.
++    expect(screen.getByTestId('draft-migration-receipt')).toHaveTextContent(
++      'Your draft was updated to the new question set — 1 answers carried over, 1 unmapped'
++    )
++
++    // Mapped answer hydrated + marked touched (false on a non-inverted GAP
++    // question → GAP badge, interaction gating on).
++    expect(screen.getByTestId('is-water-sufficient-gap-badge')).toHaveTextContent(/^gap$/i)
++    expect(screen.getByTestId('header-interacted')).toHaveTextContent('true')
++    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Restored Officer')
++    // Draft-captured context restores into the selectors.
++    expect((screen.getByTestId('entity-select') as HTMLSelectElement).value).toBe('entity-1')
++    expect((screen.getByTestId('incident-select') as HTMLSelectElement).value).toBe('incident-1')
++
++    // Staleness banner (draft v2 < live v3): copy + plain added/removed lists.
++    expect(screen.getByTestId('draft-stale-banner')).toHaveTextContent(
++      'The questions have changed since this draft was started'
++    )
++    expect(screen.getByTestId('draft-stale-banner')).toHaveTextContent(/You can still submit/i)
++    const bannerText = screen.getByTestId('draft-stale-banner-text')
++    expect(bannerText).toHaveTextContent(
++      `Added: ${WASH_QUESTIONS.map((q) => q.key).filter((key) => key !== 'isWaterSufficient').join(', ')}`
++    )
++    expect(bannerText).toHaveTextContent('Removed: ghostQuestion')
++
++    // Unmapped answers surface in a collapsed block — kept, never hydrated.
++    const block = screen.getByTestId('draft-unmapped-block')
++    expect(block).toHaveTextContent('Unmapped answers (1)')
++    expect(block).toHaveTextContent('ghostQuestion')
++    expect(block).toHaveTextContent(/kept with the draft and never deleted/i)
++  })
++
++  test('the stale banner is dismissable with persistence and never blocks submit', async () => {
++    const { user, mockOnSubmit } = renderForm()
++
++    // Submit stays enabled alongside the banner (fill the required choice).
++    await user.click(screen.getByTestId('select-option-Borehole'))
++    expect(screen.getByTestId('submit-assessment-button')).not.toBeDisabled()
++
++    await user.click(screen.getByTestId('draft-stale-dismiss'))
++    await waitFor(() =>
++      expect(screen.queryByTestId('draft-stale-banner')).not.toBeInTheDocument()
++    )
++    expect(window.localStorage.setItem).toHaveBeenCalledWith(
++      'dqr-draft-stale-dismissed:draft-legacy',
++      'true'
++    )
++
++    // And the submission itself goes through with the live registry view.
++    await user.click(screen.getByTestId('submit-assessment-button'))
++    await waitFor(() => expect(mockOnSubmit).toHaveBeenCalledTimes(1))
++    const payload = mockOnSubmit.mock.calls[0][0]
++    expect(payload.structureVersion).toBe(3)
++    expect(payload.questionKeys).toEqual(WASH_QUESTIONS.map((entry) => entry.key))
++    // The unmapped key never rides the answers map.
++    expect(payload.answers).not.toHaveProperty('ghostQuestion')
++  })
++
++  test('the migration receipt shows ONCE per draft (localStorage flag)', () => {
++    const backing = new Map<string, string>()
++    ;(window.localStorage.getItem as jest.Mock).mockImplementation((key: string) => backing.get(key) ?? null)
++    ;(window.localStorage.setItem as jest.Mock).mockImplementation((key: string, value: string) => {
++      backing.set(key, value)
++    })
++
++    const { unmount } = renderForm()
++    expect(screen.getByTestId('draft-migration-receipt')).toBeInTheDocument()
++    expect(backing.get('dqr-draft-migrated:draft-legacy')).toBe('true')
++
++    unmount()
++    renderForm()
++    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
++    // The restore flash still shows — only the receipt is once-per-draft.
++    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
++  })
++
++  test('fresh draft (structureVersion == current) restores silently: no banner, no receipt, no unmapped block', () => {
++    mockDrafts = [
++      {
++        id: 'draft-fresh',
++        assessmentType: 'WASH',
++        entityId: 'entity-1',
++        incidentId: 'incident-1',
++        timestamp: 3,
++        autoSaved: true,
++        data: {
++          answers: { isWaterSufficient: true, primaryWaterSource: 'Borehole' },
++          assessorName: 'Fresh Officer',
++          structureVersion: 3, // == live registry version → not stale, not legacy
++          questionKeys: WASH_QUESTIONS.map((entry) => entry.key),
++        },
++      },
++    ]
++    renderForm()
++
++    // Restore happens (flash + hydration + captured context)…
++    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
++    expect(screen.getByTestId('is-water-sufficient-gap-badge')).toHaveTextContent(/no gap/i)
++    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Fresh Officer')
++    // …but silently: none of the migration/staleness chrome appears.
++    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
++    expect(screen.queryByTestId('draft-stale-banner')).not.toBeInTheDocument()
++    expect(screen.queryByTestId('draft-unmapped-block')).not.toBeInTheDocument()
++  })
++
++  test('legacy flat drafts (typed-forms era) map by question key and migrate with a receipt', () => {
++    mockDrafts = [
++      {
++        id: 'draft-flat',
++        assessmentType: 'WASH',
++        entityId: 'entity-1',
++        incidentId: 'incident-1',
++        timestamp: 2,
++        autoSaved: true,
++        data: {
++          // Flat typed-form payload: `data` IS the answers map.
++          isWaterSufficient: true,
++          hasCleanWaterAccess: false,
++          ancientQuestion: 'kept from the typed era',
++          assessorName: 'Legacy Officer',
++        },
++      },
++    ]
++    renderForm()
++
++    // Flat fields hydrate by question key; badges prove hydration + touch.
++    expect(screen.getByTestId('is-water-sufficient-gap-badge')).toHaveTextContent(/no gap/i)
++    expect(screen.getByTestId('has-clean-water-access-gap-badge')).toHaveTextContent(/^gap$/i)
++    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Legacy Officer')
++
++    // Legacy drafts always report the migration (carried 2, unmapped 1).
++    expect(screen.getByTestId('draft-migration-receipt')).toHaveTextContent(
++      'Your draft was updated to the new question set — 2 answers carried over, 1 unmapped'
++    )
++    expect(screen.getByTestId('draft-unmapped-block')).toHaveTextContent('ancientQuestion')
++  })
++
++  test('submitting consumes the type\'s drafts so the next blank form starts clean', async () => {
++    const { user, mockOnSubmit } = renderForm()
++    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
++
++    await user.click(screen.getByTestId('select-option-Borehole'))
++    await user.click(screen.getByTestId('submit-assessment-button'))
++    await waitFor(() => expect(mockOnSubmit).toHaveBeenCalledTimes(1))
++
++    // The restored draft (and any siblings of this type) are deleted after a
++    // successful submit — otherwise every later form mount would re-restore
++    // the already-submitted answers.
++    expect(mockDeleteDraft).toHaveBeenCalledWith('draft-legacy')
++  })
++
++  test('unmapped-only drafts (empty answers map) still restore and surface their kept answers', () => {
++    mockDrafts = [
++      {
++        id: 'draft-unmapped-only',
++        assessmentType: 'WASH',
++        entityId: 'entity-1',
++        incidentId: 'incident-1',
++        timestamp: 4,
++        autoSaved: true,
++        data: {
++          answers: {}, // everything migrated out; only unmapped content remains
++          unmappedAnswers: [{ key: 'ghostQuestion', value: true }],
++          assessorName: 'Ghost Officer',
++          structureVersion: 3,
++          questionKeys: WASH_QUESTIONS.map((entry) => entry.key),
++        },
++      },
++    ]
++    renderForm()
++
++    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
++    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Ghost Officer')
++    const block = screen.getByTestId('draft-unmapped-block')
++    expect(block).toHaveTextContent('Unmapped answers (1)')
++    expect(block).toHaveTextContent('ghostQuestion')
++  })
++
++  test('no restore on edit/reassessment hydrations, and empty drafts never flash', () => {
++    mockDrafts = []
++    const { rerender } = renderForm()
++    expect(screen.queryByTestId('draft-restored-flash')).not.toBeInTheDocument()
++    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
++
++    rerender(
++      <DynamicAssessmentForm
++        assessmentType="WASH"
++        entityId="entity-1"
++        incidentId="incident-1"
++        initialAnswers={{ isWaterSufficient: true }}
++        onSubmit={jest.fn().mockResolvedValue(undefined)}
++      />
++    )
++    expect(screen.queryByTestId('draft-restored-flash')).not.toBeInTheDocument()
++    expect(screen.queryByTestId('draft-stale-banner')).not.toBeInTheDocument()
++    expect(screen.queryByTestId('draft-unmapped-block')).not.toBeInTheDocument()
++    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
++  })
++})
++
+ describe('DynamicAssessmentForm — POPULATION (context-only) suppression', () => {
+   beforeEach(() => {
+     mockUseQuestionSet.mockReturnValue({
+diff --git a/tests/unit/draft-migration.test.ts b/tests/unit/draft-migration.test.ts
+new file mode 100644
+index 0000000..8dfa157
+--- /dev/null
++++ b/tests/unit/draft-migration.test.ts
+@@ -0,0 +1,242 @@
++import {
++  applyDraftMigration,
++  restoreOfflineDraft,
++  DRAFTS_STORAGE_KEY,
++  type NormalizedDraftData,
++} from '@/lib/questions/draft-migration'
++import { questionKeysForType } from '@/lib/questions/answers'
++import type { RapidAssessmentType } from '@/lib/questions/answers'
++
++/**
++ * Unit — P5 offline draft migration (restoreOfflineDraft is pure/DOM-free;
++ * applyDraftMigration's default writer targets the drafts-hook localStorage).
++ *
++ * Two stored shapes:
++ * - LEGACY (typed forms, pre-p1): `data` IS the answers map (flat fields,
++ *   meta keys excluded), no answers wrapper → legacy: true
++ * - REGISTRY: `data.answers` wrapper, optional structureVersion/questionKeys
++ *
++ * Keys map BY QUESTION KEY against the CURRENT snapshot; snapshot-absent
++ * keys are UNMAPPED — never hydrated, but KEPT under unmappedAnswers
++ * (never dropped, values preserved). structureVersion defaults to 1 and
++ * questionKeys falls back to questionKeysForType for legacy drafts.
++ */
++
++const type = 'HEALTH' as RapidAssessmentType
++
++const snapshot = {
++  sections: [
++    {
++      order: 1,
++      questions: [
++        { key: 'hasFunctionalClinic' },
++        { key: 'isWaterSufficient' },
++        { key: 'numberHealthFacilities' },
++      ],
++    },
++  ],
++}
++
++describe('unit — restoreOfflineDraft (pure)', () => {
++  test('legacy flat draft: data is the answers map, meta keys excluded, defaults applied', () => {
++    const restored = restoreOfflineDraft(type, snapshot, {
++      id: 'draft_1',
++      assessmentType: 'HEALTH',
++      data: {
++        hasFunctionalClinic: false,
++        goneQuestion: 'kept verbatim',
++        assessorName: 'Field Officer',
++        rapidAssessmentDate: '2026-01-01',
++        photos: ['a.jpg'],
++        gpsLocation: { latitude: 1 },
++        answers: 'not-a-wrapper',
++      } as Record<string, unknown>,
++    })
++    expect(restored.legacy).toBe(true)
++    expect(restored.structureVersion).toBe(1)
++    expect(restored.questionKeys).toEqual(questionKeysForType(type))
++    expect(restored.answers).toEqual({ hasFunctionalClinic: false })
++    // unmapped answers keep their values — never dropped, never hydrated
++    expect(restored.unmappedAnswers).toEqual([{ key: 'goneQuestion', value: 'kept verbatim' }])
++    expect(restored.carried).toBe(1)
++  })
++
++  test('registry-era draft passes structureVersion/questionKeys through and maps by key', () => {
++    const restored = restoreOfflineDraft(type, snapshot, {
++      id: 'draft_2',
++      assessmentType: 'HEALTH',
++      data: {
++        answers: { isWaterSufficient: false, laterRemoved: 42 },
++        structureVersion: 7,
++        questionKeys: ['isWaterSufficient', 'laterRemoved'],
++      },
++    })
++    expect(restored.legacy).toBe(false)
++    expect(restored.structureVersion).toBe(7)
++    expect(restored.questionKeys).toEqual(['isWaterSufficient', 'laterRemoved'])
++    expect(restored.answers).toEqual({ isWaterSufficient: false })
++    expect(restored.unmappedAnswers).toEqual([{ key: 'laterRemoved', value: 42 }])
++    expect(restored.carried).toBe(1)
++  })
++
++  test('null/undefined answer values never hydrate and never report unmapped', () => {
++    const restored = restoreOfflineDraft(type, snapshot, {
++      id: 'draft_3',
++      assessmentType: 'HEALTH',
++      data: { answers: { hasFunctionalClinic: null, isWaterSufficient: undefined, numberHealthFacilities: 3 } },
++    })
++    expect(restored.answers).toEqual({ numberHealthFacilities: 3 })
++    expect(restored.unmappedAnswers).toEqual([])
++    expect(restored.carried).toBe(1)
++
++    for (const degenerate of [null, undefined, { id: 'x', data: null }, { id: 'x', data: { answers: 'nope' } }]) {
++      const empty = restoreOfflineDraft(type, snapshot, degenerate as never)
++      expect(empty.answers).toEqual({})
++      expect(empty.unmappedAnswers).toEqual([])
++      expect(empty.carried).toBe(0)
++      expect(empty.structureVersion).toBe(1)
++    }
++  })
++
++  test('re-migrating an already-migrated draft keeps the stored unmapped answers (idempotent)', () => {
++    // First migration splits a registry draft into mapped + unmapped.
++    const first = restoreOfflineDraft(type, snapshot, {
++      id: 'draft_re',
++      assessmentType: 'HEALTH',
++      data: { answers: { isWaterSufficient: false, laterRemoved: 42 } },
++    })
++    expect(first.unmappedAnswers).toEqual([{ key: 'laterRemoved', value: 42 }])
++
++    // The persisted normalized draft (data.answers already filtered; unmapped
++    // stored separately) — what a reload-before-submit re-migrates.
++    const second = restoreOfflineDraft(type, snapshot, {
++      id: 'draft_re',
++      assessmentType: 'HEALTH',
++      data: {
++        answers: first.answers,
++        unmappedAnswers: first.unmappedAnswers,
++        structureVersion: 1,
++        questionKeys: ['isWaterSufficient', 'laterRemoved'],
++      },
++    })
++    expect(second.answers).toEqual({ isWaterSufficient: false })
++    // The previously stored unmapped answer SURVIVES the second migration —
++    // never dropped (reload-before-submit is an everyday flow).
++    expect(second.unmappedAnswers).toEqual([{ key: 'laterRemoved', value: 42 }])
++    expect(second.carried).toBe(1)
++
++    // Newly unmapped keys append to (not replace) the stored ones.
++    const third = restoreOfflineDraft(type, snapshot, {
++      id: 'draft_re',
++      assessmentType: 'HEALTH',
++      data: {
++        answers: { isWaterSufficient: false, anotherGone: 'new' },
++        unmappedAnswers: [{ key: 'laterRemoved', value: 42 }],
++        structureVersion: 1,
++        questionKeys: ['isWaterSufficient'],
++      },
++    })
++    expect(third.unmappedAnswers).toEqual([
++      { key: 'laterRemoved', value: 42 },
++      { key: 'anotherGone', value: 'new' },
++    ])
++  })
++
++  test('pure: identical inputs produce identical output', () => {
++    const draft = {
++      id: 'draft_4',
++      assessmentType: 'HEALTH',
++      data: { hasFunctionalClinic: false, gone: 'x', structureVersion: 2, questionKeys: ['a'] },
++    }
++    expect(JSON.stringify(restoreOfflineDraft(type, snapshot, draft)))
++      .toBe(JSON.stringify(restoreOfflineDraft(type, snapshot, draft)))
++  })
++})
++
++// tests/setup.ts mocks localStorage as bare jest.fn()s — back them with an
++// in-memory map for the default-writer tests in this file.
++function backLocalStorage() {
++  const backing = new Map<string, string>()
++  ;(window.localStorage.getItem as jest.Mock).mockImplementation((key: string) => backing.get(key) ?? null)
++  ;(window.localStorage.setItem as jest.Mock).mockImplementation((key: string, value: string) => {
++    backing.set(key, value)
++  })
++  ;(window.localStorage.removeItem as jest.Mock).mockImplementation((key: string) => backing.delete(key))
++  return backing
++}
++
++describe('unit — applyDraftMigration', () => {
++  test('custom migrate writer receives the normalized payload (unmapped KEPT, never dropped)', () => {
++    const seen: NormalizedDraftData[] = []
++    const restored = applyDraftMigration(
++      { id: 'draft_5', assessmentType: 'HEALTH', data: { answers: { hasFunctionalClinic: false, gone: 1 } } },
++      {
++        assessmentType: type,
++        snapshot,
++        migrate: (normalized) => seen.push(normalized),
++      }
++    )
++    expect(seen).toEqual([
++      {
++        answers: { hasFunctionalClinic: false },
++        structureVersion: 1,
++        questionKeys: questionKeysForType(type),
++        unmappedAnswers: [{ key: 'gone', value: 1 }],
++      },
++    ])
++    expect(restored.unmappedAnswers).toEqual([{ key: 'gone', value: 1 }])
++  })
++
++  test('default writer normalizes the draft inside the localStorage store (other data fields preserved)', () => {
++    backLocalStorage()
++    const draft = {
++      id: 'draft_6',
++      assessmentType: 'HEALTH',
++      entityId: 'entity-1',
++      incidentId: 'incident-1',
++      timestamp: 123,
++      autoSaved: true,
++      data: { answers: { hasFunctionalClinic: false, goneQuestion: 'legacy' }, assessorName: 'Field Officer' },
++    }
++    window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify([draft]))
++
++    const restored = applyDraftMigration(draft, { assessmentType: type, snapshot })
++
++    expect(restored.unmappedAnswers).toEqual([{ key: 'goneQuestion', value: 'legacy' }])
++    const stored = JSON.parse(window.localStorage.getItem(DRAFTS_STORAGE_KEY)!) as typeof draft[]
++    expect(stored).toHaveLength(1)
++    expect(stored[0].id).toBe('draft_6')
++    expect(stored[0].data).toEqual({
++      assessorName: 'Field Officer',
++      answers: { hasFunctionalClinic: false },
++      structureVersion: 1,
++      questionKeys: questionKeysForType(type),
++      unmappedAnswers: [{ key: 'goneQuestion', value: 'legacy' }],
++    })
++    window.localStorage.removeItem(DRAFTS_STORAGE_KEY)
++  })
++
++  test('default writer tolerates a corrupted store and a missing draft record', () => {
++    backLocalStorage()
++    window.localStorage.setItem(DRAFTS_STORAGE_KEY, '{not json')
++    expect(() =>
++      applyDraftMigration(
++        { id: 'draft_7', assessmentType: 'HEALTH', data: { answers: { hasFunctionalClinic: false } } },
++        { assessmentType: type, snapshot }
++      )
++    ).not.toThrow()
++    // corrupted store left untouched
++    expect(window.localStorage.getItem(DRAFTS_STORAGE_KEY)).toBe('{not json')
++
++    window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify([{ id: 'someone-else' }]))
++    expect(() =>
++      applyDraftMigration(
++        { id: 'draft_8', assessmentType: 'HEALTH', data: { answers: { hasFunctionalClinic: false } } },
++        { assessmentType: type, snapshot }
++      )
++    ).not.toThrow()
++    // store untouched when the draft record is absent
++    expect(JSON.parse(window.localStorage.getItem(DRAFTS_STORAGE_KEY)!)).toEqual([{ id: 'someone-else' }])
++    window.localStorage.removeItem(DRAFTS_STORAGE_KEY)
++  })
++})
+diff --git a/tests/unit/gap-engine.test.ts b/tests/unit/gap-engine.test.ts
+index 00df395..476c064 100644
+--- a/tests/unit/gap-engine.test.ts
++++ b/tests/unit/gap-engine.test.ts
+@@ -16,6 +16,11 @@ import {
+  * - POPULATION-like structures (zero GAP questions) derive LOW via the same rule
+  * - gap surfaces ordered severity DESC then presentation order ASC
+  * - output is a pure, byte-identical function of its inputs
++ *
++ * P5 unknown rows (offline drift): answered keys absent from the snapshot
++ * SELF-DERIVE source-'unknown' informational rows — never in gapFields,
++ * severity, fieldSeverityMap or recommendations (intersection only), so
++ * re-derivation passes reproduce them byte-for-byte.
+  */
+ 
+ const structure: GapEngineSnapshotStructure = {
+@@ -309,7 +314,10 @@ describe('unit — pure gap engine (analyzeGaps)', () => {
+       const result = analyzeGaps(degenerate as GapEngineSnapshotStructure, { any: false }, registryRows)
+       expect(result.hasGap).toBe(false)
+       expect(result.severity).toBe('LOW')
+-      expect(result.rows).toEqual([])
++      // no structure → the answered key self-derives one informational row
++      expect(result.rows.map((row) => row.key)).toEqual(['any'])
++      expect(result.rows[0].source).toBe('unknown')
++      expect(result.rows[0].severity).toBe('MEDIUM') // no registry row for 'any'
+     }
+   })
+ 
+@@ -325,3 +333,80 @@ describe('unit — pure gap engine (analyzeGaps)', () => {
+     expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+   })
+ })
++
++describe('unit — pure gap engine unknown-source rows (P5 offline ingestion)', () => {
++  test('answered keys absent from the snapshot self-derive unknown rows that are NEVER scored', () => {
++    const result = analyzeGaps(
++      structure,
++      { hasFunctionalClinic: true, mysteryKey: false, anotherKey: true },
++      registryRows
++    )
++    // intersection only — unknowns never gap, never score, never recommend
++    expect(result.gapFields).toEqual([])
++    expect(result.hasGap).toBe(false)
++    expect(result.severity).toBe('LOW')
++    expect(result.fieldSeverityMap).toEqual({})
++    expect(result.recommendations).toEqual([])
++    const row = result.rows.find((r) => r.key === 'mysteryKey')
++    expect(row).toMatchObject({
++      key: 'mysteryKey',
++      label: 'mysteryKey',
++      gapLabel: null,
++      severity: 'MEDIUM', // no registry row → MEDIUM floor
++      source: 'unknown',
++      recommendation: null,
++      unanswered: false,
++    })
++    // unknown rows append AFTER the mapped rows, in answers order
++    expect(result.rows.map((r) => r.key)).toEqual([
++      'hasFunctionalClinic',
++      'hasOpenDefecationConcerns',
++      'areOvercrowded',
++      'isWaterSufficient',
++      'mysteryKey',
++      'anotherKey',
++    ])
++    // unknown rows are never flagged unanswered; only never-answered GAP keys are
++    expect(result.unanswered).toEqual([
++      'hasOpenDefecationConcerns',
++      'areOvercrowded',
++      'isWaterSufficient',
++    ])
++  })
++
++  test('unknown rows resolve severity from a registry row when one exists (else MEDIUM)', () => {
++    const result = analyzeGaps(
++      structure,
++      { mysteryKey: false },
++      [...registryRows, { questionKey: 'mysteryKey', severity: 'HIGH' }]
++    )
++    const row = result.rows.find((r) => r.key === 'mysteryKey')
++    expect(row?.source).toBe('unknown')
++    expect(row?.severity).toBe('HIGH')
++    // severity on the row is informational only — scoring stays intersection-only
++    expect(result.gapFields).toEqual([])
++    expect(result.severity).toBe('LOW')
++    expect(result.fieldSeverityMap).toEqual({})
++  })
++
++  test('snapshot-present keys (any category) and null/undefined/empty answers never derive unknown rows', () => {
++    const result = analyzeGaps(
++      structure,
++      { numberHealthFacilities: 5, ghostA: null, ghostB: undefined, '': 'x', hasFunctionalClinic: true },
++      registryRows
++    )
++    expect(result.rows.filter((r) => r.source === 'unknown')).toEqual([])
++    expect(result.rows).toHaveLength(4) // the four mapped GAP rows only
++  })
++
++  test('real gaps and unknown rows coexist without unknowns affecting order or severity', () => {
++    const answers = { hasFunctionalClinic: false, mysteryKey: true, areOvercrowded: true }
++    const result = analyzeGaps(structure, answers, registryRows)
++    expect(result.gapFields).toEqual(['hasFunctionalClinic', 'areOvercrowded'])
++    expect(result.severity).toBe('CRITICAL') // max over gapped intersection only
++    expect(result.rows.slice(-1)[0]).toMatchObject({ key: 'mysteryKey', source: 'unknown' })
++    // self-derived (not caller-reported): re-derivation is byte-identical, so
++    // recompute passes (triggerGapAnalysis, severity recompute) reproduce them
++    expect(JSON.stringify(analyzeGaps(structure, answers, registryRows))).toBe(JSON.stringify(result))
++  })
++})
+diff --git a/tests/unit/offline-answers.test.ts b/tests/unit/offline-answers.test.ts
+new file mode 100644
+index 0000000..1992fae
+--- /dev/null
++++ b/tests/unit/offline-answers.test.ts
+@@ -0,0 +1,215 @@
++import {
++  ingestOfflineAnswers,
++  snapshotQuestionKeys,
++  toOfflineSyncWarnings,
++  type OfflineRegistryRow,
++} from '@/lib/questions/offline-answers'
++import type { RapidAssessmentType } from '@/lib/questions/answers'
++
++/**
++ * Unit — P5 offline answer ingestion (pure, no I/O, no mocks).
++ *
++ * Never-reject semantics (spec): every non-null answer persists verbatim;
++ * drift is classified into warnings —
++ * - added   = active registry keys absent from answers
++ * - removed = answered keys whose registry row is inactive
++ * - unknown = answered keys with no registry row at all
++ * MULTI_SELECT JSON-string replays normalize to arrays; anything not safely
++ * coercible is kept verbatim.
++ */
++
++const type = 'HEALTH' as RapidAssessmentType
++
++const snapshot = {
++  sections: [
++    {
++      order: 1,
++      questions: [
++        { key: 'hasFunctionalClinic', type: 'BOOLEAN' },
++        { key: 'commonHealthIssues', type: 'MULTI_SELECT' },
++      ],
++    },
++    {
++      order: 2,
++      questions: [{ key: 'areOvercrowded', type: 'BOOLEAN' }],
++    },
++  ],
++}
++
++const registryRows: OfflineRegistryRow[] = [
++  { questionKey: 'hasFunctionalClinic', isActive: true },
++  { questionKey: 'commonHealthIssues', isActive: true },
++  { questionKey: 'areOvercrowded', isActive: true },
++  { questionKey: 'deactivatedQuestion', isActive: false },
++]
++
++describe('unit — snapshotQuestionKeys', () => {
++  test('extracts question keys in presentation order and tolerates degenerate shapes', () => {
++    expect(snapshotQuestionKeys(snapshot)).toEqual([
++      'hasFunctionalClinic',
++      'commonHealthIssues',
++      'areOvercrowded',
++    ])
++    for (const degenerate of [null, undefined, {}, { sections: [] }, { sections: [{ questions: [] }] }]) {
++      expect(snapshotQuestionKeys(degenerate as never)).toEqual([])
++    }
++  })
++})
++
++describe('unit — ingestOfflineAnswers', () => {
++  test('answered active keys pass through verbatim with no warnings', () => {
++    const result = ingestOfflineAnswers(
++      type,
++      { hasFunctionalClinic: false, commonHealthIssues: ['Malaria'], areOvercrowded: true },
++      snapshot,
++      registryRows
++    )
++    expect(result.answers).toEqual({
++      hasFunctionalClinic: false,
++      commonHealthIssues: ['Malaria'],
++      areOvercrowded: true,
++    })
++    expect(result.warnings).toEqual({ added: [], removed: [], unknown: [] })
++  })
++
++  test('MULTI_SELECT JSON-string replays normalize to arrays; garbage stays verbatim', () => {
++    const result = ingestOfflineAnswers(
++      type,
++      {
++        commonHealthIssues: '["Malaria","Measles"]',
++        hasFunctionalClinic: true,
++        areOvercrowded: true,
++      },
++      snapshot,
++      registryRows
++    )
++    expect(result.answers.commonHealthIssues).toEqual(['Malaria', 'Measles'])
++
++    const unparseable = ingestOfflineAnswers(
++      type,
++      { commonHealthIssues: 'not json', hasFunctionalClinic: true, areOvercrowded: true },
++      snapshot,
++      registryRows
++    )
++    expect(unparseable.answers.commonHealthIssues).toBe('not json')
++
++    const nonArray = ingestOfflineAnswers(
++      type,
++      { commonHealthIssues: '"just a string"', hasFunctionalClinic: true, areOvercrowded: true },
++      snapshot,
++      registryRows
++    )
++    expect(nonArray.answers.commonHealthIssues).toBe('"just a string"')
++
++    // A parseable-but-non-string array is NOT safely coercible — filtering it
++    // in place would silently discard captured values, so it stays verbatim.
++    const numericArray = ingestOfflineAnswers(
++      type,
++      { commonHealthIssues: '[1, 2]', hasFunctionalClinic: true, areOvercrowded: true },
++      snapshot,
++      registryRows
++    )
++    expect(numericArray.answers.commonHealthIssues).toBe('[1, 2]')
++  })
++
++  test('removed: answered keys with an inactive registry row are retained + warned', () => {
++    const result = ingestOfflineAnswers(
++      type,
++      { hasFunctionalClinic: false, deactivatedQuestion: 'yes', commonHealthIssues: [], areOvercrowded: true },
++      snapshot,
++      registryRows
++    )
++    // Verbatim retention — never discarded (ruling 7).
++    expect(result.answers).toEqual({
++      hasFunctionalClinic: false,
++      deactivatedQuestion: 'yes',
++      commonHealthIssues: [],
++      areOvercrowded: true,
++    })
++    expect(result.warnings.removed).toEqual(['deactivatedQuestion'])
++    expect(result.warnings.unknown).toEqual([])
++  })
++
++  test('unknown: answered keys with no registry row are retained + warned', () => {
++    const result = ingestOfflineAnswers(
++      type,
++      { hasFunctionalClinic: false, mysteryKey: 42, commonHealthIssues: [], areOvercrowded: true },
++      snapshot,
++      registryRows
++    )
++    expect(result.answers).toEqual({
++      hasFunctionalClinic: false,
++      mysteryKey: 42,
++      commonHealthIssues: [],
++      areOvercrowded: true,
++    })
++    expect(result.warnings.unknown).toEqual(['mysteryKey'])
++    expect(result.warnings.removed).toEqual([])
++  })
++
++  test('added: active registry keys absent from answers are warned (documented proxy)', () => {
++    const result = ingestOfflineAnswers(
++      type,
++      { hasFunctionalClinic: false, commonHealthIssues: [] },
++      snapshot,
++      registryRows
++    )
++    expect(result.answers).toEqual({ hasFunctionalClinic: false, commonHealthIssues: [] })
++    expect(result.warnings.added).toEqual(['areOvercrowded'])
++    expect(result.warnings.removed).toEqual([])
++    expect(result.warnings.unknown).toEqual([])
++  })
++
++  test('null/undefined values are never materialized; degenerate inputs derive empty', () => {
++    const result = ingestOfflineAnswers(
++      type,
++      { hasFunctionalClinic: null, commonHealthIssues: undefined },
++      snapshot,
++      registryRows
++    )
++    expect(result.answers).toEqual({})
++    expect(result.warnings).toEqual({ added: ['hasFunctionalClinic', 'commonHealthIssues', 'areOvercrowded'], removed: [], unknown: [] })
++
++    for (const degenerate of [null, undefined]) {
++      const empty = ingestOfflineAnswers(type, degenerate, degenerate, degenerate)
++      expect(empty).toEqual({ answers: {}, warnings: { added: [], removed: [], unknown: [] } })
++    }
++  })
++
++  test('pure: identical inputs produce identical output', () => {
++    const answers = { hasFunctionalClinic: false, deactivatedQuestion: 1, mysteryKey: [], commonHealthIssues: [], areOvercrowded: true }
++    expect(JSON.stringify(ingestOfflineAnswers(type, answers, snapshot, registryRows)))
++      .toBe(JSON.stringify(ingestOfflineAnswers(type, answers, snapshot, registryRows)))
++  })
++})
++
++describe('unit — toOfflineSyncWarnings', () => {
++  test('maps the three buckets to warning records', () => {
++    const records = toOfflineSyncWarnings('assessment-1', type, {
++      added: ['isWaterSufficient'],
++      removed: ['legacyQuestion'],
++      unknown: ['mysteryKey'],
++    })
++    expect(records).toEqual([
++      {
++        assessmentId: 'assessment-1',
++        key: 'isWaterSufficient',
++        type: 'added',
++        message: expect.stringContaining('isWaterSufficient'),
++      },
++      {
++        assessmentId: 'assessment-1',
++        key: 'legacyQuestion',
++        type: 'removed',
++        message: expect.stringContaining('legacyQuestion'),
++      },
++      {
++        assessmentId: 'assessment-1',
++        key: 'mysteryKey',
++        type: 'unknown',
++        message: expect.stringContaining('mysteryKey'),
++      },
++    ])
++    expect(records.every((record) => record.message.includes('HEALTH'))).toBe(true)
++  })
++})

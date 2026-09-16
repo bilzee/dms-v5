@@ -8,6 +8,11 @@ import {
 } from '@/lib/validation/rapid-assessment'
 import { buildAssessmentSchema } from '@/lib/validation/dynamic-assessment'
 import {
+  ingestOfflineAnswers,
+  toOfflineSyncWarnings,
+  type OfflineSyncWarning,
+} from '@/lib/questions/offline-answers'
+import {
   analyzeGaps,
   analyzeGapsFromSnapshot,
   derivePriorityFromGaps,
@@ -80,6 +85,52 @@ function validateAnswersAgainstSnapshot(
     )
   }
   return parsed.data as Record<string, unknown>
+}
+
+/** Offline-sync payloads additionally declare the client's registry view. */
+export type CreateOfflineRapidAssessmentInput = CreateRapidAssessmentInput & {
+  questionKeys?: readonly string[] | null
+  /** Client-generated row id (Dexie uuid) for idempotent batch replay. */
+  offlineId?: string | null
+}
+
+export type UpdateOfflineRapidAssessmentInput = UpdateRapidAssessmentInput & {
+  questionKeys?: readonly string[] | null
+}
+
+/** Offline create/update outcome: the row plus its drift warnings. */
+export interface OfflineAssessmentSyncResult {
+  assessment: RapidAssessmentWithData
+  warnings: OfflineSyncWarning[]
+}
+
+/**
+ * Never-reject re-validation of INGESTED offline answers against the fresh
+ * snapshot (P5): `added` questions are treated as unanswered/optional — a
+ * missing required question is drift, not an error — and any residual
+ * value-level findings are logged, never thrown. Offline field data wins;
+ * the INGESTED map (retained unknown keys included) is what gets stored.
+ */
+function relaxedValidateOfflineAnswers(
+  snapshot: QuestionSnapshot,
+  answers: Record<string, unknown>,
+  addedKeys: readonly string[]
+): void {
+  const questionSet = snapshotAsQuestionSet(snapshot)
+  const relaxed = {
+    sections: questionSet.sections.map((section) => ({
+      questions: section.questions.map((question) =>
+        addedKeys.includes(question.key) ? { ...question, required: false } : question
+      ),
+    })),
+  }
+  const parsed = buildAssessmentSchema(relaxed).safeParse(answers)
+  if (!parsed.success) {
+    console.warn(
+      '[RapidAssessmentService] offline answers retained despite validation findings:',
+      JSON.stringify(parsed.error.flatten().fieldErrors)
+    )
+  }
 }
 
 export class RapidAssessmentService {
@@ -168,6 +219,231 @@ export class RapidAssessmentService {
     }
 
     return rapidAssessment
+  }
+
+  /**
+   * Creates an assessment from an OFFLINE submission (P5) — the never-reject
+   * mirror of `create`. The CURRENT live snapshot is frozen exactly like the
+   * online path; answers are then INGESTED instead of strictly validated:
+   * every non-null answer persists verbatim (MULTI_SELECT JSON-string
+   * replays normalized), and drift is reported as warnings —
+   *   added (unanswered new questions) / removed (now-inactive keys) /
+   *   unknown (keys with no registry row).
+   *
+   * The row records the CLIENT's `structureVersion` (the handshake the
+   * answers were captured against; falls back to the frozen snapshot's).
+   * Registry drift NEVER rejects the submission; only shape-level failures
+   * (unknown type, unassigned entity, empty registry) throw.
+   */
+  static async createOfflineAssessment(
+    input: CreateOfflineRapidAssessmentInput,
+    createdBy: string,
+    clientStructureVersion?: number | null
+  ): Promise<OfflineAssessmentSyncResult> {
+    const { type, entityId, answers, offlineId } = input
+
+    // Verify user is assigned to this entity (same gate as the online path).
+    await this.validateEntityAssignment(createdBy, entityId)
+
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { autoApproveEnabled: true }
+    })
+
+    if (!entity) {
+      throw new Error('Entity not found')
+    }
+
+    const verificationStatus = entity.autoApproveEnabled ? 'AUTO_VERIFIED' : 'SUBMITTED'
+
+    // Freeze the per-assessment snapshot from the registry service (single
+    // source) — identical to `create`, so the drift report is computed against
+    // the registry this row actually froze.
+    const questionSnapshot = await QuestionRegistryService.getSnapshot(type)
+    if (snapshotQuestionCount(questionSnapshot) === 0) {
+      throw new Error(`No active registry questions found for assessment type ${type}`)
+    }
+
+    // Ingest the offline answers against the frozen snapshot + ALL live
+    // registry rows (active + inactive) for drift classification.
+    const registryRows = await prisma.question.findMany({
+      where: { assessmentType: type },
+      select: { questionKey: true, isActive: true },
+    })
+    const { answers: ingestedAnswers, warnings } = ingestOfflineAnswers(
+      type,
+      answers ?? {},
+      questionSnapshot,
+      registryRows
+    )
+
+    // Diagnostics-only re-validation (added questions optional; never throws).
+    relaxedValidateOfflineAnswers(questionSnapshot, ingestedAnswers, warnings.added)
+
+    // Derive gap analysis + priority against the frozen snapshot; answered
+    // keys outside the snapshot self-derive as source-'unknown' rows.
+    const gapAnalysis = await analyzeGapsFromSnapshot(type, questionSnapshot, ingestedAnswers)
+    const priority = derivePriorityFromGaps(type, gapAnalysis)
+
+    const rapidAssessment = await prisma.rapidAssessment.create({
+      data: {
+        // Idempotent batch replay: honor the client's row id when supplied.
+        ...(offlineId ? { id: offlineId } : {}),
+        rapidAssessmentType: type,
+        rapidAssessmentDate: input.rapidAssessmentDate,
+        assessorId: createdBy,
+        assessorName: input.assessorName,
+        entityId: input.entityId,
+        incidentId: input.incidentId,
+        location: input.location,
+        coordinates: input.coordinates as unknown as Prisma.InputJsonValue | undefined,
+        priority,
+        mediaAttachments: input.mediaAttachments || [],
+        versionNumber: 1,
+        isOfflineCreated: true,
+        syncStatus: 'SYNCED',
+        verificationStatus,
+        verifiedAt: entity.autoApproveEnabled ? new Date() : null,
+        answers: ingestedAnswers as unknown as Prisma.InputJsonValue,
+        // Client handshake: the structure the answers were captured against
+        // (spec: row records the client's version; snapshot JSON carries its own).
+        structureVersion: clientStructureVersion ?? questionSnapshot.structureVersion,
+        contentVersion: questionSnapshot.contentVersion,
+        questionSnapshot: questionSnapshot as unknown as Prisma.InputJsonValue,
+        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+      },
+    })
+
+    // Response-scoped drift records (never persisted to a column — the
+    // client surfaces them and gapAnalysis rows carry source-'unknown').
+    const warningRecords = toOfflineSyncWarnings(rapidAssessment.id, type, warnings)
+
+    // Recalculate incident severity bottom-up
+    if (input.incidentId) {
+      try {
+        const { incidentSeverityService } = await import('@/lib/services/incident-severity.service');
+        await incidentSeverityService.recalculateIncidentSeverity(input.incidentId)
+      } catch {}
+    }
+
+    try {
+      const { ActionSignalService } = await import('@/lib/services/action-signal.service');
+      await ActionSignalService.evaluateAndGenerate({
+        trigger: entity.autoApproveEnabled ? 'assessment-verified' : 'assessment-created',
+        entityId: input.entityId,
+        incidentId: input.incidentId,
+        assessmentId: rapidAssessment.id,
+        assessmentType: type,
+        assessmentPriority: rapidAssessment.priority,
+      });
+    } catch (e) {
+      console.error('[RapidAssessmentService] signal hook error:', e);
+    }
+
+    return { assessment: rapidAssessment, warnings: warningRecords }
+  }
+
+  /**
+   * Updates an assessment from an OFFLINE submission (P5) — the never-reject
+   * mirror of `update`. Ownership + type-change + transition validations are
+   * identical to the online path; answers go through the same ingestion as
+   * `createOfflineAssessment` (full replace, drift warned, never rejected).
+   */
+  static async updateOfflineAssessment(
+    id: string,
+    input: UpdateOfflineRapidAssessmentInput,
+    updatedByAssessor: string,
+    clientStructureVersion?: number | null
+  ): Promise<OfflineAssessmentSyncResult> {
+    const existingAssessment = await prisma.rapidAssessment.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        assessorId: true,
+        rapidAssessmentType: true,
+      }
+    })
+    if (!existingAssessment) {
+      throw new Error('Assessment not found')
+    }
+
+    if (existingAssessment.assessorId !== updatedByAssessor) {
+      throw new Error('Not authorized to update this assessment')
+    }
+
+    // `questionKeys` is a client-view declaration — destructured OUT so it can
+    // never leak into the Prisma update payload (unknown-argument runtime error).
+    const { type, answers, questionKeys: _clientQuestionKeys, ...baseData } = input
+
+    const assessmentType = existingAssessment.rapidAssessmentType as AssessmentTypeName
+    if (type !== assessmentType) {
+      throw new ApiError(
+        `Assessment type cannot change on update (stored ${assessmentType}, payload ${type})`,
+        422
+      )
+    }
+
+    // Answers are a full replace through offline ingestion: freeze the
+    // CURRENT snapshot, reconcile drift, re-derive gap analysis + priority.
+    const snapshot = await QuestionRegistryService.getSnapshot(assessmentType)
+    if (snapshotQuestionCount(snapshot) === 0) {
+      throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
+    }
+    const registryRows = await prisma.question.findMany({
+      where: { assessmentType: assessmentType },
+      select: { questionKey: true, isActive: true },
+    })
+    const { answers: ingestedAnswers, warnings } = ingestOfflineAnswers(
+      assessmentType,
+      answers ?? {},
+      snapshot,
+      registryRows
+    )
+    relaxedValidateOfflineAnswers(snapshot, ingestedAnswers, warnings.added)
+    const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, ingestedAnswers)
+    const priority = derivePriorityFromGaps(assessmentType, gapAnalysis)
+
+    const { verificationStatus, ...safeBaseData } = baseData as Omit<UpdateOfflineRapidAssessmentInput, 'type' | 'answers' | 'questionKeys'> & {
+      verificationStatus?: UpdateOfflineRapidAssessmentInput['verificationStatus']
+    }
+    const statusUpdate: Record<string, unknown> = {}
+    if (verificationStatus !== undefined) {
+      statusUpdate.verificationStatus = verificationStatus
+      if (verificationStatus === 'SUBMITTED') {
+        statusUpdate.rejectionReason = null
+        statusUpdate.rejectionFeedback = null
+        statusUpdate.verifiedAt = null
+        statusUpdate.verifiedBy = null
+      }
+    }
+
+    const warningRecords = toOfflineSyncWarnings(id, assessmentType, warnings)
+    const updatedAssessment = await prisma.rapidAssessment.update({
+      where: { id },
+      data: {
+        ...(safeBaseData as Record<string, never>),
+        ...statusUpdate,
+        answers: ingestedAnswers as unknown as Prisma.InputJsonValue,
+        // Client handshake (spec): record the version the answers were
+        // captured against; the frozen snapshot JSON carries its own.
+        structureVersion: clientStructureVersion ?? snapshot.structureVersion,
+        contentVersion: snapshot.contentVersion,
+        questionSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+        priority,
+        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+        updatedAt: new Date()
+      }
+    })
+
+    // Recalculate incident severity bottom-up
+    if (updatedAssessment.incidentId) {
+      try {
+        const { incidentSeverityService } = await import('@/lib/services/incident-severity.service');
+        await incidentSeverityService.recalculateIncidentSeverity(updatedAssessment.incidentId)
+      } catch {}
+    }
+
+    return { assessment: updatedAssessment, warnings: warningRecords }
   }
 
   static async findById(id: string): Promise<RapidAssessmentWithData | null> {

@@ -352,6 +352,7 @@ const WASH_QUESTIONS = WASH_SECTIONS.flatMap((section) => section.questions)
 const mockUseQuestionSet = useQuestionSet as jest.Mock
 const mockUseDrafts = useRapidAssessmentDrafts as jest.Mock
 const mockSaveDraft = jest.fn()
+const mockDeleteDraft = jest.fn()
 let mockDrafts: Array<Record<string, unknown>> = []
 
 beforeEach(() => {
@@ -376,7 +377,7 @@ beforeEach(() => {
     currentDraft: null,
     saveDraft: mockSaveDraft,
     loadDraft: jest.fn(),
-    deleteDraft: jest.fn(),
+    deleteDraft: mockDeleteDraft,
     clearCurrentDraft: jest.fn(),
   }))
 })
@@ -629,6 +630,11 @@ describe('DynamicAssessmentForm — submit payload', () => {
     expect(payload.answers).not.toHaveProperty('additionalWashDetails')
     expect(payload.answers).not.toHaveProperty('additionalHealthDetails')
     expect(payload.answers).not.toHaveProperty('washData') // legacy typed transport is gone
+
+    // P5: submits carry the registry view (structureVersion + questionKeys)
+    // so offline sync drift detection has the client's declared key set.
+    expect(payload.structureVersion).toBe(3)
+    expect(payload.questionKeys).toEqual(WASH_QUESTIONS.map((entry) => entry.key))
   })
 
   test('submit does not call onSubmit while a cross-field violation is live', async () => {
@@ -658,6 +664,9 @@ describe('DynamicAssessmentForm — drafts', () => {
     expect(snapshot).toMatchObject({
       answers: expect.objectContaining({ isWaterSufficient: false, functionalLatrinesAvailable: 0 }),
       rapidAssessmentDate: expect.any(String),
+      // P5: draft saves carry the registry view for drift detection + migration.
+      structureVersion: 3,
+      questionKeys: WASH_QUESTIONS.map((entry) => entry.key),
     })
     expect(entityId).toBe('entity-1')
     expect(incidentId).toBe('incident-1')
@@ -751,6 +760,238 @@ const POPULATION_SECTIONS: QuestionSectionDef[] = [
     ],
   },
 ]
+
+// ---------------------------------------------------------------------------
+// P5 draft migration — restore-on-mount, migration receipt (once per draft),
+// staleness banner with plain Added/Removed lists (dismissable, never
+// blocking submit), collapsed unmapped-answers block (kept, never deleted),
+// and the version-carrying submit payload.
+// ---------------------------------------------------------------------------
+
+describe('DynamicAssessmentForm — P5 draft migration UX', () => {
+  beforeEach(() => {
+    mockDrafts = [
+      {
+        id: 'draft-legacy',
+        assessmentType: 'WASH',
+        entityId: 'entity-1',
+        incidentId: 'incident-1',
+        timestamp: 1,
+        autoSaved: true,
+        data: {
+          answers: { isWaterSufficient: false, ghostQuestion: true },
+          assessorName: 'Restored Officer',
+          structureVersion: 2,
+          questionKeys: ['isWaterSufficient', 'ghostQuestion'],
+        },
+      },
+    ]
+  })
+
+  test('restores the latest draft on mount: flash, receipt, hydration, stale banner, unmapped block', async () => {
+    renderForm()
+
+    expect(screen.getByTestId('draft-restored-flash')).toHaveTextContent('Draft restored')
+
+    // Pinned receipt copy (spec §5): carried count + unmapped count.
+    expect(screen.getByTestId('draft-migration-receipt')).toHaveTextContent(
+      'Your draft was updated to the new question set — 1 answers carried over, 1 unmapped'
+    )
+
+    // Mapped answer hydrated + marked touched (false on a non-inverted GAP
+    // question → GAP badge, interaction gating on).
+    expect(screen.getByTestId('is-water-sufficient-gap-badge')).toHaveTextContent(/^gap$/i)
+    expect(screen.getByTestId('header-interacted')).toHaveTextContent('true')
+    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Restored Officer')
+    // Draft-captured context restores into the selectors.
+    expect((screen.getByTestId('entity-select') as HTMLSelectElement).value).toBe('entity-1')
+    expect((screen.getByTestId('incident-select') as HTMLSelectElement).value).toBe('incident-1')
+
+    // Staleness banner (draft v2 < live v3): copy + plain added/removed lists.
+    expect(screen.getByTestId('draft-stale-banner')).toHaveTextContent(
+      'The questions have changed since this draft was started'
+    )
+    expect(screen.getByTestId('draft-stale-banner')).toHaveTextContent(/You can still submit/i)
+    const bannerText = screen.getByTestId('draft-stale-banner-text')
+    expect(bannerText).toHaveTextContent(
+      `Added: ${WASH_QUESTIONS.map((q) => q.key).filter((key) => key !== 'isWaterSufficient').join(', ')}`
+    )
+    expect(bannerText).toHaveTextContent('Removed: ghostQuestion')
+
+    // Unmapped answers surface in a collapsed block — kept, never hydrated.
+    const block = screen.getByTestId('draft-unmapped-block')
+    expect(block).toHaveTextContent('Unmapped answers (1)')
+    expect(block).toHaveTextContent('ghostQuestion')
+    expect(block).toHaveTextContent(/kept with the draft and never deleted/i)
+  })
+
+  test('the stale banner is dismissable with persistence and never blocks submit', async () => {
+    const { user, mockOnSubmit } = renderForm()
+
+    // Submit stays enabled alongside the banner (fill the required choice).
+    await user.click(screen.getByTestId('select-option-Borehole'))
+    expect(screen.getByTestId('submit-assessment-button')).not.toBeDisabled()
+
+    await user.click(screen.getByTestId('draft-stale-dismiss'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('draft-stale-banner')).not.toBeInTheDocument()
+    )
+    expect(window.localStorage.setItem).toHaveBeenCalledWith(
+      'dqr-draft-stale-dismissed:draft-legacy',
+      'true'
+    )
+
+    // And the submission itself goes through with the live registry view.
+    await user.click(screen.getByTestId('submit-assessment-button'))
+    await waitFor(() => expect(mockOnSubmit).toHaveBeenCalledTimes(1))
+    const payload = mockOnSubmit.mock.calls[0][0]
+    expect(payload.structureVersion).toBe(3)
+    expect(payload.questionKeys).toEqual(WASH_QUESTIONS.map((entry) => entry.key))
+    // The unmapped key never rides the answers map.
+    expect(payload.answers).not.toHaveProperty('ghostQuestion')
+  })
+
+  test('the migration receipt shows ONCE per draft (localStorage flag)', () => {
+    const backing = new Map<string, string>()
+    ;(window.localStorage.getItem as jest.Mock).mockImplementation((key: string) => backing.get(key) ?? null)
+    ;(window.localStorage.setItem as jest.Mock).mockImplementation((key: string, value: string) => {
+      backing.set(key, value)
+    })
+
+    const { unmount } = renderForm()
+    expect(screen.getByTestId('draft-migration-receipt')).toBeInTheDocument()
+    expect(backing.get('dqr-draft-migrated:draft-legacy')).toBe('true')
+
+    unmount()
+    renderForm()
+    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
+    // The restore flash still shows — only the receipt is once-per-draft.
+    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
+  })
+
+  test('fresh draft (structureVersion == current) restores silently: no banner, no receipt, no unmapped block', () => {
+    mockDrafts = [
+      {
+        id: 'draft-fresh',
+        assessmentType: 'WASH',
+        entityId: 'entity-1',
+        incidentId: 'incident-1',
+        timestamp: 3,
+        autoSaved: true,
+        data: {
+          answers: { isWaterSufficient: true, primaryWaterSource: 'Borehole' },
+          assessorName: 'Fresh Officer',
+          structureVersion: 3, // == live registry version → not stale, not legacy
+          questionKeys: WASH_QUESTIONS.map((entry) => entry.key),
+        },
+      },
+    ]
+    renderForm()
+
+    // Restore happens (flash + hydration + captured context)…
+    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
+    expect(screen.getByTestId('is-water-sufficient-gap-badge')).toHaveTextContent(/no gap/i)
+    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Fresh Officer')
+    // …but silently: none of the migration/staleness chrome appears.
+    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('draft-stale-banner')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('draft-unmapped-block')).not.toBeInTheDocument()
+  })
+
+  test('legacy flat drafts (typed-forms era) map by question key and migrate with a receipt', () => {
+    mockDrafts = [
+      {
+        id: 'draft-flat',
+        assessmentType: 'WASH',
+        entityId: 'entity-1',
+        incidentId: 'incident-1',
+        timestamp: 2,
+        autoSaved: true,
+        data: {
+          // Flat typed-form payload: `data` IS the answers map.
+          isWaterSufficient: true,
+          hasCleanWaterAccess: false,
+          ancientQuestion: 'kept from the typed era',
+          assessorName: 'Legacy Officer',
+        },
+      },
+    ]
+    renderForm()
+
+    // Flat fields hydrate by question key; badges prove hydration + touch.
+    expect(screen.getByTestId('is-water-sufficient-gap-badge')).toHaveTextContent(/no gap/i)
+    expect(screen.getByTestId('has-clean-water-access-gap-badge')).toHaveTextContent(/^gap$/i)
+    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Legacy Officer')
+
+    // Legacy drafts always report the migration (carried 2, unmapped 1).
+    expect(screen.getByTestId('draft-migration-receipt')).toHaveTextContent(
+      'Your draft was updated to the new question set — 2 answers carried over, 1 unmapped'
+    )
+    expect(screen.getByTestId('draft-unmapped-block')).toHaveTextContent('ancientQuestion')
+  })
+
+  test('submitting consumes the type\'s drafts so the next blank form starts clean', async () => {
+    const { user, mockOnSubmit } = renderForm()
+    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('select-option-Borehole'))
+    await user.click(screen.getByTestId('submit-assessment-button'))
+    await waitFor(() => expect(mockOnSubmit).toHaveBeenCalledTimes(1))
+
+    // The restored draft (and any siblings of this type) are deleted after a
+    // successful submit — otherwise every later form mount would re-restore
+    // the already-submitted answers.
+    expect(mockDeleteDraft).toHaveBeenCalledWith('draft-legacy')
+  })
+
+  test('unmapped-only drafts (empty answers map) still restore and surface their kept answers', () => {
+    mockDrafts = [
+      {
+        id: 'draft-unmapped-only',
+        assessmentType: 'WASH',
+        entityId: 'entity-1',
+        incidentId: 'incident-1',
+        timestamp: 4,
+        autoSaved: true,
+        data: {
+          answers: {}, // everything migrated out; only unmapped content remains
+          unmappedAnswers: [{ key: 'ghostQuestion', value: true }],
+          assessorName: 'Ghost Officer',
+          structureVersion: 3,
+          questionKeys: WASH_QUESTIONS.map((entry) => entry.key),
+        },
+      },
+    ]
+    renderForm()
+
+    expect(screen.getByTestId('draft-restored-flash')).toBeInTheDocument()
+    expect((screen.getByTestId('assessor-name') as HTMLInputElement).value).toBe('Ghost Officer')
+    const block = screen.getByTestId('draft-unmapped-block')
+    expect(block).toHaveTextContent('Unmapped answers (1)')
+    expect(block).toHaveTextContent('ghostQuestion')
+  })
+
+  test('no restore on edit/reassessment hydrations, and empty drafts never flash', () => {
+    mockDrafts = []
+    const { rerender } = renderForm()
+    expect(screen.queryByTestId('draft-restored-flash')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
+
+    rerender(
+      <DynamicAssessmentForm
+        assessmentType="WASH"
+        entityId="entity-1"
+        incidentId="incident-1"
+        initialAnswers={{ isWaterSufficient: true }}
+        onSubmit={jest.fn().mockResolvedValue(undefined)}
+      />
+    )
+    expect(screen.queryByTestId('draft-restored-flash')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('draft-stale-banner')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('draft-unmapped-block')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('draft-migration-receipt')).not.toBeInTheDocument()
+  })
+})
 
 describe('DynamicAssessmentForm — POPULATION (context-only) suppression', () => {
   beforeEach(() => {

@@ -36,8 +36,14 @@
 /** The four severities a GAP field can carry (never UNCLASSIFIED). */
 export type GapSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
 
-/** Where a row's resolved severity came from — the ladder audit surface. */
-export type GapRowSource = 'registry' | 'snapshot' | 'unmapped'
+/**
+ * Where a row's resolved severity came from — the ladder audit surface.
+ * 'unknown' rows are offline-sync drift: answered keys absent from the
+ * snapshot structure entirely (P5 never-reject ingestion persists them
+ * verbatim in `answers`; the engine keeps them visible without scoring
+ * them — gaps derive from the intersection only).
+ */
+export type GapRowSource = 'registry' | 'snapshot' | 'unmapped' | 'unknown'
 
 const SEVERITY_WEIGHT: Record<GapSeverity, number> = {
   CRITICAL: 4,
@@ -103,7 +109,9 @@ export interface GapEngineResult {
   severity: GapSeverity
   recommendations: string[]
   fieldSeverityMap: Record<string, GapSeverity>
-  /** Truth table: one row per GAP question in the snapshot, presentation order. */
+  /** Truth table: one row per GAP question in the snapshot (presentation
+   * order), followed by one source-'unknown' row per answered key that is
+   * absent from the snapshot structure (offline drift — informational). */
   rows: GapEngineRow[]
   /** Keys of GAP questions with no answer (never gaps, flagged not fabricated). */
   unanswered: string[]
@@ -184,6 +192,43 @@ export function analyzeGaps(
       unanswered: missing,
       candidate,
       isGap,
+    })
+  }
+
+  // Unknown keys (P5 never-reject): answered keys absent from the snapshot
+  // structure (any category) persist verbatim in `answers`; the engine emits
+  // one informational row each — AFTER the mapped rows, in answers order —
+  // with source 'unknown'. They are NEVER gapped: gapFields, severity,
+  // fieldSeverityMap and recommendations derive from the intersection only.
+  // Self-derived (not caller-reported) so re-derivation passes (severity
+  // recompute, triggerGapAnalysis) reproduce the same rows byte-for-byte.
+  const snapshotKeys = new Set<string>()
+  for (const section of snapshotStructure?.sections ?? []) {
+    for (const question of section?.questions ?? []) {
+      if (typeof question?.key === 'string') snapshotKeys.add(question.key)
+    }
+  }
+  const seenKeys = new Set(rows.map((row) => row.key))
+  let unknownIndex = 0
+  for (const [answerKey, answerValue] of Object.entries(answerMap)) {
+    if (answerValue === undefined || answerValue === null) continue
+    if (answerKey.length === 0 || snapshotKeys.has(answerKey) || seenKeys.has(answerKey)) continue
+    seenKeys.add(answerKey)
+    rows.push({
+      key: answerKey,
+      label: answerKey,
+      gapLabel: null,
+      severity: normalizeGapSeverity(registryByQuestionKey.get(answerKey)?.severity),
+      source: 'unknown',
+      recommendation: null,
+      unanswered: false,
+      candidate: {
+        question: { key: answerKey },
+        sectionOrder: Number.POSITIVE_INFINITY,
+        order: Number.POSITIVE_INFINITY,
+        index: unknownIndex++,
+      },
+      isGap: false,
     })
   }
 
