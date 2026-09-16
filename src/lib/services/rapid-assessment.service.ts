@@ -1,16 +1,12 @@
 import { prisma } from '@/lib/db/client'
-import { RapidAssessment, AssessmentType, Prisma, Priority } from '@prisma/client'
+import { RapidAssessment, AssessmentType, Prisma } from '@prisma/client'
 import {
   CreateRapidAssessmentInput,
   UpdateRapidAssessmentInput,
   QueryRapidAssessmentInput,
-  HealthAssessmentInput,
-  PopulationAssessmentInput,
-  FoodAssessmentInput,
-  WASHAssessmentInput,
-  ShelterAssessmentInput,
-  SecurityAssessmentInput
+  AssessmentTypeName,
 } from '@/lib/validation/rapid-assessment'
+import { buildAssessmentSchema } from '@/lib/validation/dynamic-assessment'
 import {
   analyzeGaps,
   analyzeGapsFromSnapshot,
@@ -18,29 +14,27 @@ import {
   GapAnalysis
 } from '@/lib/services/gap-analysis.service'
 import type { GapEngineSnapshotStructure } from '@/lib/questions/gap-engine'
-import {
-  toAnswers,
-  fromAnswers,
-  RapidAssessmentType,
-  RapidAssessmentAnswers
-} from '@/lib/questions/legacy-convert'
+import type { QuestionSnapshot } from '@/lib/questions/question-snapshot'
+import { ApiError } from '@/types/api'
 import { QuestionRegistryService } from '@/lib/services/question-registry.service'
 
 /**
- * Rapid Assessment Service — Dynamic Question Registry edition.
+ * Rapid Assessment Service — Dynamic Question Registry edition (P4).
  *
- * Legacy typed child tables are gone; answers live in `RapidAssessment.answers`
- * (keyed by registry questionKey), with an immutable `questionSnapshot` copied
- * from the live registry at answer time. `gapAnalysis` and `priority` are
- * server-derived from the registry's GAP questions (priority replaces any
- * client-supplied value; POPULATION assessments derive LOW).
+ * Answers live in `RapidAssessment.answers` keyed by registry questionKey and
+ * arrive from the client as the canonical `{ [questionKey]: value }` map (the
+ * typed `healthData`/`washData`/... payloads were deleted with the six
+ * hardcoded forms). On every create/update the service:
  *
- * The legacy API payload shapes (healthData/washData/...) remain accepted:
- * `toAnswers()` converts the validated typed payload to the answers map and
- * `fromAnswers()` rebuilds it for edit-form hydration.
+ *   1. fetches the CURRENT registry snapshot for the type,
+ *   2. validates `answers` against it via `buildAssessmentSchema` — unknown
+ *      keys are stripped, required questions enforced, violations 422 with
+ *      per-field errors (cross-field rules are client-side only, Q2=B),
+ *   3. freezes that snapshot onto the row and derives `gapAnalysis` +
+ *      `priority` through the gap engine (priority is never client input).
  */
 
-// Returned assessments now carry answers/snapshot directly on the row.
+// Returned assessments carry answers/snapshot directly on the row.
 export type RapidAssessmentWithData = RapidAssessment
 
 /** Total question count across snapshot sections (empty-registry guard). */
@@ -48,47 +42,44 @@ function snapshotQuestionCount(snapshot: { sections: Array<{ questions: unknown[
   return snapshot.sections.reduce((count, section) => count + section.questions.length, 0)
 }
 
-/** Extracts the legacy typed payload from a create input by assessment type. */
-function typedPayloadFromCreateInput(input: CreateRapidAssessmentInput): Record<string, unknown> {
-  switch (input.type) {
-    case 'HEALTH':
-      return (input as CreateRapidAssessmentInput & { healthData: HealthAssessmentInput }).healthData
-    case 'POPULATION':
-      return (input as CreateRapidAssessmentInput & { populationData: PopulationAssessmentInput }).populationData
-    case 'FOOD':
-      return (input as CreateRapidAssessmentInput & { foodData: FoodAssessmentInput }).foodData
-    case 'WASH':
-      return (input as CreateRapidAssessmentInput & { washData: WASHAssessmentInput }).washData
-    case 'SHELTER':
-      return (input as CreateRapidAssessmentInput & { shelterData: ShelterAssessmentInput }).shelterData
-    case 'SECURITY':
-      return (input as CreateRapidAssessmentInput & { securityData: SecurityAssessmentInput }).securityData
-    default:
-      throw new Error('Unsupported assessment type')
+/** Adapts a frozen QuestionSnapshot to the validation builder's question-set shape. */
+function snapshotAsQuestionSet(snapshot: QuestionSnapshot) {
+  return {
+    sections: snapshot.sections.map((section) => ({
+      questions: section.questions.map((question) => ({
+        key: question.key,
+        questionType: question.type,
+        required: question.required,
+        options: question.options,
+        numberMin: question.numberMin,
+        numberMax: question.numberMax,
+      })),
+    })),
   }
 }
 
-/** Extracts the (partial) legacy typed payload from an update input, if present. */
-function typedPayloadFromUpdateInput(
-  type: AssessmentType,
-  input: UpdateRapidAssessmentInput
-): Record<string, unknown> | null {
-  switch (type) {
-    case 'HEALTH':
-      return (input.healthData as HealthAssessmentInput | undefined) ?? null
-    case 'POPULATION':
-      return (input.populationData as PopulationAssessmentInput | undefined) ?? null
-    case 'FOOD':
-      return (input.foodData as FoodAssessmentInput | undefined) ?? null
-    case 'WASH':
-      return (input.washData as WASHAssessmentInput | undefined) ?? null
-    case 'SHELTER':
-      return (input.shelterData as ShelterAssessmentInput | undefined) ?? null
-    case 'SECURITY':
-      return (input.securityData as SecurityAssessmentInput | undefined) ?? null
-    default:
-      return null
+/**
+ * Validates an answers payload against the given frozen snapshot and returns
+ * the canonical (unknown-keys-stripped) answers map. Throws ApiError 422 with
+ * zod-flattened field errors on any violation.
+ */
+function validateAnswersAgainstSnapshot(
+  snapshot: QuestionSnapshot,
+  answers: Record<string, unknown>
+): Record<string, unknown> {
+  const parsed = buildAssessmentSchema(snapshotAsQuestionSet(snapshot)).safeParse(answers ?? {})
+  if (!parsed.success) {
+    const flattened = parsed.error.flatten()
+    throw new ApiError(
+      'Answers failed registry validation',
+      422,
+      {
+        fieldErrors: flattened.fieldErrors,
+        formErrors: flattened.formErrors,
+      }
+    )
   }
+  return parsed.data as Record<string, unknown>
 }
 
 export class RapidAssessmentService {
@@ -96,7 +87,7 @@ export class RapidAssessmentService {
     input: CreateRapidAssessmentInput,
     createdBy: string
   ): Promise<RapidAssessmentWithData> {
-    const { type, entityId } = input
+    const { type, entityId, answers } = input
 
     // Verify user is assigned to this entity
     await this.validateEntityAssignment(createdBy, entityId)
@@ -114,23 +105,19 @@ export class RapidAssessmentService {
     // Determine verification status based on entity's auto-approval setting
     const verificationStatus = entity.autoApproveEnabled ? 'AUTO_VERIFIED' : 'SUBMITTED'
 
-    // Convert the validated legacy typed payload into the canonical answers map
-    const typedPayload = typedPayloadFromCreateInput(input)
-    const answers = toAnswers(type as RapidAssessmentType, typedPayload)
-
     // Freeze the per-assessment snapshot from the registry service (single source)
     const questionSnapshot = await QuestionRegistryService.getSnapshot(type)
     if (snapshotQuestionCount(questionSnapshot) === 0) {
       throw new Error(`No active registry questions found for assessment type ${type}`)
     }
-    const versions = {
-      structureVersion: questionSnapshot.structureVersion,
-      contentVersion: questionSnapshot.contentVersion,
-    }
+
+    // Validate the client's answers against the snapshot being frozen:
+    // unknown keys stripped, required questions enforced.
+    const validatedAnswers = validateAnswersAgainstSnapshot(questionSnapshot, answers ?? {})
 
     // Derive gap analysis + priority through the engine, against the snapshot
     // this assessment just froze (priority replaces client input)
-    const gapAnalysis = await analyzeGapsFromSnapshot(type, questionSnapshot, answers)
+    const gapAnalysis = await analyzeGapsFromSnapshot(type, questionSnapshot, validatedAnswers)
     const priority = derivePriorityFromGaps(type, gapAnalysis)
 
     const rapidAssessment = await prisma.rapidAssessment.create({
@@ -150,9 +137,9 @@ export class RapidAssessmentService {
         syncStatus: 'SYNCED',
         verificationStatus,
         verifiedAt: entity.autoApproveEnabled ? new Date() : null,
-        answers: answers as unknown as Prisma.InputJsonValue,
-        structureVersion: versions.structureVersion,
-        contentVersion: versions.contentVersion,
+        answers: validatedAnswers as unknown as Prisma.InputJsonValue,
+        structureVersion: questionSnapshot.structureVersion,
+        contentVersion: questionSnapshot.contentVersion,
         questionSnapshot: questionSnapshot as unknown as Prisma.InputJsonValue,
         gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
       }
@@ -215,25 +202,6 @@ export class RapidAssessmentService {
     })
 
     return assessment
-  }
-
-  /**
-   * Rebuilds the legacy typed payload shape (arrays as arrays) from the stored
-   * answers map — the edit-form hydration bridge.
-   */
-  static async findTypedPayload(id: string): Promise<{ type: AssessmentType; payload: Record<string, unknown> } | null> {
-    const assessment = await prisma.rapidAssessment.findUnique({
-      where: { id },
-      select: { rapidAssessmentType: true, answers: true }
-    })
-    if (!assessment) return null
-    return {
-      type: assessment.rapidAssessmentType,
-      payload: fromAnswers(
-        assessment.rapidAssessmentType as RapidAssessmentType,
-        (assessment.answers ?? {}) as RapidAssessmentAnswers
-      ),
-    }
   }
 
   static async findByUserId(
@@ -376,8 +344,6 @@ export class RapidAssessmentService {
         id: true,
         assessorId: true,
         rapidAssessmentType: true,
-        answers: true,
-        questionSnapshot: true,
         structureVersion: true,
         contentVersion: true,
       }
@@ -390,42 +356,29 @@ export class RapidAssessmentService {
       throw new Error('Not authorized to update this assessment')
     }
 
-    const { type, healthData, populationData, foodData, washData, shelterData, securityData, ...baseData } = input
+    const { type, answers, ...baseData } = input
 
-    const assessmentType = existingAssessment.rapidAssessmentType
-
-    // Merge the (partial) typed payload into the stored answers map and
-    // re-derive snapshot + gap analysis + priority when answers changed.
-    const typedPayload = typedPayloadFromUpdateInput(assessmentType, input)
-    let answersUpdate: Prisma.InputJsonValue | undefined
-    let versionsUpdate: { structureVersion: number; contentVersion: number } | undefined
-    let questionSnapshotUpdate: Prisma.InputJsonValue | undefined
-    let priorityUpdate: Priority | undefined
-    let gapAnalysisUpdate: Prisma.InputJsonValue | undefined
-
-    if (typedPayload) {
-      const mergedAnswers: RapidAssessmentAnswers = {
-        ...((existingAssessment.answers ?? {}) as RapidAssessmentAnswers),
-        ...toAnswers(assessmentType as RapidAssessmentType, typedPayload),
-      }
-      const snapshot = await QuestionRegistryService.getSnapshot(assessmentType)
-      if (snapshotQuestionCount(snapshot) === 0) {
-        throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
-      }
-      const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, mergedAnswers)
-      answersUpdate = mergedAnswers as unknown as Prisma.InputJsonValue
-      versionsUpdate = {
-        structureVersion: snapshot.structureVersion,
-        contentVersion: snapshot.contentVersion,
-      }
-      questionSnapshotUpdate = snapshot as unknown as Prisma.InputJsonValue
-      priorityUpdate = derivePriorityFromGaps(assessmentType, gapAnalysis)
-      gapAnalysisUpdate = gapAnalysis as unknown as Prisma.InputJsonValue
+    const assessmentType = existingAssessment.rapidAssessmentType as AssessmentTypeName
+    if (type !== assessmentType) {
+      throw new ApiError(
+        `Assessment type cannot change on update (stored ${assessmentType}, payload ${type})`,
+        422
+      )
     }
 
-    const { verificationStatus, priority, ...safeBaseData } = baseData as Record<string, unknown> & {
-      verificationStatus?: string
-      priority?: Priority
+    // Answers are a full replace: validate against the CURRENT registry
+    // snapshot, re-freeze it onto the row, and re-derive gap analysis +
+    // priority (bumping the version stamps to the current registry versions).
+    const snapshot = await QuestionRegistryService.getSnapshot(assessmentType)
+    if (snapshotQuestionCount(snapshot) === 0) {
+      throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
+    }
+    const validatedAnswers = validateAnswersAgainstSnapshot(snapshot, answers ?? {})
+    const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, validatedAnswers)
+    const priority = derivePriorityFromGaps(assessmentType, gapAnalysis)
+
+    const { verificationStatus, ...safeBaseData } = baseData as Omit<UpdateRapidAssessmentInput, 'type' | 'answers'> & {
+      verificationStatus?: UpdateRapidAssessmentInput['verificationStatus']
     }
     const statusUpdate: Record<string, unknown> = {}
     if (verificationStatus !== undefined) {
@@ -443,13 +396,12 @@ export class RapidAssessmentService {
       data: {
         ...(safeBaseData as Record<string, never>),
         ...statusUpdate,
-        ...(answersUpdate !== undefined ? { answers: answersUpdate } : {}),
-        ...(versionsUpdate !== undefined
-          ? { structureVersion: versionsUpdate.structureVersion, contentVersion: versionsUpdate.contentVersion }
-          : {}),
-        ...(questionSnapshotUpdate !== undefined ? { questionSnapshot: questionSnapshotUpdate } : {}),
-        ...(priorityUpdate !== undefined ? { priority: priorityUpdate } : {}),
-        ...(gapAnalysisUpdate !== undefined ? { gapAnalysis: gapAnalysisUpdate } : {}),
+        answers: validatedAnswers as unknown as Prisma.InputJsonValue,
+        structureVersion: snapshot.structureVersion,
+        contentVersion: snapshot.contentVersion,
+        questionSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+        priority,
+        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
         updatedAt: new Date()
       }
     })

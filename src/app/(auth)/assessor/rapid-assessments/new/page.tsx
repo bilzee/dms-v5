@@ -13,15 +13,9 @@ import { useAuth } from '@/hooks/useAuth'
 import { apiGet } from '@/lib/api'
 import { assessmentOfflineService } from '@/lib/services/assessment-offline.service'
 
-// Import assessment forms
-import { 
-  HealthAssessmentForm,
-  PopulationAssessmentForm,
-  FoodAssessmentForm,
-  WASHAssessmentForm,
-  ShelterAssessmentForm,
-  SecurityAssessmentForm
-} from '@/components/forms/assessment'
+// Registry-driven assessment form (P4) — one component for every type
+import { DynamicAssessmentForm, type AssessmentFormSubmitPayload } from '@/components/forms/assessment/DynamicAssessmentForm'
+import type { RapidAssessmentType } from '@/lib/questions/answers'
 
 const assessmentTypes = [
   { 
@@ -135,52 +129,19 @@ function NewAssessmentContent() {
   }
 
   const renderAssessmentForm = () => {
-    const handleAssessmentSubmit = async (formData: any) => {
+    const handleAssessmentSubmit = async (payload: AssessmentFormSubmitPayload) => {
       try {
-        console.log('Submitting assessment data:', formData)
-        
-        // Prepare the assessment data for API submission
-        const baseAssessmentData = {
-          type: selectedType,
-          rapidAssessmentDate: formData.rapidAssessmentDate || new Date(),
-          assessorName: formData.assessorName || 'Multi Role Test User',
-          location: formData.location || '',
-          coordinates: formData.coordinates || undefined,
-          mediaAttachments: formData.mediaAttachments || [],
-          priority: formData.priority || 'MEDIUM',
-          entityId: formData.entityId || 'default-entity', // Use the entity from form
-          incidentId: formData.incidentId, // Include the incident ID from form
-        }
-        
-        // Add type-specific data
-        let assessmentData: any = { ...baseAssessmentData };
-        switch (selectedType) {
-          case 'HEALTH':
-            assessmentData = { ...baseAssessmentData, healthData: formData.healthData };
-            break;
-          case 'POPULATION':
-            assessmentData = { ...baseAssessmentData, populationData: formData.populationData };
-            break;
-          case 'FOOD':
-            assessmentData = { ...baseAssessmentData, foodData: formData.foodData };
-            break;
-          case 'WASH':
-            assessmentData = { ...baseAssessmentData, washData: formData.washData };
-            break;
-          case 'SHELTER':
-            assessmentData = { ...baseAssessmentData, shelterData: formData.shelterData };
-            break;
-          case 'SECURITY':
-            assessmentData = { ...baseAssessmentData, securityData: formData.securityData };
-            break;
-        }
-        
-        const result = await assessmentOfflineService.createAssessment(assessmentData, user?.id || 'unknown');
-        console.log('Assessment submitted successfully:', result);
-        handleAssessmentComplete();
+        console.log('Submitting assessment data:', payload)
+
+        // Answers-based payload — validated client-side against the live
+        // registry and server-side against the frozen snapshot. No priority:
+        // the server derives it (p3).
+        const result = await assessmentOfflineService.createAssessment(payload, user?.id || 'unknown')
+        console.log('Assessment submitted successfully:', result)
+        handleAssessmentComplete()
       } catch (error) {
-        console.error('Error submitting assessment:', error);
-        throw error;
+        console.error('Error submitting assessment:', error)
+        throw error
       }
     }
 
@@ -189,45 +150,19 @@ function NewAssessmentContent() {
       ? new Date(latestAssessmentData.rapidAssessmentDate).toLocaleDateString()
       : undefined
 
-    const commonProps = {
-      entityId: prefillEntityId,
-      incidentId: prefillIncidentId,
-      initialData: latestAssessmentData,
-      onSubmit: handleAssessmentSubmit,
-      onCancel: handleGoBack,
-      lockIncidentEntity: !!(prefillEntityId && prefillIncidentId),
-      onIncidentEntityChange: (incidentId: string, entityId: string) => {
-        if (selectedType && incidentId && entityId) {
-          fetchLatestAssessment(incidentId, entityId, selectedType);
-        }
-      },
-      isReassessment,
-      previousAssessmentDate,
-    }
-
-    switch (selectedType) {
-      case 'HEALTH':
-        return <HealthAssessmentForm {...commonProps} />
-      case 'POPULATION':
-        return <PopulationAssessmentForm {...commonProps} />
-      case 'FOOD':
-        return <FoodAssessmentForm {...commonProps} />
-      case 'WASH':
-        return <WASHAssessmentForm {...commonProps} />
-      case 'SHELTER':
-        return <ShelterAssessmentForm {...commonProps} />
-      case 'SECURITY':
-        return <SecurityAssessmentForm {...commonProps} />
-      default:
-        return (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>
-              Invalid assessment type selected. Please go back and choose a valid assessment type.
-            </AlertDescription>
-          </Alert>
-        )
-    }
+    return (
+      <DynamicAssessmentForm
+        assessmentType={selectedType as RapidAssessmentType}
+        entityId={prefillEntityId || undefined}
+        incidentId={prefillIncidentId || undefined}
+        initialAnswers={latestAssessmentData?.answers ?? null}
+        onSubmit={handleAssessmentSubmit}
+        onCancel={handleGoBack}
+        lockIncidentEntity={!!(prefillEntityId && prefillIncidentId)}
+        isReassessment={isReassessment}
+        previousAssessmentDate={previousAssessmentDate}
+      />
+    )
   }
 
   return (

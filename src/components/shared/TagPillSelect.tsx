@@ -14,6 +14,7 @@ interface TagPillSelectProps {
   onChange: (selected: string[]) => void
   disabled?: boolean
   className?: string
+  ['data-testid']?: string
 }
 
 export function TagPillSelect({
@@ -22,6 +23,7 @@ export function TagPillSelect({
   onChange,
   disabled = false,
   className,
+  'data-testid': dataTestId,
 }: TagPillSelectProps) {
   const toggle = (id: string) => {
     if (disabled) return
@@ -33,7 +35,7 @@ export function TagPillSelect({
   }
 
   return (
-    <div className={cn('flex flex-wrap gap-2', className)}>
+    <div className={cn('flex flex-wrap gap-2', className)} data-testid={dataTestId}>
       {options.map((option) => {
         const isSelected = selected.includes(option.id)
         return (

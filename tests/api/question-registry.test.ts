@@ -562,7 +562,7 @@ describe('P2 question registry governance', () => {
         verificationStatus: 'VERIFIED',
         priority: 'MEDIUM',
         withSnapshot: true,
-        sectors: { food: { isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true } },
+        answers: { isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true },
       })
       const controlResolved = await createRapidAssessment({
         assessorId: assessor.id,
@@ -572,7 +572,7 @@ describe('P2 question registry governance', () => {
         verificationStatus: 'VERIFIED',
         priority: 'MEDIUM',
         withSnapshot: true,
-        sectors: { food: { isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true } },
+        answers: { isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true },
       })
       const controlOtherType = await createRapidAssessment({
         assessorId: assessor.id,
@@ -581,7 +581,7 @@ describe('P2 question registry governance', () => {
         assessmentType: 'WASH',
         verificationStatus: 'VERIFIED',
         withSnapshot: true,
-        sectors: { wash: { hasOpenDefecationConcerns: false } },
+        answers: { hasOpenDefecationConcerns: false },
       })
 
       const before = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: affected.id } })

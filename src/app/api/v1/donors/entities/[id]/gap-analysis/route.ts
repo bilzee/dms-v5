@@ -7,7 +7,7 @@ import {
   GapAnalysisResponseSchema,
   AssessmentTypeSchema
 } from '@/lib/validation/entity-insights';
-import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/answers';
 import { handleApiError } from '@/lib/api/response'
 
 // Hydrates the legacy typed payload view from the canonical answers map

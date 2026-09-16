@@ -98,7 +98,7 @@ describe('P0 authorization matrix', () => {
       const responder = (await createUser({ roles: ['RESPONDER'] })) as AuthedUser
       const response = await createRapidAssessment(
         makeRequest('POST', '/api/v1/rapid-assessments', {
-          body: { type: 'SECURITY', securityData: {} },
+          body: { type: 'SECURITY', answers: {} },
           token: tokenFor(responder),
         })
       )

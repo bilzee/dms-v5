@@ -56,3 +56,23 @@
   summary: Seed derivation rewiring (`prisma/seed.ts` → gap engine) has no automated verification.
   evidence: No test executes the seed's `main()`; a future argument swap would seed all-LOW demo data with every suite green. Engine, snapshot builder, and the mirrored service create-path are each pinned, so residual risk is dev/demo-data only; a seed-derivation assertion harness would close it.
 
+## From Spec Decision (2026-09-15, DQR P4)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
+  summary: Replace the hardcoded client-side cross-field rules module (`src/lib/questions/cross-field-rules.ts`, decided Q2=B) with an assessment-wide cross-validation layer backed by the question registry.
+  evidence: The registry cannot express cross-field rules today (plan §2.1/§3 extraction omitted them), so the 12 legacy predicates (POPULATION 8 sum-exceeds-total, FOOD 2, WASH 1, SHELTER 1) survive as a per-key client-side island; server-side enforcement is an accepted parity loss until a registry rule language exists.
+
+## From Review (2026-09-15, DQR P4)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
+  summary: Multi-select answers replayed from stale offline queues can arrive as JSON strings (`"[\"Malaria\"]"`) instead of arrays; only the live form guarantees array shape (`coerceArray`).
+  evidence: The offline sync path (p5) owns replay serialization; `src/lib/questions/answers.ts` coerces at the form boundary but nothing at the transport/service boundary does. Fix belongs to the p5 offline queue replay work (normalize or reject string-encoded arrays there).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
+  summary: The edit page's `fromAnswers(...)` read side is catalog-bound (`src/lib/questions/answers.ts` typed defaults), so reading an assessment whose answers reference renamed/removed registry keys renders blanks even though the snapshot on the row still has the old definitions.
+  evidence: Read-side hydration uses the live `useQuestionSet` view, not the row's frozen `questionSnapshot`; correctness of the snapshot for derivation is unaffected (p3 pins). Fix belongs with the p7/p9 read-side work that renders from the stored snapshot when keys drift.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
+  summary: `test:api` (jest, drms_test@5435) and `test:baseline:e2e` (Playwright, port 3100) share the `drms_test` database; running them concurrently truncates rows under each other.
+  evidence: Both suites truncate/assert against `drms_test` by design (separate npm scripts, sequential in local runs); no CI pipeline exists yet. Fix belongs to CI pipeline setup: serialize the suites (or give e2e its own DB) when the pipeline is added.
+

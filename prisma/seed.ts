@@ -1,7 +1,8 @@
 import { PrismaClient, Question } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { seedQuestions } from './seed-questions'
-import { toAnswers, buildQuestionSnapshot, RapidAssessmentType } from '../src/lib/questions/legacy-convert'
+import { buildQuestionSnapshot } from '../src/lib/questions/question-snapshot'
+import type { RapidAssessmentType } from '../src/lib/questions/answers'
 import { getRegistryVersions, RegistryVersions } from '../src/lib/questions/registry-versions'
 import { analyzeGaps as deriveGapAnalysis } from '../src/lib/questions/gap-engine'
 
@@ -735,10 +736,10 @@ async function main() {
     const assessment = sampleAssessments[seedIdx]
     const assessmentType = assessment.rapidAssessmentType as RapidAssessmentType
 
-    // Convert the typed payload to the canonical answers map and freeze the
-    // question snapshot from the live registry (version counters come from
-    // the SystemSetting rows the registry seed just initialized).
-    const answers = toAnswers(assessmentType, sampleTypedPayloads[assessmentType] ?? {})
+    // The sample payload IS the canonical answers map (registry question
+    // keys). Freeze the question snapshot from the live registry (version
+    // counters come from the SystemSetting rows the registry seed initialized).
+    const answers: Record<string, unknown> = sampleTypedPayloads[assessmentType] ?? {}
     const questions = (questionsByType.get(assessmentType) ?? []) as Question[]
     const versions: RegistryVersions | null =
       questions.length > 0 ? await getRegistryVersions(prisma, assessmentType) : null
@@ -753,7 +754,7 @@ async function main() {
     // the same rule (no special-casing).
     const gapAnalysis = deriveGapAnalysis(
       questionSnapshot,
-      answers as Record<string, unknown>,
+      answers,
       questions.map((q) => ({ questionKey: q.questionKey, severity: q.severity }))
     )
     const derivedPriority = gapAnalysis.severity

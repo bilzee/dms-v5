@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   const { AuthService } = await import('../src/lib/auth/service')
   const { getRegistryVersions } = await import('../src/lib/questions/registry-versions')
   const { seedQuestions } = await import('../prisma/seed-questions')
-  const { buildQuestionSnapshot, toAnswers } = await import('../src/lib/questions/legacy-convert')
+  const { buildQuestionSnapshot } = await import('../src/lib/questions/question-snapshot')
   const { analyzeGaps: engineAnalyzeGaps } = await import('../src/lib/questions/gap-engine')
   const { analyzeGapsFromSnapshot } = await import('../src/lib/services/gap-analysis.service')
   const { RapidAssessmentService } = await import('../src/lib/services/rapid-assessment.service')
@@ -153,8 +153,8 @@ async function main(): Promise<void> {
     }
 
     // Fixtures: snapshot stamped from the live registry exactly as the service
-    // path freezes it; answers via the canonical toAnswers conversion.
-    const healthAnswers = toAnswers('HEALTH', {
+    // path freezes it; answers are the canonical registry-keyed map.
+    const healthAnswers: Record<string, unknown> = {
       hasFunctionalClinic: true,
       hasEmergencyServices: false, // GAP key under test (seeded MEDIUM)
       numberHealthFacilities: 2,
@@ -164,7 +164,7 @@ async function main(): Promise<void> {
       hasMedicineSupply: false, // second, unrelated MEDIUM gap
       hasMedicalSupplies: true,
       hasMaternalChildServices: true,
-    }) as Record<string, unknown>
+    }
 
     async function healthSnapshotRows() {
       return db.question.findMany({

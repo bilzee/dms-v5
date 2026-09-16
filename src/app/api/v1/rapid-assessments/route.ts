@@ -4,7 +4,8 @@ import { successResponse, createdResponse, paginatedResponse, errorResponse, han
 import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
 import {
   CreateRapidAssessmentSchema,
-  QueryRapidAssessmentSchema
+  QueryRapidAssessmentSchema,
+  findLegacySectorPayloadKey
 } from '@/lib/validation/rapid-assessment'
 
 export const GET = withAuth(async (request, context) => {
@@ -50,6 +51,13 @@ export const POST = withAuth(async (request, context) => {
 
   try {
     const body = await request.json()
+    const legacyKey = findLegacySectorPayloadKey(body)
+    if (legacyKey) {
+      return errorResponse(
+        `Legacy typed payloads are no longer accepted: "${legacyKey}" was removed with the hardcoded forms. Submit the registry-keyed "answers" map instead.`,
+        422
+      )
+    }
     const input = CreateRapidAssessmentSchema.parse(body)
 
     const assessment = await RapidAssessmentService.create(input, context.userId)

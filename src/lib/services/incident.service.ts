@@ -4,7 +4,7 @@ import {
   CreateIncidentInput,
   QueryIncidentInput 
 } from '@/lib/validation/incidents'
-import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert'
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/answers'
 
 export class IncidentService {
   static async create(

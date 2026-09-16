@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuth } from '@/lib/auth/middleware';
 import { prisma } from '@/lib/db/client';
 import { v4 as uuidv4 } from 'uuid';
-import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert';
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/answers';
 import { handleApiError } from '@/lib/api/response'
 
 export const GET = withAuth(async (request: NextRequest, context) => {

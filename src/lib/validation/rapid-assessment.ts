@@ -1,6 +1,28 @@
+/**
+ * Rapid assessment transport validation (P4 — registry answers payloads).
+ *
+ * Create/update bodies carry the registry-keyed answers map directly:
+ *
+ *   { type, rapidAssessmentDate, assessorName, location?, coordinates?,
+ *     mediaAttachments?, entityId, incidentId, answers }
+ *
+ * `answers` is `{ [questionKey]: boolean | number | string | string[] }`.
+ * The transport schema only checks it is a JSON object — the per-question
+ * contract is validated against the CURRENT registry snapshot via
+ * `buildAssessmentSchema` at the service boundary, so unknown keys are
+ * stripped and required questions are enforced for whatever the registry
+ * contains at submit time. Cross-field rules are client-side only (Q2=B:
+ * direct API calls bypass them — accepted parity loss). Priority is NEVER
+ * accepted from the client — the server derives it from the gap engine.
+ */
+
 import { z } from 'zod'
 
-// Base Rapid Assessment Schema
+export const AssessmentTypeEnum = z.enum(['HEALTH', 'WASH', 'SHELTER', 'FOOD', 'SECURITY', 'POPULATION'])
+
+export type AssessmentTypeName = z.infer<typeof AssessmentTypeEnum>
+
+// Base Rapid Assessment Schema (type-independent metadata)
 const BaseRapidAssessmentSchema = z.object({
   rapidAssessmentDate: z.coerce.date(),
   assessorName: z.string().min(1, 'Assessor name is required'),
@@ -13,196 +35,62 @@ const BaseRapidAssessmentSchema = z.object({
     captureMethod: z.enum(['GPS', 'MANUAL'])
   }).optional(),
   mediaAttachments: z.array(z.string()).optional(),
-  priority: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']).default('MEDIUM'),
   entityId: z.string().min(1, 'Entity is required'),
   incidentId: z.string().min(1, 'Incident is required')
 })
 
-// Health Assessment Schema
-export const HealthAssessmentSchema = z.object({
-  hasFunctionalClinic: z.boolean(),
-  hasEmergencyServices: z.boolean(),
-  numberHealthFacilities: z.number().int().min(0),
-  healthFacilityType: z.string().min(1, 'Health facility type is required'),
-  qualifiedHealthWorkers: z.number().int().min(0),
-  hasTrainedStaff: z.boolean(),
-  hasMedicineSupply: z.boolean(),
-  hasMedicalSupplies: z.boolean(),
-  hasMaternalChildServices: z.boolean(),
-  commonHealthIssues: z.array(z.string()).default([]),
-  additionalHealthDetails: z.any().optional()
+/**
+ * Create schema: type + full metadata + the raw answers map. The answers
+ * themselves are compiled against the live registry in the service
+ * (`buildAssessmentSchema`) — this layer deliberately stays shape-only so a
+ * registry edit never requires a transport-schema change.
+ */
+export const CreateRapidAssessmentSchema = BaseRapidAssessmentSchema.extend({
+  type: AssessmentTypeEnum,
+  answers: z.record(z.unknown())
 })
 
-// Population Assessment Schema
-export const PopulationAssessmentSchema = z.object({
-  totalHouseholds: z.number().int().min(0),
-  totalPopulation: z.number().int().min(0),
-  populationMale: z.number().int().min(0),
-  populationFemale: z.number().int().min(0),
-  populationUnder5: z.number().int().min(0),
-  pregnantWomen: z.number().int().min(0),
-  lactatingMothers: z.number().int().min(0),
-  personWithDisability: z.number().int().min(0),
-  elderlyPersons: z.number().int().min(0),
-  separatedChildren: z.number().int().min(0),
-  numberLivesLost: z.number().int().min(0),
-  numberInjured: z.number().int().min(0),
-  additionalPopulationDetails: z.string().optional()
-})
-
-// Food Assessment Schema
-export const FoodAssessmentSchema = z.object({
-  isFoodSufficient: z.boolean(),
-  hasRegularMealAccess: z.boolean(),
-  hasInfantNutrition: z.boolean(),
-  foodSource: z.array(z.string()).default([]),
-  availableFoodDurationDays: z.number().int().min(0),
-  additionalFoodRequiredPersons: z.number().int().min(0),
-  additionalFoodRequiredHouseholds: z.number().int().min(0),
-  additionalFoodDetails: z.any().optional()
-}).refine(
-  (data) => !(data.isFoodSufficient && data.additionalFoodRequiredPersons > 0),
-  { message: 'Food marked sufficient but additional persons required', path: ['additionalFoodRequiredPersons'] }
-).refine(
-  (data) => !(data.isFoodSufficient && data.availableFoodDurationDays < 7),
-  { message: 'Food marked sufficient but duration is less than 7 days', path: ['availableFoodDurationDays'] }
-)
-
-// WASH Assessment Schema
-export const WASHAssessmentSchema = z.object({
-  waterSource: z.array(z.string()).default([]),
-  isWaterSufficient: z.boolean(),
-  hasCleanWaterAccess: z.boolean(),
-  functionalLatrinesAvailable: z.number().int().min(0),
-  areLatrinesSufficient: z.boolean(),
-  hasHandwashingFacilities: z.boolean(),
-  hasOpenDefecationConcerns: z.boolean(),
-  additionalWashDetails: z.any().optional()
-}).refine(
-  (data) => !(data.areLatrinesSufficient && data.functionalLatrinesAvailable === 0),
-  { message: 'Latrines marked sufficient but none are functional', path: ['functionalLatrinesAvailable'] }
-)
-
-// Shelter Assessment Schema
-export const ShelterAssessmentSchema = z.object({
-  areSheltersSufficient: z.boolean(),
-  hasSafeStructures: z.boolean(),
-  shelterTypes: z.array(z.string()).default([]),
-  requiredShelterType: z.array(z.string()).default([]),
-  numberSheltersRequired: z.number().int().min(0),
-  areOvercrowded: z.boolean(),
-  provideWeatherProtection: z.boolean(),
-  additionalShelterDetails: z.any().optional()
-}).refine(
-  (data) => !(data.areSheltersSufficient && data.numberSheltersRequired > 0),
-  { message: 'Shelters marked sufficient but additional shelters required', path: ['numberSheltersRequired'] }
-)
-
-// Security Assessment Schema
-export const SecurityAssessmentSchema = z.object({
-  isSafeFromViolence: z.boolean(),
-  gbvCasesReported: z.boolean(),
-  hasSecurityPresence: z.boolean(),
-  hasProtectionReportingMechanism: z.boolean(),
-  vulnerableGroupsHaveAccess: z.boolean(),
-  hasLighting: z.boolean(),
-  additionalSecurityDetails: z.any().optional()
-})
-
-// Full Assessment Schemas (base + type-specific)
-export const CreateHealthAssessmentSchema = BaseRapidAssessmentSchema.extend({
-  type: z.literal('HEALTH'),
-  healthData: HealthAssessmentSchema
-})
-
-export const CreatePopulationAssessmentSchema = BaseRapidAssessmentSchema.extend({
-  type: z.literal('POPULATION'),
-  populationData: PopulationAssessmentSchema
-})
-
-export const CreateFoodAssessmentSchema = BaseRapidAssessmentSchema.extend({
-  type: z.literal('FOOD'),
-  foodData: FoodAssessmentSchema
-})
-
-export const CreateWASHAssessmentSchema = BaseRapidAssessmentSchema.extend({
-  type: z.literal('WASH'),
-  washData: WASHAssessmentSchema
-})
-
-export const CreateShelterAssessmentSchema = BaseRapidAssessmentSchema.extend({
-  type: z.literal('SHELTER'),
-  shelterData: ShelterAssessmentSchema
-})
-
-export const CreateSecurityAssessmentSchema = BaseRapidAssessmentSchema.extend({
-  type: z.literal('SECURITY'),
-  securityData: SecurityAssessmentSchema
-})
-
-// Union Schema for Creating Any Assessment Type
-export const CreateRapidAssessmentSchema = z.discriminatedUnion('type', [
-  CreateHealthAssessmentSchema,
-  CreatePopulationAssessmentSchema,
-  CreateFoodAssessmentSchema,
-  CreateWASHAssessmentSchema,
-  CreateShelterAssessmentSchema,
-  CreateSecurityAssessmentSchema
-])
-
-// Update Schemas (partial updates allowed)
-const PartialFoodAssessmentSchema = z.object({
-  isFoodSufficient: z.boolean().optional(),
-  hasRegularMealAccess: z.boolean().optional(),
-  hasInfantNutrition: z.boolean().optional(),
-  foodSource: z.array(z.string()).optional(),
-  availableFoodDurationDays: z.number().int().min(0).optional(),
-  additionalFoodRequiredPersons: z.number().int().min(0).optional(),
-  additionalFoodRequiredHouseholds: z.number().int().min(0).optional(),
-  additionalFoodDetails: z.any().optional()
-})
-
-const PartialWASHAssessmentSchema = z.object({
-  waterSource: z.array(z.string()).optional(),
-  isWaterSufficient: z.boolean().optional(),
-  hasCleanWaterAccess: z.boolean().optional(),
-  functionalLatrinesAvailable: z.number().int().min(0).optional(),
-  areLatrinesSufficient: z.boolean().optional(),
-  hasHandwashingFacilities: z.boolean().optional(),
-  hasOpenDefecationConcerns: z.boolean().optional(),
-  additionalWashDetails: z.any().optional()
-})
-
-const PartialShelterAssessmentSchema = z.object({
-  areSheltersSufficient: z.boolean().optional(),
-  hasSafeStructures: z.boolean().optional(),
-  shelterTypes: z.array(z.string()).optional(),
-  requiredShelterType: z.array(z.string()).optional(),
-  numberSheltersRequired: z.number().int().min(0).optional(),
-  areOvercrowded: z.boolean().optional(),
-  provideWeatherProtection: z.boolean().optional(),
-  additionalShelterDetails: z.any().optional()
-})
-
+/**
+ * Update schema: same payload, metadata fields optional (only `type` and the
+ * replacement `answers` map are required — updates are full-answer replaces).
+ * `verificationStatus` stays an accepted optional field so the rejected-edit
+ * page can resubmit (SUBMITTED resets the rejection stamps in the service).
+ */
 export const UpdateRapidAssessmentSchema = BaseRapidAssessmentSchema.partial().extend({
-  type: z.enum(['HEALTH', 'WASH', 'SHELTER', 'FOOD', 'SECURITY', 'POPULATION']).optional(),
-  verificationStatus: z.enum(['DRAFT', 'SUBMITTED', 'VERIFIED', 'AUTO_VERIFIED', 'REJECTED']).optional(),
-  healthData: HealthAssessmentSchema.partial().optional(),
-  populationData: PopulationAssessmentSchema.partial().optional(),
-  foodData: PartialFoodAssessmentSchema.optional(),
-  washData: PartialWASHAssessmentSchema.optional(),
-  shelterData: PartialShelterAssessmentSchema.optional(),
-  securityData: SecurityAssessmentSchema.partial().optional()
+  type: AssessmentTypeEnum,
+  answers: z.record(z.unknown()),
+  verificationStatus: z.enum(['DRAFT', 'SUBMITTED', 'VERIFIED', 'AUTO_VERIFIED', 'REJECTED']).optional()
 })
 
-// Query Schema
+/**
+ * The six legacy typed transport keys (`healthData`, `populationData`, …) were
+ * deleted with the hardcoded forms. A body that carries one of them WITHOUT an
+ * `answers` map is a stale legacy client submission and is rejected with 422
+ * (junk keys alongside a valid `answers` map are simply stripped by zod).
+ */
+export const LEGACY_SECTOR_PAYLOAD_KEYS = [
+  'healthData',
+  'populationData',
+  'foodData',
+  'washData',
+  'shelterData',
+  'securityData',
+] as const
+
+export function findLegacySectorPayloadKey(body: unknown): string | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  if ('answers' in body) return null
+  return LEGACY_SECTOR_PAYLOAD_KEYS.find((key) => key in body) ?? null
+}
+
+// Query Schema (unchanged surface)
 export const QueryRapidAssessmentSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
   userId: z.string().optional(),
   entityId: z.string().optional(),
   incidentId: z.string().optional(),
-  type: z.enum(['HEALTH', 'WASH', 'SHELTER', 'FOOD', 'SECURITY', 'POPULATION']).optional(),
+  type: AssessmentTypeEnum.optional(),
   status: z.never().optional(),
   verificationStatus: z.enum(['DRAFT', 'SUBMITTED', 'VERIFIED', 'AUTO_VERIFIED', 'REJECTED']).optional(),
   priority: z.enum(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']).optional(),
@@ -214,9 +102,3 @@ export const QueryRapidAssessmentSchema = z.object({
 export type CreateRapidAssessmentInput = z.infer<typeof CreateRapidAssessmentSchema>
 export type UpdateRapidAssessmentInput = z.infer<typeof UpdateRapidAssessmentSchema>
 export type QueryRapidAssessmentInput = z.infer<typeof QueryRapidAssessmentSchema>
-export type HealthAssessmentInput = z.infer<typeof HealthAssessmentSchema>
-export type PopulationAssessmentInput = z.infer<typeof PopulationAssessmentSchema>
-export type FoodAssessmentInput = z.infer<typeof FoodAssessmentSchema>
-export type WASHAssessmentInput = z.infer<typeof WASHAssessmentSchema>
-export type ShelterAssessmentInput = z.infer<typeof ShelterAssessmentSchema>
-export type SecurityAssessmentInput = z.infer<typeof SecurityAssessmentSchema>

@@ -30,7 +30,7 @@ import { useCurrencySymbol } from '@/hooks/useCurrency';
 import { SignalPriorityBadge } from './SignalPriorityBadge';
 import { REASON_LABELS } from './SignalReasonIcon';
 import type { ActionSignalItem, SignalReason } from '@/types/action-signal';
-import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/answers';
 
 interface SignalDetailPanelProps {
   signal: ActionSignalItem | null;

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { withAuth, AuthContext } from '@/lib/auth/middleware'
 import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
-import { UpdateRapidAssessmentSchema } from '@/lib/validation/rapid-assessment'
+import { UpdateRapidAssessmentSchema, findLegacySectorPayloadKey } from '@/lib/validation/rapid-assessment'
 import { RapidAssessmentResponse, RapidAssessmentWithData } from '@/types/rapid-assessment'
-import { handleApiError } from '@/lib/api/response'
+import { handleApiError, errorResponse } from '@/lib/api/response'
 
 interface RouteParams {
   params: { id: string }
@@ -100,6 +100,13 @@ export const PUT = withAuth(
 
       const { id } = params
       const body = await request.json()
+      const legacyKey = findLegacySectorPayloadKey(body)
+      if (legacyKey) {
+        return errorResponse(
+          `Legacy typed payloads are no longer accepted: "${legacyKey}" was removed with the hardcoded forms. Submit the registry-keyed "answers" map instead.`,
+          422
+        )
+      }
       const input = UpdateRapidAssessmentSchema.parse(body)
       
       const assessment = await RapidAssessmentService.update(

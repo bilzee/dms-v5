@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { AssessmentType } from '@prisma/client';
-import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert';
+import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/answers';
 
 interface ExportRequest {
   format: 'pdf' | 'csv';

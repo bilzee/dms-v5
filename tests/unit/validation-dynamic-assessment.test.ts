@@ -117,6 +117,11 @@ describe('buildQuestionFieldSchema', () => {
       expect(schema.safeParse('50').success).toBe(false)
     })
 
+    it('rejects non-integer floats (legacy .int() parity)', () => {
+      expect(schema.safeParse(50.5).success).toBe(false)
+      expect(schema.safeParse(0.1).success).toBe(false)
+    })
+
     it('is unbounded when numberMin/numberMax are absent', () => {
       const unbounded = buildQuestionFieldSchema(
         question({ key: 'q', questionType: 'NUMBER', required: true, numberMin: null, numberMax: null })

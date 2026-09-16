@@ -7,7 +7,7 @@ import {
   LatestAssessmentsResponseSchema,
   AssessmentTypeSchema
 } from '@/lib/validation/entity-insights';
-import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert';
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/answers';
 import { handleApiError } from '@/lib/api/response'
 
 export const GET = withAuth(async (request: NextRequest, context, nextContext) => {

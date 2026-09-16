@@ -21,13 +21,13 @@ const DIRE_HEALTH_DATA = {
   hasFunctionalClinic: false,
   hasEmergencyServices: false,
   numberHealthFacilities: 0,
-  healthFacilityType: 'None',
+  healthFacilityType: 'Other',
   qualifiedHealthWorkers: 0,
   hasTrainedStaff: false,
   hasMedicineSupply: false,
   hasMedicalSupplies: false,
   hasMaternalChildServices: false,
-  commonHealthIssues: ['Cholera', 'Malaria'],
+  commonHealthIssues: ['Malaria', 'Diarrhea'],
 }
 
 function healthBody(entityId: string, incidentId: string) {
@@ -37,7 +37,7 @@ function healthBody(entityId: string, incidentId: string) {
     assessorName: 'Cascade Probe Assessor',
     entityId,
     incidentId,
-    healthData: DIRE_HEALTH_DATA,
+    answers: DIRE_HEALTH_DATA,
   }
 }
 
@@ -67,6 +67,20 @@ describe('P0 assessment create → queue → verify cascade', () => {
     await testDb.$disconnect()
   })
 
+  test('legacy typed payload (healthData, no answers) → 422', async () => {
+    const { answers: _answers, ...legacyBody } = healthBody(entity.id, incidentId)
+    const response = await createRapidAssessment(
+      makeRequest('POST', '/api/v1/rapid-assessments', {
+        body: { ...legacyBody, healthData: DIRE_HEALTH_DATA },
+        token: tokenFor(assessor),
+      })
+    )
+    expect(response.status).toBe(422)
+    const body = await response.json()
+    expect(body.error).toContain('Legacy typed payloads are no longer accepted')
+    expect(body.error).toContain('healthData')
+  })
+
   test('ASSESSOR assigned to entity creates assessment → SUBMITTED + gap analysis computed', async () => {
     const response = await createRapidAssessment(
       makeRequest('POST', '/api/v1/rapid-assessments', {
@@ -85,9 +99,9 @@ describe('P0 assessment create → queue → verify cascade', () => {
     expect(stored!.verificationStatus).toBe('SUBMITTED')
     expect(stored!.verifiedAt).toBeNull()
 
-    // Typed payload persisted as the canonical answers map (registry data layer)
+    // Answers payload persisted as the canonical registry-keyed map
     const answers = (stored!.answers ?? {}) as Record<string, unknown>
-    expect(answers.commonHealthIssues).toContain('Cholera')
+    expect(answers.commonHealthIssues).toContain('Malaria')
     expect(answers.hasFunctionalClinic).toBe(false)
 
     // Structure-only snapshot stamped with the registry version counters

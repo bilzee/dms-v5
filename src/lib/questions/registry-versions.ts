@@ -9,7 +9,7 @@
  */
 
 import type { PrismaClient } from '@prisma/client'
-import type { RapidAssessmentType } from './legacy-convert'
+import type { RapidAssessmentType } from './answers'
 
 export const REGISTRY_VERSION_SECTION = 'QUESTION_REGISTRY'
 

@@ -13,7 +13,8 @@ import type {
   Role,
 } from '@prisma/client'
 import { testDb } from '../helpers/test-db'
-import { toAnswers, buildQuestionSnapshot, RapidAssessmentType } from '../../src/lib/questions/legacy-convert'
+import { buildQuestionSnapshot } from '../../src/lib/questions/question-snapshot'
+import type { RapidAssessmentType } from '../../src/lib/questions/answers'
 import { getRegistryVersions } from '../../src/lib/questions/registry-versions'
 import { seedQuestions } from '../../prisma/seed-questions'
 
@@ -183,15 +184,6 @@ export async function ensureQuestionRegistry(): Promise<void> {
   }
 }
 
-export interface SectorPayloads {
-  health?: Record<string, unknown>
-  population?: Record<string, unknown>
-  food?: Record<string, unknown>
-  wash?: Record<string, unknown>
-  shelter?: Record<string, unknown>
-  security?: Record<string, unknown>
-}
-
 export interface CreateRapidAssessmentOptions {
   assessorId: string
   assessorName?: string
@@ -201,7 +193,8 @@ export interface CreateRapidAssessmentOptions {
   priority?: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCLASSIFIED'
   verificationStatus?: 'DRAFT' | 'SUBMITTED' | 'VERIFIED' | 'AUTO_VERIFIED' | 'REJECTED'
   rapidAssessmentDate?: Date
-  sectors?: SectorPayloads
+  /** Registry-keyed answers map, stored verbatim ({ [questionKey]: value }). */
+  answers?: Record<string, unknown>
   /** Stamp the live registry snapshot + versions (registry-governance fixtures). */
   withSnapshot?: boolean
 }
@@ -210,17 +203,8 @@ export async function createRapidAssessment(
   options: CreateRapidAssessmentOptions
 ): Promise<RapidAssessment> {
   const assessmentType = options.assessmentType ?? 'HEALTH'
-  // Registry answers layer: the typed sector payload is converted to the
-  // canonical answers map (typed child tables no longer exist).
-  const sectorKeyByType: Record<string, keyof SectorPayloads> = {
-    HEALTH: 'health',
-    POPULATION: 'population',
-    FOOD: 'food',
-    WASH: 'wash',
-    SHELTER: 'shelter',
-    SECURITY: 'security',
-  }
-  const sectorPayload = options.sectors?.[sectorKeyByType[assessmentType]]
+  // Answers layer: the registry-keyed answers map is stored verbatim (the
+  // typed sector payloads and toAnswers conversion were deleted in P4).
   // Freeze-rule fixtures: stamp structureVersion/contentVersion/questionSnapshot
   // from the live drms_test registry, exactly as the service path would.
   let snapshotData:
@@ -252,9 +236,7 @@ export async function createRapidAssessment(
       incidentId: options.incidentId,
       priority: options.priority ?? 'MEDIUM',
       verificationStatus: options.verificationStatus ?? 'SUBMITTED',
-      answers: sectorPayload
-        ? (toAnswers(assessmentType as RapidAssessmentType, sectorPayload) as never)
-        : undefined,
+      answers: options.answers ? (options.answers as never) : undefined,
       ...(snapshotData
         ? {
             structureVersion: snapshotData.structureVersion,

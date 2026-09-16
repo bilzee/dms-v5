@@ -2,7 +2,7 @@ import {
   buildQuestionSnapshot,
   RegistryQuestionRow,
   QuestionSnapshot,
-} from '@/lib/questions/legacy-convert'
+} from '@/lib/questions/question-snapshot'
 import type { RegistryVersions } from '@/lib/questions/registry-versions'
 import {
   QUESTION_CATALOG,

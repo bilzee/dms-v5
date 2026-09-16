@@ -7,7 +7,7 @@
  * - BOOLEAN            → z.boolean()
  * - SINGLE_CHOICE      → z.enum(option values)   (z.string() if no options)
  * - MULTI_SELECT       → z.array(z.enum(values))
- * - NUMBER             → z.number() bounded by numberMin/numberMax when set
+ * - NUMBER             → z.number().int() bounded by numberMin/numberMax when set
  * - TEXT_LONG          → z.string().min(1).max(2000)
  *
  * Required questions are non-optional; everything else accepts `undefined`.
@@ -77,7 +77,7 @@ export function buildQuestionFieldSchema(question: DynamicQuestionDef): z.ZodTyp
       break
     }
     case 'NUMBER': {
-      let numberSchema = z.number()
+      let numberSchema = z.number().int()
       if (typeof question.numberMin === 'number') {
         numberSchema = numberSchema.min(question.numberMin)
       }

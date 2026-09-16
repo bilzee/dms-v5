@@ -56,31 +56,6 @@ export const getLocationFromEntityOrGPS = (
 }
 
 /**
- * Get complete location data for assessment
- * Returns both display string and coordinate data
- */
-export const getAssessmentLocationData = (
-  entity: Entity | null,
-  gpsCoordinates?: { latitude: number; longitude: number; accuracy?: number; timestamp?: Date }
-) => {
-  const locationString = getLocationFromEntityOrGPS(entity, gpsCoordinates)
-  
-  // Include coordinate data if available
-  const coordinates = gpsCoordinates ? {
-    latitude: gpsCoordinates.latitude,
-    longitude: gpsCoordinates.longitude,
-    accuracy: gpsCoordinates.accuracy,
-    timestamp: gpsCoordinates.timestamp || new Date(),
-    captureMethod: 'GPS' as const
-  } : undefined
-  
-  return {
-    location: locationString,
-    coordinates
-  }
-}
-
-/**
  * Format GPS coordinates for display
  */
 export const formatGPSCoordinates = (coordinates: {

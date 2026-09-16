@@ -1,0 +1,33 @@
+DQR P4 form evidence run mu3v67rz
+DATABASE_URL: postgresql://dms_dev:***@localhost:5435/drms_test?schema=public
+Seeded question registry (was empty).
+
+[1. POST /api/v1/rapid-assessments (HEALTH answers payload)]
+  status: 201
+  row: {"verificationStatus":"SUBMITTED","priority":"MEDIUM","versionNumber":1,"structureVersion":1,"contentVersion":1,"gapHasGap":true,"gapFieldSeverity":"MEDIUM","snapshotHasKey":true,"answersHasFunctionalClinic":true}
+
+[2. POST legacy typed payload (healthData, no answers)]
+  status: 422
+  error: Legacy typed payloads are no longer accepted: "healthData" was removed with the hardcoded forms. Submit the registry-keyed "answers" map instead.
+
+[2b. POST valid answers + legacy junk (healthData/priority stripped)]
+  status: 201
+  row: {"priority":"MEDIUM","answersMatch":true}
+
+[3. POST answers with unknown key (mysteryLegacyKey)]
+  status: 201
+  storedHasUnknownKey: false
+
+[4. PUT [id] REJECTED → resubmit (SUBMITTED)]
+  status: 200
+  row: {"verificationStatus":"REJECTED → SUBMITTED","rejectionReason":null,"rejectionFeedback":null,"priority":"MEDIUM → LOW","versionNumber":"1 → 1","answersHasEmergencyServices":true,"answersHasMysteryKey":false,"snapshotRefrozen":true}
+
+[5. POST POPULATION (context-only type)]
+  status: 201
+  row: {"priority":"LOW","gapHasGap":false,"gapFieldCount":0,"totalPopulationStored":300}
+
+[6. POST invalid answers (required missing / bad enum)]
+  missingRequired: {"status":422,"error":"Answers failed registry validation","fieldErrors":{"hasFunctionalClinic":["Required"]}}
+  invalidEnum: {"status":422,"error":"Answers failed registry validation","fieldErrors":{"healthFacilityType":["Invalid enum value. Expected 'Hospital' | 'Primary Health Center' | 'Clinic' | 'Dispensary' | 'Mobile Clinic' | 'Community Health Post' | 'Other', received 'None'"]}}
+
+ALL CHECKS PASSED

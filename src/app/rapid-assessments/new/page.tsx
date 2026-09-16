@@ -12,13 +12,8 @@ import { AssessmentType } from '@/types/rapid-assessment'
 import { useAuth } from '@/hooks/useAuth'
 import { apiPost } from '@/lib/api'
 
-// Import assessment forms
-import { HealthAssessmentForm } from '@/components/forms/assessment/HealthAssessmentForm'
-import { PopulationAssessmentForm } from '@/components/forms/assessment/PopulationAssessmentForm'
-import { FoodAssessmentForm } from '@/components/forms/assessment/FoodAssessmentForm'
-import { WASHAssessmentForm } from '@/components/forms/assessment/WASHAssessmentForm'
-import { ShelterAssessmentForm } from '@/components/forms/assessment/ShelterAssessmentForm'
-import { SecurityAssessmentForm } from '@/components/forms/assessment/SecurityAssessmentForm'
+// Registry-driven assessment form (P4) — one component for every type
+import { DynamicAssessmentForm, type AssessmentFormSubmitPayload } from '@/components/forms/assessment/DynamicAssessmentForm'
 
 const assessmentTypes = [
   { value: 'HEALTH', label: 'Health Assessment', description: 'Assess healthcare facilities and services' },
@@ -44,34 +39,20 @@ function NewRapidAssessmentContent() {
     router.push(`/rapid-assessments/new?type=${type}`)
   }
 
-  const handleSubmit = async (data: any) => {
+  const handleSubmit = async (payload: AssessmentFormSubmitPayload) => {
     setIsSubmitting(true)
     try {
       if (!token || !user) {
         throw new Error('Not authenticated')
       }
 
-      // Extract entity ID from form data if available
-      const formEntityId = data.entityId
-      if (formEntityId && formEntityId !== selectedEntityId) {
-        setSelectedEntityId(formEntityId)
-      }
-
-      // Prepare assessment data with proper entity ID
-      const finalEntityId = selectedEntityId || formEntityId
-      if (!finalEntityId) {
+      // The dynamic form returns the full answers payload (entityId included).
+      if (!payload.entityId) {
         throw new Error('Please select an entity for the assessment')
       }
-      
-      const assessmentData = {
-        ...data,
-        entityId: finalEntityId,
-        assessorId: (user as any).id,
-        assessorName: (user as any).name,
-        rapidAssessmentDate: new Date().toISOString()
-      }
+      setSelectedEntityId(payload.entityId)
 
-      const result = await apiPost('/api/v1/rapid-assessments', assessmentData)
+      const result = await apiPost('/api/v1/rapid-assessments', payload)
       if (!result.success) {
         throw new Error(result.error || 'Failed to submit assessment')
       }
@@ -95,31 +76,14 @@ function NewRapidAssessmentContent() {
   const renderAssessmentForm = () => {
     if (!selectedType) return null
 
-    const formProps = {
-      entityId: selectedEntityId || '', // Use selected entity ID
-      initialData: undefined,
-      onSubmit: handleSubmit,
-      onCancel: handleCancel,
-      isSubmitting,
-      disabled: isSubmitting
-    }
-
-    switch (selectedType) {
-      case 'HEALTH':
-        return <HealthAssessmentForm {...formProps} />
-      case 'POPULATION':
-        return <PopulationAssessmentForm {...formProps} />
-      case 'FOOD':
-        return <FoodAssessmentForm {...formProps} />
-      case 'WASH':
-        return <WASHAssessmentForm {...formProps} />
-      case 'SHELTER':
-        return <ShelterAssessmentForm {...formProps} />
-      case 'SECURITY':
-        return <SecurityAssessmentForm {...formProps} />
-      default:
-        return null
-    }
+    return (
+      <DynamicAssessmentForm
+        assessmentType={selectedType}
+        entityId={selectedEntityId || undefined}
+        onSubmit={handleSubmit}
+        onCancel={handleCancel}
+      />
+    )
   }
 
   if (showSuccess) {

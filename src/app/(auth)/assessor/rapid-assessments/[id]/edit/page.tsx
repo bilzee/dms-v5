@@ -9,17 +9,10 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ArrowLeft, AlertTriangle, CheckCircle, Save } from '@/lib/icons'
 import { apiGet, apiPut } from '@/lib/api'
-import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/legacy-convert'
+import type { RapidAssessmentType } from '@/lib/questions/answers'
 
-// Import assessment forms
-import { 
-  HealthAssessmentForm,
-  PopulationAssessmentForm,
-  FoodAssessmentForm,
-  WASHAssessmentForm,
-  ShelterAssessmentForm,
-  SecurityAssessmentForm
-} from '@/components/forms/assessment'
+// Registry-driven assessment form (P4) — one component for every type
+import { DynamicAssessmentForm, type AssessmentFormSubmitPayload } from '@/components/forms/assessment/DynamicAssessmentForm'
 
 const assessmentTypes = [
   { 
@@ -86,28 +79,9 @@ function EditAssessmentContent() {
             return
           }
 
-          // Hydrate the legacy typed payload the forms read (e.g.
-          // initialData.healthAssessment) from the canonical answers map.
-          const typedPropByType: Record<string, string> = {
-            HEALTH: 'healthAssessment',
-            POPULATION: 'populationAssessment',
-            FOOD: 'foodAssessment',
-            WASH: 'washAssessment',
-            SHELTER: 'shelterAssessment',
-            SECURITY: 'securityAssessment',
-          }
-          const typedProp = typedPropByType[assessmentData.rapidAssessmentType]
-          setAssessment({
-            ...assessmentData,
-            ...(typedProp
-              ? {
-                  [typedProp]: fromAnswers(
-                    assessmentData.rapidAssessmentType as RapidAssessmentType,
-                    (assessmentData.answers ?? {}) as RapidAssessmentAnswers
-                  ),
-                }
-              : {}),
-          })
+          // The registry answers map hydrates the dynamic form directly —
+          // no typed payload projection needed anymore.
+          setAssessment(assessmentData)
         } else {
           setError('Failed to load assessment')
         }
@@ -128,16 +102,15 @@ function EditAssessmentContent() {
     router.push('/assessor/rapid-assessments')
   }
 
-  const handleAssessmentSubmit = async (formData: any) => {
+  const handleAssessmentSubmit = async (payload: AssessmentFormSubmitPayload) => {
     try {
       setIsSubmitting(true)
       setError(null)
       
-      // The form's handleSubmit already returns the complete assessment object
-      // with type-specific data nested (e.g., { type, entityId, incidentId, foodData: {...} })
-      // So we just spread it directly and add verification status for resubmit
+      // Answers-based payload + resubmit for verification (the service resets
+      // the rejection stamps when verificationStatus is SUBMITTED).
       const result = await apiPut(`/api/v1/rapid-assessments/${assessmentId}`, {
-        ...formData,
+        ...payload,
         verificationStatus: 'SUBMITTED'
       })
       
@@ -169,40 +142,25 @@ function EditAssessmentContent() {
       )
     }
 
-    const commonProps = {
-      entityId: assessment.entityId,
-      initialData: assessment,
-      onSubmit: handleAssessmentSubmit,
-      onCancel: handleGoBack,
-      isSubmitting,
-      disabled: isSubmitting,
-      // Disable incident and entity selection for editing
-      readonlyFields: ['incidentId', 'entityId']
-    }
-
-    switch (assessment.rapidAssessmentType) {
-      case 'HEALTH':
-        return <HealthAssessmentForm {...commonProps} />
-      case 'POPULATION':
-        return <PopulationAssessmentForm {...commonProps} />
-      case 'FOOD':
-        return <FoodAssessmentForm {...commonProps} />
-      case 'WASH':
-        return <WASHAssessmentForm {...commonProps} />
-      case 'SHELTER':
-        return <ShelterAssessmentForm {...commonProps} />
-      case 'SECURITY':
-        return <SecurityAssessmentForm {...commonProps} />
-      default:
-        return (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>
-              Unsupported assessment type
-            </AlertDescription>
-          </Alert>
-        )
-    }
+    return (
+      <DynamicAssessmentForm
+        assessmentType={assessment.rapidAssessmentType as RapidAssessmentType}
+        entityId={assessment.entityId}
+        incidentId={assessment.incidentId}
+        initialAnswers={assessment.answers ?? null}
+        onSubmit={handleAssessmentSubmit}
+        onCancel={handleGoBack}
+        isReassessment
+        previousAssessmentDate={
+          assessment.rapidAssessmentDate
+            ? new Date(assessment.rapidAssessmentDate).toLocaleDateString()
+            : undefined
+        }
+        // Disable incident and entity selection for editing
+        lockIncidentEntity
+        readonlyFields={['incidentId', 'entityId']}
+      />
+    )
   }
 
   if (isLoading) {

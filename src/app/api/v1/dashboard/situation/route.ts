@@ -16,7 +16,7 @@ import {
   type ShelterGapAnalysis,
   type SecurityGapAnalysis
 } from '@/lib/services/gap-analysis.service';
-import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert';
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/answers';
 import { handleApiError } from '@/lib/api/response'
 
 // Rate limiting implementation

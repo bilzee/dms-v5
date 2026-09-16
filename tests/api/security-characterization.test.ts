@@ -10,6 +10,7 @@ import {
   createEntityAssignment,
   grantPermission,
   ensureRoles,
+  ensureQuestionRegistry,
   DEFAULT_TEST_PASSWORD,
 } from '../factories'
 import { testDb, truncateTestDb } from '../helpers/test-db'
@@ -20,10 +21,32 @@ import { testDb, truncateTestDb } from '../helpers/test-db'
  * "Characterized defect" markers are known warts, not endorsements.
  */
 
+// A schema-valid HEALTH update envelope: P4's UpdateRapidAssessmentSchema
+// requires `type` + the full replacement `answers` map, so every PUT below
+// carries one (only the caller differs).
+const VALID_HEALTH_UPDATE_BODY = {
+  type: 'HEALTH',
+  answers: {
+    hasFunctionalClinic: true,
+    hasEmergencyServices: true,
+    numberHealthFacilities: 1,
+    healthFacilityType: 'Clinic',
+    qualifiedHealthWorkers: 2,
+    hasTrainedStaff: true,
+    hasMedicineSupply: true,
+    hasMedicalSupplies: true,
+    hasMaternalChildServices: true,
+    commonHealthIssues: ['Malaria'],
+  },
+}
+
 describe('P0 security characterization', () => {
   beforeAll(async () => {
     await truncateTestDb()
     await ensureRoles()
+    // The P4 update path validates answers against the live registry snapshot
+    // (truncateTestDb wipes it) — re-seed so owner PUTs can reach the service.
+    await ensureQuestionRegistry()
   })
 
   afterAll(async () => {
@@ -115,11 +138,13 @@ describe('P0 security characterization', () => {
       const stranger = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
       const response = await updateAssessment(
         makeRequest('PUT', `/api/v1/rapid-assessments/${assessmentId}`, {
-          body: { location: 'Tampered' },
+          body: { ...VALID_HEALTH_UPDATE_BODY, location: 'Tampered' },
           token: tokenFor(stranger),
         }),
         withParams({ id: assessmentId })
       )
+      // Ownership is checked in the service before answers validation, so a
+      // schema-valid body from a non-owner still lands on 403.
       expect(response.status).toBe(403)
     })
 
@@ -129,7 +154,7 @@ describe('P0 security characterization', () => {
       // without verifiedBy/verifiedAt being set. Pinned deliberately.
       const response = await updateAssessment(
         makeRequest('PUT', `/api/v1/rapid-assessments/${assessmentId}`, {
-          body: { verificationStatus: 'VERIFIED' },
+          body: { ...VALID_HEALTH_UPDATE_BODY, verificationStatus: 'VERIFIED' },
           token: tokenFor(owner),
         }),
         withParams({ id: assessmentId })

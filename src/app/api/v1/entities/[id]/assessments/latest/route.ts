@@ -10,7 +10,7 @@ import { withAuth } from '@/lib/auth/middleware';
 import { prisma } from '@/lib/db/client';
 import { AssessmentType } from '@prisma/client';
 import { z } from 'zod';
-import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/legacy-convert';
+import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/answers';
 import { handleApiError } from '@/lib/api/response'
 
 interface RouteParams {

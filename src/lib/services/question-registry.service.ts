@@ -52,8 +52,8 @@ import {
   buildQuestionSnapshot,
   QuestionSnapshot,
   RegistryQuestionRow,
-  RapidAssessmentType,
-} from '@/lib/questions/legacy-convert'
+} from '@/lib/questions/question-snapshot'
+import type { RapidAssessmentType } from '@/lib/questions/answers'
 import { clearGapQuestionCache, derivePriorityFromGaps } from '@/lib/services/gap-analysis.service'
 import { analyzeGaps as deriveGaps, type GapEngineSnapshotStructure } from '@/lib/questions/gap-engine'
 import {
