@@ -183,6 +183,16 @@ const breadcrumbStructure: Record<string, BreadcrumbItem[]> = {
     { name: 'Configuration', href: '/coordinator/settings/severity-thresholds' },
     { name: 'Severity Thresholds', href: '/coordinator/settings/severity-thresholds' }
   ],
+  '/coordinator/settings/gap-field-management': [
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'Configuration', href: '/coordinator/settings/severity-thresholds' },
+    { name: 'GAP Field Severity', href: '/coordinator/settings/gap-field-management' }
+  ],
+  '/admin/settings/questions': [
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'System', href: '/system/settings' },
+    { name: 'Question Registry', href: '/admin/settings/questions' }
+  ],
   '/coordinator/reports': [
     { name: 'Dashboard', href: '/dashboard' },
     { name: 'Reports', href: '/coordinator/reports' }

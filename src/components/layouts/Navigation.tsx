@@ -20,6 +20,7 @@ import {
   Building2,
   ChevronDown,
   ChevronRight,
+  ClipboardList,
   Monitor,
   Package,
   TrendingUp,
@@ -196,6 +197,12 @@ const getNavigationItems = (role: string | null): { roleItems: NavItem[]; utilit
             href: '/coordinator/settings/scoring',
             icon: Trophy,
             description: 'Configure donor scoring formula weights and parameters'
+          },
+          {
+            name: 'GAP Field Severity',
+            href: '/coordinator/settings/gap-field-management',
+            icon: ClipboardList,
+            description: 'Tune GAP question severities for rapid assessments'
           }
         ]
       },
@@ -447,6 +454,12 @@ const getNavigationItems = (role: string | null): { roleItems: NavItem[]; utilit
             href: '/admin/settings/currency',
             icon: DollarSign,
             description: 'Configure currency symbol and display style'
+          },
+          {
+            name: 'Question Registry',
+            href: '/admin/settings/questions',
+            icon: ClipboardList,
+            description: 'Manage rapid assessment questions, GAP metadata, and severities'
           }
         ]
       }
