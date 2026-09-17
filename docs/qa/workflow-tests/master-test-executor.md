@@ -5,7 +5,7 @@ This document provides the master execution plan for testing all user workflows 
 
 ## Prerequisites
 1. **Application Running**: Ensure the application is running locally or in test environment
-2. **Database Seeded**: Run `npm run seed` to ensure test users and base data exist
+2. **Database Seeded**: Run `npx prisma db seed -- --with-sample-data` to ensure test users and base data exist (the flag is required since DQR P9 — the default seed is production-safe and creates no demo users)
 3. **Chrome DevTools Ready**: Open Chrome with DevTools enabled
 4. **Clean State**: Start with fresh test data tracker
 

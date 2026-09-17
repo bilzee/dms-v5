@@ -501,3 +501,61 @@ _Auto-generated on 2026-09-15T14:56:05.832Z_
 - `plan`
 - `commitment`
 
+---
+
+# Dynamic Question Registry — Data Dictionary
+
+The registry (`QuestionSection` + `Question`, both catalogued above) is the
+single source of the assessment form. This dictionary explains the semantics
+each field carries and how the registry connects to assessment rows.
+
+## QuestionSection
+
+| Field | Meaning |
+|-------|---------|
+| `assessmentType` + `sectionKey` | Unique per type; keys are kebab-case (`health-gaps`). Immutable after creation. |
+| `category` | `GAP` sections hold boolean gap questions; `CONTEXT` sections hold descriptive questions. A section's category must match its questions'. |
+| `order` | Presentation order within the type (reorder bumps `structureVersion`). |
+| `isActive` | Soft-delete flag; deactivating a section cascades validation. |
+
+## Question
+
+| Field | Meaning |
+|-------|---------|
+| `assessmentType` + `questionKey` | Unique per type; keys are camelCase (`hasFunctionalClinic`) and immutable (`question_key_immutable`). Seeded ids are `{TYPE}:{questionKey}`. |
+| `questionType` | `BOOLEAN`, `NUMBER`, `SINGLE_CHOICE`, `MULTI_SELECT`, `TEXT_LONG`. GAP questions must be BOOLEAN. |
+| `label` / `helperText` | Assessor-facing copy (Tier A — content bump only). |
+| `category` | `GAP` or `CONTEXT`; must match the owning section. GAP ⇒ BOOLEAN + `required` + `gapLabel`/`gapMeaning`. |
+| `inverted` | GAP polarity: when `true` the gap fires on `true` instead of `false`. Tier B. |
+| `gapLabel` / `gapMeaning` | Phrasing of the gap row on dashboards/reports and what it means operationally. Tier A. |
+| `recommendation` | Standing recommendation shown when the gap fires. Tier A. |
+| `severity` | Registry severity of the gap (`CRITICAL|HIGH|MEDIUM` for GAP; `LOW`/`UNCLASSIFIED` are not valid GAP severities). Meaningless for CONTEXT questions — they carry the column default `LOW`, which is never read. Drives assessment priority, notifications, and signals (D-4 severity inheritance). Tier A. |
+| `options` | Choice questions' `{ value, label, description? }[]` (`description` is optional helper copy rendered with the option). Editing labels/appending values is Tier A; REMOVING a value is Tier B (stored answers may still carry it). |
+| `numberMin` / `numberMax` | NUMBER bounds (Tier B). |
+| `order` | Presentation order within the section. |
+| `isActive` | Soft-delete flag; the last active GAP of a non-POPULATION type cannot be deactivated (`registry_invalid`). |
+
+## RapidAssessment registry columns
+
+| Field | Meaning |
+|-------|---------|
+| `answers` | The submitted answers map keyed by `questionKey` (registry keys, never per-type payloads). |
+| `questionSnapshot` | Structure-only snapshot of the questions frozen at submission — one snapshot shape for every type; drives form rebuilds, gap analysis, and dashboard summaries. |
+| `structureVersion` / `contentVersion` | The registry versions the snapshot was frozen against (structure = Tier B count, content = Tier A count). |
+| `gapAnalysis` | Derived gap report (gaps, severity, priority) computed from the snapshot + live registry severities at submission. |
+| `incidentId` | Required; on **online** create (and on update when the payload re-points the incident) the incident must exist and be `ACTIVE` (404/409). The offline sync path is exempt from the ACTIVE rule by the never-reject ruling. |
+
+## SystemSetting version counters
+
+Per assessment type: `section = 'QUESTION_REGISTRY'`, keys
+`structureVersion/{TYPE}` / `contentVersion/{TYPE}` (see
+`src/lib/questions/registry-versions.ts`). Tier A edits bump
+content; Tier B edits (and section/question lifecycle + reorders) bump
+structure. Both are monotonic per type.
+
+## QuestionAuditLog
+
+Governance trail for every registry mutation: `entityType`
+(`QUESTION`|`SECTION`), `action`, `changes` (after-diff), `previous`
+(before-image), mandatory `reason` for structural actions, and the `actor`.
+

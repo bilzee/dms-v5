@@ -84,10 +84,38 @@ npx prisma generate
 npx prisma migrate dev
 ```
 
-Seed the database with essential data:
+Seed the database:
 
 ```bash
-npm run seed
+npx prisma db seed
+```
+
+The seed is split into a production-safe baseline and an opt-in sample world
+(DQR P9):
+
+- **Default** (`npx prisma db seed`, which runs `tsx prisma/seed.ts`): permissions, roles + grants,
+  admin (`admin@dms.gov.ng / admin123!`) and coordinator
+  (`coordinator@dms.gov.ng / coordinator123!`) accounts, the reference
+  entities, and the full question registry (55 questions across the six
+  assessment types + per-type version settings). **No** incidents,
+  assessments, donors/commitments, demo users, or E2E users — safe against a
+  fresh production database.
+- **`--with-sample-data`** (or `SEED_WITH_SAMPLE_DATA=1`): additionally seeds
+  the demo world — two sample incidents, five sample assessments, donors +
+  commitments, the multirole/responder/assessor/donor demo users, and the
+  E2E test users. For local development and demos only.
+
+```bash
+# Production-safe baseline (also the fresh-production-deploy default)
+npx prisma db seed
+
+# Local development with demo data — argv form (cross-platform)
+npx prisma db seed -- --with-sample-data
+# or run the script directly
+npx tsx prisma/seed.ts --with-sample-data
+# env-var form (POSIX shells); Windows: $env:SEED_WITH_SAMPLE_DATA="1" in
+# PowerShell before running `npx prisma db seed`
+SEED_WITH_SAMPLE_DATA=1 npx prisma db seed
 ```
 
 Alternatively, use the essential-only seed script for a minimal dataset:
@@ -96,7 +124,16 @@ Alternatively, use the essential-only seed script for a minimal dataset:
 node prisma/seed-essential.ts
 ```
 
-The seed scripts populate roles, users, and reference data needed for development and testing. The full seed (`prisma/seed.ts`) includes comprehensive sample data, while `prisma/seed-essential.ts` provides only the minimum required records.
+All seed scripts are idempotent, **but idempotent means "converges to the
+seed's catalog"**: on a database where ADMINs edited questions at runtime,
+re-running the seed OVERWRITES those edits back to the seeded values (bumping
+`contentVersion` and writing audit rows). On any environment with runtime
+registry edits, export the registry first (`/admin/settings/questions` →
+Export) and treat that export — not the seed — as the source of truth; see the
+reconciliation policy in `docs/question-authoring-guide.md`. Use
+`prisma/seed-questions.ts` when you only need to refresh the registry on a
+pristine database (the E2E baseline suite does exactly this from its global
+setup).
 
 ---
 
@@ -740,6 +777,53 @@ The recommended build pipeline executes in this order:
 6. **Smoke tests** -- `npm run test:smoke` validates critical paths against the built application.
 
 For convenience, `npm run build:validated` runs schema validation, build, and smoke tests in sequence.
+
+### Fresh Production Deploy Runbook (DQR P9)
+
+The exact sequence for standing the application up against an empty
+production database — no sample data, registry guaranteed present:
+
+1. **Push the schema** (on an empty database it only creates the missing
+   tables; on schema drift `prisma db push` applies destructive diffs — use
+   `npx prisma migrate deploy` in a managed pipeline instead):
+
+   ```bash
+   npx prisma db push
+   ```
+
+   (In a migration-managed pipeline use `npx prisma migrate deploy` instead.)
+
+2. **Seed the production-safe baseline** — roles/permissions, admin +
+   coordinator accounts, reference entities, and the question registry
+   (catalog + per-type version settings):
+
+   ```bash
+   npx prisma db seed
+   ```
+
+   Do NOT pass `--with-sample-data` in production.
+
+3. **Verify the registry** — the assessor read surface must return all six
+   types with versions (`structureVersion`/`contentVersion` = 1/1 on a fresh
+   seed):
+
+   ```bash
+   # $TOKEN = the JWT from POST /api/v1/auth/login with the (pre-rotation)
+   # admin credentials; alternatively check the version badges on
+   # /admin/settings/questions in the browser.
+   curl -H "Authorization: Bearer $TOKEN" \
+     "$BASE_URL/api/v1/questions?assessmentType=HEALTH"
+   ```
+
+4. **Rotate the seeded admin credentials immediately** (`admin@dms.gov.ng` /
+   `admin123!`) and create real operator accounts.
+
+5. **Confirm submission behavior** — create a first incident (any type,
+   status `ACTIVE`) before assessors go to the field; assessments require an
+   ACTIVE incident and are rejected with 404/409 otherwise.
+
+6. **Run the deployment gates** — `npm run build:validated` (schema
+   validation + build + smoke tests) before cutting traffic over.
 
 ### Environment Considerations
 

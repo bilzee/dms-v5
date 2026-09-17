@@ -1,4 +1,4 @@
-import { PrismaClient, Question } from '@prisma/client'
+import { PrismaClient, Question, User, Incident } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { seedQuestions } from './seed-questions'
 import { buildQuestionSnapshot } from '../src/lib/questions/question-snapshot'
@@ -8,8 +8,25 @@ import { analyzeGaps as deriveGapAnalysis } from '../src/lib/questions/gap-engin
 
 const prisma = new PrismaClient()
 
+/**
+ * Sample-data switch (P9):
+ * - Default (`prisma db seed`): production-safe baseline — permissions,
+ *   roles + grants, admin/coordinator accounts, entities, and the question
+ *   registry (catalog + version settings). No incidents, no assessments,
+ *   no donors/commitments, no demo or E2E users.
+ * - `--with-sample-data` (or SEED_WITH_SAMPLE_DATA=1): additionally seed
+ *   the demo world — sample incidents, sample assessments, donors +
+ *   commitments, multirole/responder/assessor demo users, and the E2E
+ *   test users.
+ */
+const withSampleData =
+  process.argv.includes('--with-sample-data') ||
+  ['1', 'true', 'yes'].includes((process.env.SEED_WITH_SAMPLE_DATA ?? '').toLowerCase())
+
 async function main() {
-  console.log('🌱 Starting database seed...')
+  console.log(
+    `🌱 Starting database seed... (sample data: ${withSampleData ? 'ON' : 'off — pass --with-sample-data to include it'})`
+  )
 
   // Create Permissions
   const permissions = [
@@ -279,11 +296,20 @@ async function main() {
     })
   }
 
+  // Sample-world rows referenced by later sample blocks (sample assessments,
+  // donor commitments). Definite-assignment is safe: every use sits inside
+  // the same `if (withSampleData)` guard that assigns them.
+  let multiRoleUser!: User
+  let assessorUser!: User
+  let floodIncident!: Incident
+  let droughtIncident!: Incident
+
+  if (withSampleData) {
   // Create sample multi-role user for testing role switching
   console.log('👤 Creating sample multi-role user...')
   const multiRolePasswordHash = await bcrypt.hash('multirole123!', 10)
   
-  const multiRoleUser = await prisma.user.upsert({
+  multiRoleUser = await prisma.user.upsert({
     where: { email: 'multirole@dms.gov.ng' },
     update: {},
     create: {
@@ -366,7 +392,7 @@ async function main() {
   console.log('👤 Creating sample assessor user...')
   const assessorPasswordHash = await bcrypt.hash('test-password', 10)
   
-  const assessorUser = await prisma.user.upsert({
+  assessorUser = await prisma.user.upsert({
     where: { email: 'assessor@test.com' },
     update: {},
     create: {
@@ -541,11 +567,13 @@ async function main() {
       },
     })
   }
+  } // end sample users / assignments / donor records
 
+  if (withSampleData) {
   // Create sample incidents first
   console.log('🚨 Creating sample incidents...')
   
-  const floodIncident = await prisma.incident.upsert({
+  floodIncident = await prisma.incident.upsert({
     where: { id: 'incident-flood-001' },
     update: {
       name: 'Maiduguri Metropolitan Flooding 2025',
@@ -564,7 +592,7 @@ async function main() {
     },
   })
 
-  const droughtIncident = await prisma.incident.upsert({
+  droughtIncident = await prisma.incident.upsert({
     where: { id: 'incident-drought-001' },
     update: {
       name: 'Gwoza Agricultural Drought 2025',
@@ -582,6 +610,7 @@ async function main() {
       createdBy: coordinatorUser.id,
     },
   })
+  } // end sample incidents
 
   // Seed the Dynamic Question Registry (idempotent — re-runs are no-ops)
   console.log('❓ Seeding question registry...')
@@ -609,6 +638,7 @@ async function main() {
     questionsByType.set(question.assessmentType, list)
   }
 
+  if (withSampleData) {
   // Create sample rapid assessments for verification workflow testing
   console.log('📋 Creating sample rapid assessments for verification testing...')
   
@@ -772,7 +802,9 @@ async function main() {
       }
     })
   }
+  } // end sample assessments
 
+  if (withSampleData) {
   // Create sample donor commitments for testing Story 4.3
   console.log('💰 Creating sample donor commitments...')
   
@@ -883,7 +915,9 @@ async function main() {
         create: commitment as any,
       })
     }
+  } // end sample donors / commitments
 
+  if (withSampleData) {
   console.log('💰 Created 4 sample donor commitments')
 
   // Create E2E test users
@@ -941,20 +975,23 @@ async function main() {
       assignedBy: adminUser.id,
     },
   })
+  } // end E2E users
 
   console.log('✅ Database seed completed successfully!')
   console.log('📧 Admin credentials: admin@dms.gov.ng / admin123!')
   console.log('📧 Coordinator credentials: coordinator@dms.gov.ng / coordinator123!')
-  console.log('📧 Responder credentials: responder@dms.gov.ng / responder123!')
-  console.log('📧 Assessor credentials: assessor@test.com / test-password')
-  console.log('📧 Donor credentials: donor@test.com / donor123! (DONOR role only)')
-  console.log('📧 Multi-role credentials: multirole@dms.gov.ng / multirole123! (ASSESSOR, COORDINATOR, DONOR, RESPONDER)')
-  console.log('🎭 E2E Test Credentials:')
-  console.log('   📧 E2E Coordinator: coordinator@test.com / testpassword123')
-  console.log('   📧 E2E Assessor: assessor@test.com / testpassword123')
-  console.log('📋 Created 5 sample assessments for verification workflow testing')
-  console.log('💰 Created 4 sample donor commitments for testing Story 4.3')
-  console.log('🏢 Created donor organization for testing Story 5.1')
+  if (withSampleData) {
+    console.log('📧 Responder credentials: responder@dms.gov.ng / responder123!')
+    console.log('📧 Assessor credentials: assessor@test.com / test-password')
+    console.log('📧 Donor credentials: donor@test.com / donor123! (DONOR role only)')
+    console.log('📧 Multi-role credentials: multirole@dms.gov.ng / multirole123! (ASSESSOR, COORDINATOR, DONOR, RESPONDER)')
+    console.log('🎭 E2E Test Credentials:')
+    console.log('   📧 E2E Coordinator: coordinator@test.com / testpassword123')
+    console.log('   📧 E2E Assessor: assessor@test.com / testpassword123')
+    console.log('📋 Created 5 sample assessments for verification workflow testing')
+    console.log('💰 Created 4 sample donor commitments for testing Story 4.3')
+    console.log('🏢 Created donor organization for testing Story 5.1')
+  }
 
   console.log('✅ Question registry seeded (GapFieldSeverity table removed in DQR P1 — severities now live on Question.severity)')
 }

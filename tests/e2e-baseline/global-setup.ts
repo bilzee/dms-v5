@@ -2,17 +2,22 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
-import { BASELINE_PASSWORD, BASELINE_USERS } from './baseline-users'
+import { BASELINE_PASSWORD, BASELINE_USERS, E2E_FIXTURES } from './baseline-users'
+import { seedQuestions } from '../../prisma/seed-questions'
 
 /**
  * Playwright globalSetup for the E2E baseline suite.
  *
  * 1. Forces DATABASE_URL/JWT_SECRET from .env.test (overriding ambient env)
  *    and hard-guards that the URL targets drms_test.
- * 2. Truncates drms_test and seeds roles + one user per golden-journey role.
+ * 2. Truncates drms_test and seeds roles + one user per golden-journey role
+ *    (including ADMIN for the registry-editor surface), the question
+ *    registry, one entity, one ACTIVE incident, and the assessor→entity
+ *    assignment that submission authorization requires.
  *
  * Raw Prisma + bcrypt only — no '@/' aliased app imports (Playwright does not
- * apply tsconfig path aliases inside globalSetup).
+ * apply tsconfig path aliases inside globalSetup). prisma/seed-questions.ts
+ * is kept relative-import-only for exactly this reason.
  */
 
 function forceEnvTestFile(): void {
@@ -79,8 +84,55 @@ export default async function globalSetup(): Promise<void> {
       })
     }
 
+    // Keep each user's id for the fixture wiring below (assignment + incident
+    // createdBy must reference real rows).
+    const seededUsers = await db.user.findMany({
+      where: { email: { in: Object.values(BASELINE_USERS).map((u) => u.email) } },
+      select: { id: true, email: true },
+    })
+    const assessor = seededUsers.find((u) => u.email === BASELINE_USERS.assessor.email)!
+    const coordinator = seededUsers.find((u) => u.email === BASELINE_USERS.coordinator.email)!
+
+    // Registry-driven assessment world: the live question catalog (all
+    // severities at their seeded MEDIUM), one entity, one ACTIVE incident,
+    // and the assessor→entity assignment. The fixture question's CRITICAL
+    // severity is deliberately NOT pre-pinned here — the bottom-up spec's
+    // admin leg sets it through the real editor so the whole chain (edit →
+    // content bump → derived priority → rollup → notification) is exercised
+    // against governance, not fixture surgery.
+    await seedQuestions(db)
+
+    await db.entity.create({
+      data: {
+        id: E2E_FIXTURES.entityId,
+        name: 'P9 Registry Fixture Entity',
+        type: 'COMMUNITY',
+        location: 'E2E Baseline Location',
+        coordinates: { latitude: 11.83, longitude: 13.15 },
+      },
+    })
+    await db.incident.create({
+      data: {
+        id: E2E_FIXTURES.incidentId,
+        name: 'P9 Registry Fixture Incident',
+        type: 'FLOOD',
+        description: 'ACTIVE incident backing registry-driven E2E submissions',
+        location: 'E2E Baseline Location',
+        severity: 'MEDIUM',
+        status: 'ACTIVE',
+        createdBy: coordinator.id,
+      },
+    })
+    await db.entityAssignment.create({
+      data: {
+        userId: assessor.id,
+        entityId: E2E_FIXTURES.entityId,
+        assignedBy: coordinator.id,
+      },
+    })
+
     console.log(
-      `[e2e-baseline] seeded drms_test: ${roleNames.length} roles, ${Object.keys(BASELINE_USERS).length} users`
+      `[e2e-baseline] seeded drms_test: ${roleNames.length} roles, ${Object.keys(BASELINE_USERS).length} users, question registry, 1 entity, 1 ACTIVE incident`
     )
   } finally {
     await db.$disconnect()

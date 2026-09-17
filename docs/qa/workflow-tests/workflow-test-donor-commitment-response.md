@@ -11,7 +11,7 @@ This comprehensive test validates the complete donor-commitment-response workflo
 
 ## Pre-Test Requirements
 1. **FOUNDATION WORKFLOWS COMPLETED** - Requires existing incidents and entities from coordinator workflow
-2. Database seeded with test users (`npm run seed`)
+2. Database seeded with test users (`npx prisma db seed -- --with-sample-data`)
 3. Open Chrome DevTools
 4. Navigate to the application URL
 5. Copy `data-tracker-template.json` to `donor-commitment-response-tracker.json`

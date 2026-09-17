@@ -140,8 +140,16 @@ export class RapidAssessmentService {
   ): Promise<RapidAssessmentWithData> {
     const { type, entityId, answers } = input
 
-    // Verify user is assigned to this entity
+    // Verify user is assigned to this entity — authorization precedes the
+    // incident-state check below so an unassigned caller learns nothing about
+    // incident existence or lifecycle (404/409 oracle).
     await this.validateEntityAssignment(createdBy, entityId)
+
+    // P9 hardening — ACTIVE-incident submission guard. An assessment may
+    // only be filed under an incident that exists and is still ACTIVE:
+    // unknown (or omitted) ids are 404, CONTAINED/RESOLVED incidents are
+    // 409. Checked before any write so a guard failure leaves no row.
+    await this.assertActiveIncident(input.incidentId)
 
     // Check if entity has auto-approval enabled
     const entity = await prisma.entity.findUnique({
@@ -241,6 +249,11 @@ export class RapidAssessmentService {
     clientStructureVersion?: number | null
   ): Promise<OfflineAssessmentSyncResult> {
     const { type, entityId, answers, offlineId } = input
+
+    // No ACTIVE-incident guard here, by ruling: offline sync never rejects a
+    // completed assessment (plan §4 /sync; prompt-9 decision 7). An incident
+    // resolved while the assessor was offline must not discard field work;
+    // a dangling incidentId still fails at the FK as it always has.
 
     // Verify user is assigned to this entity (same gate as the online path).
     await this.validateEntityAssignment(createdBy, entityId)
@@ -370,6 +383,10 @@ export class RapidAssessmentService {
     if (existingAssessment.assessorId !== updatedByAssessor) {
       throw new Error('Not authorized to update this assessment')
     }
+
+    // No ACTIVE-incident guard on the offline update path, by ruling: offline
+    // sync never rejects a completed assessment — an incident resolved after
+    // the assessment was filed must not block its offline resubmission.
 
     // `questionKeys` is a client-view declaration — destructured OUT so it can
     // never leak into the Prisma update payload (unknown-argument runtime error).
@@ -622,6 +639,7 @@ export class RapidAssessmentService {
         rapidAssessmentType: true,
         structureVersion: true,
         contentVersion: true,
+        incidentId: true,
       }
     })
     if (!existingAssessment) {
@@ -630,6 +648,19 @@ export class RapidAssessmentService {
 
     if (existingAssessment.assessorId !== updatedBy) {
       throw new Error('Not authorized to update this assessment')
+    }
+
+    // P9 hardening — only when the payload RE-POINTS the assessment at
+    // another incident does the new target need the create-path guard
+    // (exists → 404, ACTIVE → 409). Payloads that keep the stored incident
+    // are not re-gated: the real edit UI always echoes the stored incidentId,
+    // and a later answer edit must still land after the incident is resolved
+    // (matching the frozen matrix row: 409 applies to *changing* incidentId).
+    if (
+      input.incidentId !== undefined &&
+      input.incidentId !== existingAssessment.incidentId
+    ) {
+      await this.assertActiveIncident(input.incidentId)
     }
 
     const { type, answers, ...baseData } = input
@@ -820,6 +851,26 @@ export class RapidAssessmentService {
     } catch (error) {
       console.error(`[RapidAssessmentService] triggerGapAnalysis failed for ${assessmentId}:`, error)
       throw error
+    }
+  }
+
+  /**
+   * P9 hardening — incident existence + ACTIVE guard shared by `create` and
+   * `update`. Falsy ids and unknown ids throw 404 (`Incident not found`);
+   * CONTAINED/RESOLVED incidents throw 409 (`Incident {id} is not active`).
+   */
+  private static async assertActiveIncident(incidentId: string | null | undefined): Promise<void> {
+    const incident = incidentId
+      ? await prisma.incident.findUnique({
+          where: { id: incidentId },
+          select: { id: true, status: true },
+        })
+      : null
+    if (!incident) {
+      throw new ApiError('Incident not found', 404)
+    }
+    if (incident.status !== 'ACTIVE') {
+      throw new ApiError(`Incident ${incident.id} is not active`, 409)
     }
   }
 

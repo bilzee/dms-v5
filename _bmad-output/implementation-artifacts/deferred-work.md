@@ -102,3 +102,10 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p7-dashboard-summaries.md`
   summary: `IndividualEntityGapInfoPopup.tsx:22-183` still carries a hardcoded static field/explanation list (labels + meanings per assessment type) that will drift from the registry's live `gapLabel`/`gapMeaning` values.
   evidence: BH1 at review. The popup is static educational help copy explaining what each gap field means — it is NOT on the P7 summary computation path (summaries derive labels/meanings from the live registry projection, pinned by the new unit/api suites). Rewiring the popup to render from `questionMetadata` belongs with the p9 documentation/read-side pass.
+
+## From Review (2026-09-17, DQR P9)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p9-hardening-holistic-gate-close.md`
+  summary: Catalog wording/option-value polish — seeded catalog rows with inconsistent label registers (noun phrase vs question, e.g. `Functional Clinic`) and choice options whose `value`/`label` pairs are not normalized (`'River/Stream'`, `'Water trucks'` vs Title Case labels).
+  evidence: Blind-hunter findings at P9 review, traced to the pre-existing P1 catalog (`src/lib/questions/registry-validation.ts` QUESTION_CATALOG) — outside the P9 diff. Renaming labels is Tier A content churn (bumps every type's `contentVersion`, reverts on re-seed per the reconciliation policy in `docs/question-authoring-guide.md`) with zero behavioral effect; bundle with a deliberate catalog-authoring pass if wanted. The authoring guide's Appendix A now documents the target registers.
+

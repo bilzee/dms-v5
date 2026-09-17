@@ -261,15 +261,13 @@ Detailed rapid assessment management with submission and priority workflows.
 
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/rapid-assessments` | Creates a new rapid assessment draft. P9 ACTIVE-incident guard applies (see §4.25). |
 | GET | `/rapid-assessments` | Lists rapid assessments. |
-| POST | `/rapid-assessments` | Creates a new rapid assessment draft. |
 | GET | `/rapid-assessments/{id}` | Retrieves a rapid assessment by ID. |
-| PUT | `/rapid-assessments/{id}` | Updates a rapid assessment. |
+| PUT | `/rapid-assessments/{id}` | Updates a rapid assessment. The P9 ACTIVE-incident guard fires when the payload re-points the assessment at a different incident (see §4.25). |
 | DELETE | `/rapid-assessments/{id}` | Deletes a rapid assessment. |
 | POST | `/rapid-assessments/{id}/submit` | Submits a rapid assessment for verification. |
 | GET | `/rapid-assessments/latest` | Returns the most recent rapid assessments. |
-| POST | `/rapid-assessments/update-priorities` | Batch updates priorities across rapid assessments. |
-| GET | `/rapid-assessments/update-priorities` | Retrieves current priority update status. |
 | GET | `/rapid-assessments/user/{userId}` | Returns rapid assessments created by a specific user. |
 
 ---
@@ -512,17 +510,45 @@ Offline data synchronization, conflict resolution, and batch processing.
 
 ---
 
-### 4.25 Gap Field Severities
+### 4.25 Question Registry
 
-Configuration of severity levels for assessment gap fields.
+The dynamic question registry — the single source of the assessment form, gap
+severities, and snapshot versioning. Severities live on `Question.severity`
+(the legacy `GapFieldSeverity` table and its `/gap-field-severities` routes
+were deleted in DQR P1).
+
+Read surface (all authenticated roles):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/gap-field-severities` | Lists all gap field severity configurations. |
-| POST | `/gap-field-severities` | Creates a new gap field severity configuration. |
-| GET | `/gap-field-severities/{id}` | Retrieves a gap field severity configuration by ID. |
-| PUT | `/gap-field-severities/{id}` | Updates a gap field severity configuration. |
-| DELETE | `/gap-field-severities/{id}` | Deletes a gap field severity configuration. |
+| GET | `/questions?assessmentType={type}[&includeInactive=1]` | Returns the type's active sections with nested questions in presentation order, plus `structureVersion`/`contentVersion`. `includeInactive=1` requires ADMIN. |
+
+Governance (ADMIN only; every mutation requires a `reason`, is validated against registry invariants, and is audit-logged):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/admin/questions` | Creates a question (camelCase `questionKey`, category-matched, GAP ⇒ BOOLEAN + required + gap metadata). |
+| PUT | `/admin/questions/{id}` | Tier A edits (label/helperText/gap phrasing/recommendation/severity copy) bump `contentVersion`; Tier B edits (type/category/inverted/required/section move/number bounds/option-value removal) bump `structureVersion` and are freeze-gated (409 `question_frozen`). `questionKey` renames are 400 `question_key_immutable`. |
+| DELETE | `/admin/questions/{id}` | Soft-deactivates the question (freeze-gated; deactivating the last active GAP of a non-POPULATION type rolls back with 400 `registry_invalid`). |
+| PATCH | `/admin/questions/{id}/severity` | Pins a GAP severity (`CRITICAL|HIGH|MEDIUM`; Tier A — content bump). |
+| GET | `/admin/questions/{id}/audit` | Returns the question's audit timeline. |
+| GET | `/admin/questions/{id}/impact` | Returns deactivation impact (assessments referencing the question). |
+| POST | `/admin/questions/reorder` | Reorders sections or the questions within a section. |
+| GET | `/admin/questions/export` | Exports the full registry (sections + questions + versions) as JSON. |
+| POST | `/admin/sections` | Creates a section (kebab-case `sectionKey`). |
+| PUT | `/admin/sections/{id}` | Updates a section's title/description/category/order. |
+| DELETE | `/admin/sections/{id}` | Soft-deactivates a section (invariant-checked). |
+
+**ACTIVE-incident submission guard (P9):** `POST /rapid-assessments` rejects
+submissions whose target incident does not exist with `404 Incident not
+found`, and whose target incident is no longer `ACTIVE` (CONTAINED/RESOLVED)
+with `409 Incident {id} is not active`; `PUT /rapid-assessments/{id}` applies
+the same check when the payload re-points the assessment at another incident.
+No row is written in either failure mode. The offline `POST /sync/batch` path
+is deliberately exempt from the ACTIVE rule — by ruling (plan §4 `/sync`,
+never-reject) offline sync must not discard completed field assessments when
+an incident is resolved mid-flight; a dangling incidentId still fails at the
+database FK as it always has.
 
 ---
 
@@ -565,7 +591,7 @@ Non-versioned entity endpoints.
 | Entity Assignments | 10 |
 | Incidents | 9 |
 | Preliminary Assessments | 6 |
-| Rapid Assessments | 10 |
+| Rapid Assessments | 8 |
 | Assessments (Verification) | 3 |
 | Relationships | 3 |
 | Responses | 15 |
@@ -580,20 +606,27 @@ Non-versioned entity endpoints.
 | Exports | 10 |
 | Reports | 13 |
 | Sync | 8 |
-| Gap Field Severities | 5 |
+| Question Registry | 12 |
 | Severity Thresholds | 5 |
 | Entities (Non-Versioned) | 1 |
 | **Total** | **192** |
 
 ### HTTP Method Distribution
 
+Verified against the codebase (counting exported handlers in
+`src/app/api/**/route.ts` at DQR P9):
+
 | Method | Count | Description |
 |--------|-------|-------------|
-| GET | 97 | Read and query operations |
-| POST | 58 | Create and action operations |
-| PUT | 16 | Full update operations |
-| PATCH | 4 | Partial update operations |
-| DELETE | 10 | Delete operations |
-| **Total** | **185 method-endpoint pairs** | |
+| GET | 138 | Read and query operations |
+| POST | 68 | Create and action operations |
+| PUT | 25 | Full update operations |
+| PATCH | 7 | Partial update operations |
+| DELETE | 19 | Delete operations |
+| **Total** | **257 method handlers across 180 route files** | |
 
-Note: Some routes handle multiple HTTP methods on the same path. The endpoint count (192) reflects unique URL paths. The method-endpoint pair count (185) reflects the total number of distinct method + path combinations available across the API.
+Note: The resource-group table above counts endpoints this document
+**contracts for** (a curated inventory); the method distribution counts every
+implemented handler in `src/app/api` — the codebase carries additional
+experimental/internal routes beyond the documented contract, so the two totals
+differ by design.
