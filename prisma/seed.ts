@@ -1,6 +1,7 @@
 import { PrismaClient, Question, User, Incident } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { seedQuestions } from './seed-questions'
+import { seedCrossFieldRules } from './seed-rules'
 import { buildQuestionSnapshot } from '../src/lib/questions/question-snapshot'
 import type { RapidAssessmentType } from '../src/lib/questions/answers'
 import { getRegistryVersions, RegistryVersions } from '../src/lib/questions/registry-versions'
@@ -619,6 +620,16 @@ async function main() {
     `❓ Question registry: ${questionSeedResult.questions} questions ` +
     `(${questionSeedResult.created} created, ${questionSeedResult.updated} updated, ` +
     `${questionSeedResult.unchanged} unchanged) across ${questionSeedResult.sections} sections`
+  )
+
+  // Seed the cross-field rule baseline (P10-2 — both partitions; the
+  // sample-data branch never touches rules). Idempotent, no version bumps.
+  console.log('📐 Seeding cross-field rules...')
+  const ruleSeedResult = await seedCrossFieldRules(prisma)
+  console.log(
+    `📐 Cross-field rules: ${ruleSeedResult.rules} rules ` +
+    `(${ruleSeedResult.created} created, ${ruleSeedResult.updated} updated, ` +
+    `${ruleSeedResult.unchanged} unchanged)`
   )
 
   // Load the freshly seeded registry questions (registry order) for snapshots

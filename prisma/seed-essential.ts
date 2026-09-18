@@ -1,6 +1,7 @@
 import { PrismaClient, RoleName, ReportType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedQuestions } from './seed-questions';
+import { seedCrossFieldRules } from './seed-rules';
 
 const prisma = new PrismaClient();
 
@@ -160,6 +161,14 @@ async function main() {
     `✅ Question registry: ${questionSeedResult.questions} questions ` +
     `(${questionSeedResult.created} created, ${questionSeedResult.updated} updated, ` +
     `${questionSeedResult.unchanged} unchanged) across ${questionSeedResult.sections} sections`
+  );
+
+  // Cross-field rule baseline (P10-2) — idempotent, shared with prisma/seed.ts.
+  const ruleSeedResult = await seedCrossFieldRules(prisma);
+  console.log(
+    `✅ Cross-field rules: ${ruleSeedResult.rules} rules ` +
+    `(${ruleSeedResult.created} created, ${ruleSeedResult.updated} updated, ` +
+    `${ruleSeedResult.unchanged} unchanged)`
   );
 
   // ========================================

@@ -181,14 +181,27 @@ describe('P8 admin registry editor surfaces', () => {
       )
       expect(response.status).toBe(200)
       const body = await jsonOf(response)
-      expect(body.data).toEqual({
-        questionKey: question.questionKey,
-        snapshotCount: 0,
-        activeUnderIncidentCount: 0,
-        // Alias for the severity-PATCH confirm dialog (same population).
-        affectedCount: 0,
-        latestSnapshot: null,
-      })
+      // Exact payload key set (shape regression) + per-field zero counts.
+      // referencingRules content is intentionally not pinned here — the
+      // seeded FOOD rules reference isFoodSufficient, and the rule rows are
+      // covered by tests/api/cross-field-rules.test.ts. (The key set is
+      // asserted literally because nested expect.any() asymmetric matchers
+      // mis-match under this jest config.)
+      expect(Object.keys(body.data).sort()).toEqual([
+        'activeUnderIncidentCount',
+        'affectedCount',
+        'latestSnapshot',
+        'questionKey',
+        'referencingRules',
+        'snapshotCount',
+      ])
+      expect(body.data.questionKey).toBe(question.questionKey)
+      expect(body.data.snapshotCount).toBe(0)
+      expect(body.data.activeUnderIncidentCount).toBe(0)
+      // Alias for the severity-PATCH confirm dialog (same population).
+      expect(body.data.affectedCount).toBe(0)
+      expect(body.data.latestSnapshot).toBe(null)
+      expect(Array.isArray(body.data.referencingRules)).toBe(true)
     })
 
     test('count >0 — ACTIVE incident snapshot fixture with resolved + draft controls', async () => {

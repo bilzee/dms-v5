@@ -59,9 +59,9 @@ function normalizeOptions(options: QuestionOptionDef[] | undefined): Prisma.Inpu
  * `JSON.stringify` equality check would flag every choice question as
  * "changed" on every re-seed (and spuriously bump contentVersion). Object
  * keys are sorted recursively; array order is preserved (option order is
- * presentation order and meaningful).
+ * presentation order and meaningful). Shared with prisma/seed-rules.ts (P10-2).
  */
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || value === undefined) return 'null'
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   if (typeof value === 'object') {

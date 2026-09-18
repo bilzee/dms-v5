@@ -50,6 +50,7 @@
   summary: `docs/api-contracts.md:271-272` still lists the deleted `POST/GET /rapid-assessments/update-priorities` endpoints, and the severity PATCH response-shape change (`data.severity` → `data.question.severity` + `affectedCount`) is undocumented.
   evidence: Verified stale against the P3 diff; prompt-3's out-of-scope defers docs to p9 — fold into the p9 documentation pass.
   status: PARTIALLY RESOLVED (verified 2026-09-17) — the stale `update-priorities` rows are gone from `docs/api-contracts.md` §4.10 and the severity endpoint is now documented (§4.25, `PATCH /admin/questions/{id}/severity`); still open: the response shape (`data.question.severity` + `affectedCount`) remains undocumented.
+  update: RESOLVED (2026-09-18, P10-2) — `docs/api-contracts.md` §4.25 now documents the full severity PATCH response `{ data: { question, affectedCount, affectedIncidentIds } }` (the incident ids of the re-derived ACTIVE-incident population, surfaced by the P10-2 route fix), alongside the new cross-field rule endpoints (`/admin/rules` POST/PUT/DELETE + `/admin/rules/{id}/audit`), the `/questions` `rules` extension, the REFINEMENT enforcement semantics with the offline `/sync/batch` exemption, and the refreshed endpoint/handler distribution tables.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p3-gap-engine-derivation.md`
   summary: `gap-analysis.service.ts` uses one global cache timestamp for all assessment types, so per-type entries can outlive their 30 s TTL while other types keep refreshing the clock.

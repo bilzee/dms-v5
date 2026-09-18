@@ -15,6 +15,7 @@
 import { z } from 'zod'
 import { ASSESSMENT_TYPES, QUESTION_CATEGORIES, QUESTION_TYPES } from '@/lib/questions/registry-validation'
 import { QuestionOptionSchema } from '@/lib/validation/dynamic-assessment'
+import { CompareSchema, WhenSchema } from '@/lib/questions/rule-engine'
 
 const AssessmentTypeSchema = z.enum(ASSESSMENT_TYPES)
 const QuestionTypeSchema = z.enum(QUESTION_TYPES)
@@ -113,3 +114,38 @@ export type SeverityPatchInput = z.infer<typeof SeverityPatchSchema>
 export type CreateSectionInput = z.infer<typeof CreateSectionSchema>
 export type UpdateSectionInput = z.infer<typeof UpdateSectionSchema>
 export type ReorderInput = z.infer<typeof ReorderSchema>
+
+// ---------------------------------------------------------------------------
+// Cross-field rule schemas (P10-2). The AST fields reuse the engine's shared
+// zod grammar so the admin API boundary and the evaluator can never disagree;
+// the registry-level invariants (referenceKeys ⊆ active questions of the
+// type, ruleKey immutability, reason governance) are enforced by
+// QuestionRegistryService.
+// ---------------------------------------------------------------------------
+
+/** kebab-case rule keys (matches the seeded baseline, e.g. population-gender-sum-exceeds-total). */
+const RuleKeySchema = z.string().regex(
+  /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+  'ruleKey must be kebab-case'
+)
+
+const RuleKindSchema = z.enum(['REFINEMENT', 'AGGREGATE'])
+
+export const CreateRuleSchema = z.object({
+  assessmentType: AssessmentTypeSchema,
+  ruleKey: RuleKeySchema,
+  kind: RuleKindSchema,
+  name: z.string().min(1).max(200),
+  message: z.string().min(1).max(1000),
+  // Nullable = explicitly no gate; undefined = field omitted.
+  when: WhenSchema.nullable().optional(),
+  expression: CompareSchema,
+  referenceKeys: z.array(z.string().min(1)).min(1),
+  order: z.number().int().min(1).optional(),
+  reason: ReasonSchema,
+})
+
+export const UpdateRuleSchema = CreateRuleSchema.omit({ assessmentType: true }).partial()
+
+export type CreateRuleInput = z.infer<typeof CreateRuleSchema>
+export type UpdateRuleInput = z.infer<typeof UpdateRuleSchema>

@@ -22,6 +22,8 @@ import type { GapEngineSnapshotStructure } from '@/lib/questions/gap-engine'
 import type { QuestionSnapshot } from '@/lib/questions/question-snapshot'
 import { ApiError } from '@/types/api'
 import { QuestionRegistryService } from '@/lib/services/question-registry.service'
+import { evaluateRefinements } from '@/lib/questions/rule-engine'
+import type { CrossFieldViolation } from '@/lib/questions/cross-field-rules'
 
 /**
  * Rapid Assessment Service — Dynamic Question Registry edition (P4).
@@ -34,7 +36,9 @@ import { QuestionRegistryService } from '@/lib/services/question-registry.servic
  *   1. fetches the CURRENT registry snapshot for the type,
  *   2. validates `answers` against it via `buildAssessmentSchema` — unknown
  *      keys are stripped, required questions enforced, violations 422 with
- *      per-field errors (cross-field rules are client-side only, Q2=B),
+ *      per-field errors — and enforces the type's ACTIVE cross-field
+ *      REFINEMENT rules server-side (400 with the violation array as
+ *      `details`; aggregates stay client-live-only — P10-2),
  *   3. freezes that snapshot onto the row and derives `gapAnalysis` +
  *      `priority` through the gap engine (priority is never client input).
  */
@@ -85,6 +89,48 @@ function validateAnswersAgainstSnapshot(
     )
   }
   return parsed.data as Record<string, unknown>
+}
+
+/**
+ * Loads the type's ACTIVE cross-field rules (per-type 30s cache) and
+ * evaluates the REFINEMENT subset against the given answers (P10-2). The
+ * evaluator never throws; AGGREGATE rules are never returned (they stay
+ * client-live-only, legacy parity).
+ */
+async function evaluateActiveRefinements(
+  assessmentType: string,
+  answers: Record<string, unknown>
+): Promise<CrossFieldViolation[]> {
+  const rules = await QuestionRegistryService.getRules(assessmentType)
+  return evaluateRefinements(
+    rules.map((rule) => ({
+      ruleKey: rule.ruleKey,
+      kind: rule.kind,
+      message: rule.message,
+      when: rule.when ?? undefined,
+      expression: rule.expression,
+      referenceKeys: rule.referenceKeys,
+      order: rule.order,
+    })),
+    answers
+  )
+}
+
+/**
+ * Server-side REFINEMENT enforcement for the ONLINE paths (create/update/
+ * submit): a violating payload is rejected with 400 and the violation array
+ * (`{key, message, kind}` per entry) as `details`. Offline `/sync/batch` is
+ * exempt by ruling (plan §8 never-reject) and stores the same violations as
+ * informational `gapAnalysis.crossFieldViolations` flags instead.
+ */
+async function assertNoRefinementViolations(
+  assessmentType: string,
+  answers: Record<string, unknown>
+): Promise<void> {
+  const violations = await evaluateActiveRefinements(assessmentType, answers)
+  if (violations.length > 0) {
+    throw new ApiError('Cross-field validation failed', 400, violations)
+  }
 }
 
 /** Offline-sync payloads additionally declare the client's registry view. */
@@ -173,6 +219,10 @@ export class RapidAssessmentService {
     // Validate the client's answers against the snapshot being frozen:
     // unknown keys stripped, required questions enforced.
     const validatedAnswers = validateAnswersAgainstSnapshot(questionSnapshot, answers ?? {})
+
+    // P10-2 — server-side cross-field enforcement: the validated answers must
+    // satisfy the type's active REFINEMENT rules (aggregates stay client-side).
+    await assertNoRefinementViolations(type, validatedAnswers)
 
     // Derive gap analysis + priority through the engine, against the snapshot
     // this assessment just froze (priority replaces client input)
@@ -293,10 +343,18 @@ export class RapidAssessmentService {
     // Diagnostics-only re-validation (added questions optional; never throws).
     relaxedValidateOfflineAnswers(questionSnapshot, ingestedAnswers, warnings.added)
 
+    // P10-2 — offline replay exemption (never-reject, plan §8): what the
+    // online path would reject with 400 is stored as an informational flag.
+    // REFINEMENT-only, additive key, written ONLY when non-empty so existing
+    // gapAnalysis shapes stay untouched.
+    const crossFieldViolations = await evaluateActiveRefinements(type, ingestedAnswers)
+
     // Derive gap analysis + priority against the frozen snapshot; answered
     // keys outside the snapshot self-derive as source-'unknown' rows.
     const gapAnalysis = await analyzeGapsFromSnapshot(type, questionSnapshot, ingestedAnswers)
     const priority = derivePriorityFromGaps(type, gapAnalysis)
+    const storedGapAnalysis =
+      crossFieldViolations.length > 0 ? { ...gapAnalysis, crossFieldViolations } : gapAnalysis
 
     const rapidAssessment = await prisma.rapidAssessment.create({
       data: {
@@ -323,7 +381,7 @@ export class RapidAssessmentService {
         structureVersion: clientStructureVersion ?? questionSnapshot.structureVersion,
         contentVersion: questionSnapshot.contentVersion,
         questionSnapshot: questionSnapshot as unknown as Prisma.InputJsonValue,
-        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+        gapAnalysis: storedGapAnalysis as unknown as Prisma.InputJsonValue,
       },
     })
 
@@ -417,8 +475,14 @@ export class RapidAssessmentService {
       registryRows
     )
     relaxedValidateOfflineAnswers(snapshot, ingestedAnswers, warnings.added)
+
+    // P10-2 — offline replay exemption (never-reject, plan §8): REFINEMENT
+    // violations are stored as an informational gapAnalysis flag, never a 4xx.
+    const crossFieldViolations = await evaluateActiveRefinements(assessmentType, ingestedAnswers)
     const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, ingestedAnswers)
     const priority = derivePriorityFromGaps(assessmentType, gapAnalysis)
+    const storedGapAnalysis =
+      crossFieldViolations.length > 0 ? { ...gapAnalysis, crossFieldViolations } : gapAnalysis
 
     const { verificationStatus, ...safeBaseData } = baseData as Omit<UpdateOfflineRapidAssessmentInput, 'type' | 'answers' | 'questionKeys'> & {
       verificationStatus?: UpdateOfflineRapidAssessmentInput['verificationStatus']
@@ -447,7 +511,7 @@ export class RapidAssessmentService {
         contentVersion: snapshot.contentVersion,
         questionSnapshot: snapshot as unknown as Prisma.InputJsonValue,
         priority,
-        gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+        gapAnalysis: storedGapAnalysis as unknown as Prisma.InputJsonValue,
         updatedAt: new Date()
       }
     })
@@ -681,6 +745,8 @@ export class RapidAssessmentService {
       throw new Error(`No active registry questions found for assessment type ${assessmentType}`)
     }
     const validatedAnswers = validateAnswersAgainstSnapshot(snapshot, answers ?? {})
+    // P10-2 — the edit path must not bypass cross-field enforcement.
+    await assertNoRefinementViolations(assessmentType, validatedAnswers)
     const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, validatedAnswers)
     const priority = derivePriorityFromGaps(assessmentType, gapAnalysis)
 
@@ -758,7 +824,7 @@ export class RapidAssessmentService {
   static async submit(id: string, submittedBy: string): Promise<RapidAssessmentWithData> {
     const assessment = await prisma.rapidAssessment.findUnique({
       where: { id },
-      select: { assessorId: true, entityId: true, incidentId: true, rapidAssessmentType: true, priority: true }
+      select: { assessorId: true, entityId: true, incidentId: true, rapidAssessmentType: true, priority: true, answers: true }
     })
     if (!assessment) {
       throw new Error('Assessment not found')
@@ -767,6 +833,14 @@ export class RapidAssessmentService {
     if (assessment.assessorId !== submittedBy) {
       throw new Error('Not authorized to submit this assessment')
     }
+
+    // P10-2 — submit carries no payload: enforce the type's active
+    // REFINEMENT rules against the STORED answers (rows predating the
+    // answers layer have none — a coerced-to-0 map can violate nothing).
+    await assertNoRefinementViolations(
+      assessment.rapidAssessmentType,
+      (assessment.answers ?? {}) as Record<string, unknown>
+    )
 
     const updatedAssessment = await prisma.rapidAssessment.update({
       where: { id },

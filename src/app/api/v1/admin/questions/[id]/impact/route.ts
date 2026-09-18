@@ -44,7 +44,11 @@ function snapshotHasKey(snapshot: unknown, questionKey: string): boolean {
  *   mirrors QuestionRegistryService.countFrozenSnapshots semantics. Also
  *   echoed as `affectedCount` (the PATCH response's name for it);
  * - `latestSnapshot`: the most recent affected assessment's date + registry
- *   versions (structure/content), null when never used.
+ *   versions (structure/content), null when never used;
+ * - `referencingRules`: ACTIVE cross-field rules whose `referenceKeys`
+ *   contain the question key — each would dangle if the question were
+ *   deactivated, and QuestionRegistryService rejects that with 400
+ *   `registry_invalid` listing exactly these rules (P10-2).
  */
 export const GET = withAuth(async (request: NextRequest, context, { params }: RouteParams) => {
   if (!context.roles.includes('ADMIN') && !context.roles.includes('COORDINATOR')) {
@@ -97,6 +101,17 @@ export const GET = withAuth(async (request: NextRequest, context, { params }: Ro
       }
     }
 
+    // Deactivation-guard preview: active rules referencing this key.
+    const referencingRules = await prisma.crossFieldRule.findMany({
+      where: {
+        assessmentType: question.assessmentType,
+        isActive: true,
+        referenceKeys: { array_contains: question.questionKey },
+      },
+      orderBy: [{ order: 'asc' }, { ruleKey: 'asc' }],
+      select: { id: true, ruleKey: true, name: true, kind: true, order: true },
+    })
+
     return successResponse({
       questionKey: question.questionKey,
       snapshotCount,
@@ -104,6 +119,7 @@ export const GET = withAuth(async (request: NextRequest, context, { params }: Ro
       // Alias for the severity-PATCH confirm dialog (same population).
       affectedCount: activeUnderIncidentCount,
       latestSnapshot,
+      referencingRules,
     })
   } catch (error) {
     return handleApiError(error)

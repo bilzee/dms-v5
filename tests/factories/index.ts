@@ -17,6 +17,7 @@ import { buildQuestionSnapshot } from '../../src/lib/questions/question-snapshot
 import type { RapidAssessmentType } from '../../src/lib/questions/answers'
 import { getRegistryVersions } from '../../src/lib/questions/registry-versions'
 import { seedQuestions } from '../../prisma/seed-questions'
+import { seedCrossFieldRules } from '../../prisma/seed-rules'
 
 /**
  * Data factories for the API integration suite (tests/api/**).
@@ -175,12 +176,18 @@ export async function createPreliminaryAssessment(
  * Ensures the question registry exists in drms_test. `truncateTestDb()` wipes it,
  * so every suite that creates assessments through the API (service path requires
  * active registry questions) must call this in beforeAll after truncating.
- * Idempotent: seeds only when the questions table is empty.
+ * Idempotent: seeds only when the questions table is empty. Since P10-2 the
+ * cross-field rule baseline (15 rows) is part of the registry contract and is
+ * seeded the same way (rules table empty → seed).
  */
 export async function ensureQuestionRegistry(): Promise<void> {
   const existing = await testDb.question.count()
   if (existing === 0) {
     await seedQuestions(testDb)
+  }
+  const existingRules = await testDb.crossFieldRule.count()
+  if (existingRules === 0) {
+    await seedCrossFieldRules(testDb)
   }
 }
 

@@ -1,0 +1,100 @@
+# DQR P10-2 — rules governance API suite (CRUD/enforcement/exemption/guard + seed partition)
+# command: npm run db:push:test && npx jest --config jest.api.config.js tests/api/cross-field-rules.test.ts tests/api/seed-partition.test.ts
+# date: 2026-09-18T18:40:58Z
+
+warn The configuration property `package.json#prisma` is deprecated and will be removed in Prisma 7. Please migrate to a Prisma config file (e.g., `prisma.config.ts`).
+For more information, see: https://pris.ly/prisma-config
+
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "drms_test", schema "public" at "localhost:5435"
+
+The database is already in sync with the Prisma schema.
+
+db:push:test EXIT=0
+
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+PASS api tests/api/seed-partition.test.ts (11.072 s)
+PASS api tests/api/cross-field-rules.test.ts (7.826 s)
+  ● Console
+
+    console.error
+      Update rapid assessment error: ApiError: Cross-field validation failed
+          at assertNoRefinementViolations (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\rapid-assessment.service.ts:132:11)
+          at Function.update (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\rapid-assessment.service.ts:749:5)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\rapid-assessments\[id]\route.ts:112:26
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\cross-field-rules.test.ts:575:24) {
+        statusCode: 400,
+        details: [
+          {
+            key: 'additionalFoodRequiredPersons',
+            message: 'Food marked sufficient but additional persons required',
+            kind: 'refinement'
+          },
+          {
+            key: 'availableFoodDurationDays',
+            message: 'Food marked sufficient but duration is less than 7 days',
+            kind: 'refinement'
+          }
+        ]
+      }
+
+    [0m [90m 128 |[39m       [36mreturn[39m [33mNextResponse[39m[33m.[39mjson(response[33m,[39m { status[33m:[39m [35m200[39m })
+     [90m 129 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 130 |[39m       console[33m.[39merror([32m'Update rapid assessment error:'[39m[33m,[39m error)
+     [90m     |[39m               [31m[1m^[22m[39m
+     [90m 131 |[39m       
+     [90m 132 |[39m       [36mif[39m (error [36minstanceof[39m [33mError[39m [33m&&[39m error[33m.[39mmessage[33m.[39mincludes([32m'not found'[39m)) {
+     [90m 133 |[39m         [36mreturn[39m [33mNextResponse[39m[33m.[39mjson([0m
+
+      at error (src/app/api/v1/rapid-assessments/[id]/route.ts:130:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/cross-field-rules.test.ts:575:24)
+
+    console.error
+      Submit rapid assessment error: ApiError: Cross-field validation failed
+          at assertNoRefinementViolations (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\rapid-assessment.service.ts:132:11)
+          at Function.submit (B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\services\rapid-assessment.service.ts:840:5)
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\rapid-assessments\[id]\submit\route.ts:32:26
+          at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+          at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\cross-field-rules.test.ts:601:23) {
+        statusCode: 400,
+        details: [
+          {
+            key: 'additionalFoodRequiredPersons',
+            message: 'Food marked sufficient but additional persons required',
+            kind: 'refinement'
+          },
+          {
+            key: 'availableFoodDurationDays',
+            message: 'Food marked sufficient but duration is less than 7 days',
+            kind: 'refinement'
+          }
+        ]
+      }
+
+    [0m [90m 47 |[39m       [36mreturn[39m [33mNextResponse[39m[33m.[39mjson(response[33m,[39m { status[33m:[39m [35m200[39m })
+     [90m 48 |[39m     } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 49 |[39m       console[33m.[39merror([32m'Submit rapid assessment error:'[39m[33m,[39m error)
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 50 |[39m       
+     [90m 51 |[39m       [36mif[39m (error [36minstanceof[39m [33mError[39m [33m&&[39m error[33m.[39mmessage[33m.[39mincludes([32m'not found'[39m)) {
+     [90m 52 |[39m         [36mreturn[39m [33mNextResponse[39m[33m.[39mjson([0m
+
+      at error (src/app/api/v1/rapid-assessments/[id]/submit/route.ts:49:15)
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/cross-field-rules.test.ts:601:23)
+
+    console.log
+      Gap analysis calculated for assessment 9d4fd2db-d439-46db-9911-8822f8c9a891 (FOOD)
+
+      at Function.log [as triggerGapAnalysis] (src/lib/services/rapid-assessment.service.ts:924:15)
+
+
+Test Suites: 2 passed, 2 total
+Tests:       26 passed, 26 total
+Snapshots:   0 total
+Time:        18.956 s, estimated 19 s
+Ran all test suites matching /tests\\api\\cross-field-rules.test.ts|tests\\api\\seed-partition.test.ts/i.
+EXIT=0

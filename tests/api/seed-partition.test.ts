@@ -79,6 +79,10 @@ describe('seed partition (P9 production-safe baseline vs --with-sample-data)', (
     expect(await testDb.question.count()).toBe(55)
     expect(await testDb.questionSection.count()).toBe(27)
     expect(await registrySettingCount()).toBe(12)
+
+    // P10-2: the 15 cross-field rules seed in the default partition too
+    // (POPULATION 8 REFINEMENT + 3 AGGREGATE, FOOD 2, WASH 1, SHELTER 1).
+    expect(await testDb.crossFieldRule.count()).toBe(15)
   })
 
   test('--with-sample-data additionally seeds the demo world', async () => {
@@ -93,6 +97,8 @@ describe('seed partition (P9 production-safe baseline vs --with-sample-data)', (
     // Registry untouched by the sample-data branch.
     expect(await testDb.question.count()).toBe(55)
     expect(await registrySettingCount()).toBe(12)
+    // P10-2: rules count unchanged by --with-sample-data (15, both partitions).
+    expect(await testDb.crossFieldRule.count()).toBe(15)
 
     // P10-1: every seeded assessment's stored gapAnalysis is EXACTLY the
     // engine's derivation from that row's frozen questionSnapshot + answers

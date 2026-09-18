@@ -34,7 +34,7 @@
  * flows bottom-up from the registry.
  */
 
-import { AssessmentType, Prisma, Priority, Question, QuestionSection } from '@prisma/client'
+import { AssessmentType, CrossFieldRule, Prisma, Priority, Question, QuestionSection } from '@prisma/client'
 import { prisma } from '@/lib/db/client'
 import { incidentSeverityService } from '@/lib/services/incident-severity.service'
 import { ApiError } from '@/types/api'
@@ -62,6 +62,11 @@ import {
   REGISTRY_VERSION_SECTION,
   structureVersionSettingKey,
 } from '@/lib/questions/registry-versions'
+import {
+  RuleAstSchema,
+  type BoolGate,
+  type Compare,
+} from '@/lib/questions/rule-engine'
 
 type Tx = Prisma.TransactionClient
 
@@ -73,7 +78,7 @@ export interface QuestionSet {
   contentVersion: number
 }
 
-export type AuditEntityType = 'QUESTION' | 'SECTION'
+export type AuditEntityType = 'QUESTION' | 'SECTION' | 'RULE'
 export type AuditAction =
   | 'CREATE'
   | 'UPDATE'
@@ -160,6 +165,38 @@ export type ReorderPayload =
   | { sectionIds: string[] }
   | { sectionId: string; questionIds: string[] }
 
+/** DB rule kinds (engine maps these to the legacy lowercase violation kinds). */
+export type RuleKind = 'REFINEMENT' | 'AGGREGATE'
+
+export interface CreateRuleInput {
+  assessmentType: CatalogAssessmentType
+  /** kebab-case, immutable after create. */
+  ruleKey: string
+  kind: RuleKind
+  name: string
+  message: string
+  /** Optional BoolGate/Compare gate (null = no gate). */
+  when?: BoolGate | Compare | null
+  /** The violationWhen compare AST. */
+  expression: Compare
+  /** Invariant targets; [0] is the violation attachment key. */
+  referenceKeys: string[]
+  order?: number
+}
+
+export interface UpdateRuleInput {
+  /** Accepted only so the API can reject renames with 400 rule_key_immutable. */
+  ruleKey?: string
+  kind?: RuleKind
+  name?: string
+  message?: string
+  when?: BoolGate | Compare | null
+  expression?: Compare
+  referenceKeys?: string[]
+  order?: number
+  isActive?: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Read cache
 // ---------------------------------------------------------------------------
@@ -168,14 +205,24 @@ const QUESTION_SET_CACHE_TTL_MS = 30 * 1000
 
 let questionSetCache = new Map<string, { expiresAt: number; value: QuestionSet }>()
 
+/** Per-type 30s cross-field rule cache (P10-2), mirroring the question-set cache. */
+const RULE_CACHE_TTL_MS = 30 * 1000
+let crossFieldRuleCache = new Map<string, { expiresAt: number; value: CrossFieldRule[] }>()
+
 /** Drops all cached question sets (after mutations, re-seeds, and in tests). */
 export function clearQuestionRegistryCache(): void {
   questionSetCache = new Map()
 }
 
-/** Mutation-wide invalidation: question-set cache + gap-analysis metadata cache. */
+/** Drops all cached rule lists (after mutations, re-seeds, and in tests). */
+export function clearCrossFieldRuleCache(): void {
+  crossFieldRuleCache = new Map()
+}
+
+/** Mutation-wide invalidation: question-set + rule caches + gap-analysis metadata cache. */
 function invalidateRegistryCaches(): void {
   clearQuestionRegistryCache()
+  clearCrossFieldRuleCache()
   clearGapQuestionCache()
 }
 
@@ -254,6 +301,33 @@ export class QuestionRegistryService {
     }
     questionSetCache.set(cacheKey, { expiresAt: Date.now() + QUESTION_SET_CACHE_TTL_MS, value })
     return value
+  }
+
+  /**
+   * Cross-field rules of a type, ordered (`order` asc, tie-break `ruleKey`
+   * asc — the engine's deterministic evaluation order). Default: active rows
+   * only; `includeInactive` returns every row for the admin editor. Behind a
+   * per-type 30s cache cleared by `invalidateRegistryCaches`.
+   */
+  static async getRules(
+    assessmentType: string,
+    options: { includeInactive?: boolean } = {}
+  ): Promise<CrossFieldRule[]> {
+    const type = parseAssessmentType(assessmentType)
+    const includeInactive = options.includeInactive ?? false
+    const cacheKey = `${type}:${includeInactive ? 'all' : 'active'}`
+
+    const cached = crossFieldRuleCache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value
+    }
+
+    const rules = await prisma.crossFieldRule.findMany({
+      where: { assessmentType: type as AssessmentType, ...(includeInactive ? {} : { isActive: true }) },
+      orderBy: [{ order: 'asc' }, { ruleKey: 'asc' }],
+    })
+    crossFieldRuleCache.set(cacheKey, { expiresAt: Date.now() + RULE_CACHE_TTL_MS, value: rules })
+    return rules
   }
 
   /**
@@ -764,6 +838,30 @@ export class QuestionRegistryService {
         existing.questionKey
       )
 
+      // P10-2 rule-reference guard: an ACTIVE cross-field rule referencing
+      // this question's key blocks deactivation (its invariant would dangle).
+      // Deactivating/editing the rule first lifts the block.
+      const referencingRules = await tx.crossFieldRule.findMany({
+        where: {
+          assessmentType: existing.assessmentType,
+          isActive: true,
+          referenceKeys: { array_contains: existing.questionKey },
+        },
+        select: { id: true, ruleKey: true, name: true, kind: true },
+      })
+      if (referencingRules.length > 0) {
+        throw new ApiError('registry_invalid', 400, {
+          errors: referencingRules.map((rule) => ({
+            ruleId: rule.id,
+            ruleKey: rule.ruleKey,
+            name: rule.name,
+            kind: rule.kind,
+            questionKey: existing.questionKey,
+            hint: 'Deactivate or edit the referencing cross-field rule first',
+          })),
+        })
+      }
+
       const question = await tx.question.update({
         where: { id },
         data: { isActive: false },
@@ -794,6 +892,314 @@ export class QuestionRegistryService {
     return deactivated
   }
 
+  // ---- Cross-field rule mutations (P10-2) -----------------------------------
+
+  /**
+   * Shared rule validation: AST must pass the shared zod grammar and every
+   * `referenceKeys` entry must be an ACTIVE question key of the type.
+   * Throws 400 `registry_invalid` with the error list.
+   */
+  private static async validateRuleState(
+    tx: Tx,
+    assessmentType: CatalogAssessmentType,
+    rule: {
+      when?: BoolGate | Compare | null
+      expression: Compare
+      referenceKeys: string[]
+    }
+  ): Promise<void> {
+    const errors: string[] = []
+
+    const ast = RuleAstSchema.safeParse({
+      when: rule.when ?? undefined,
+      violationWhen: rule.expression,
+    })
+    if (!ast.success) {
+      errors.push(`expression/when failed AST validation: ${ast.error.message}`)
+    }
+    if (rule.referenceKeys.length === 0) {
+      errors.push('referenceKeys must be a non-empty array')
+    }
+
+    const activeQuestions = await tx.question.findMany({
+      where: { assessmentType: assessmentType as AssessmentType, isActive: true },
+      select: { questionKey: true },
+    })
+    const activeKeys = new Set(activeQuestions.map((row) => row.questionKey))
+    const unknown = [...new Set(rule.referenceKeys)].filter((key) => !activeKeys.has(key))
+    if (unknown.length > 0) {
+      errors.push(
+        `referenceKeys not active questions of type ${assessmentType}: ${unknown.join(', ')}`
+      )
+    }
+
+    if (errors.length > 0) {
+      throw new ApiError('registry_invalid', 400, { errors })
+    }
+  }
+
+  /** Next available rule order for a type (max existing order + 1). */
+  private static async nextRuleOrder(
+    tx: Tx,
+    assessmentType: CatalogAssessmentType
+  ): Promise<number> {
+    const last = await tx.crossFieldRule.findFirst({
+      where: { assessmentType: assessmentType as AssessmentType },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    })
+    return (last?.order ?? 0) + 1
+  }
+
+  /**
+   * Creates a cross-field rule. Rules are never per-question freeze-gated
+   * (they do not alter answer shape); every mutation bumps the type's
+   * structureVersion (validation semantics changed) and writes a RULE audit
+   * row with a mandatory `reason`.
+   */
+  static async createRule(
+    input: CreateRuleInput,
+    actorId: string,
+    reason?: string
+  ): Promise<CrossFieldRule> {
+    const created = await prisma.$transaction(async (tx) => {
+      const assessmentType = parseAssessmentType(input.assessmentType)
+
+      const duplicate = await tx.crossFieldRule.findFirst({
+        where: { assessmentType: assessmentType as AssessmentType, ruleKey: input.ruleKey },
+        select: { id: true },
+      })
+      if (duplicate) {
+        throw new ApiError('rule_key_duplicate', 409, {
+          assessmentType,
+          ruleKey: input.ruleKey,
+        })
+      }
+
+      await QuestionRegistryService.validateRuleState(tx, assessmentType, {
+        when: input.when ?? null,
+        expression: input.expression,
+        referenceKeys: input.referenceKeys,
+      })
+
+      const order = input.order ?? (await QuestionRegistryService.nextRuleOrder(tx, assessmentType))
+
+      const rule = await tx.crossFieldRule.create({
+        data: {
+          assessmentType: assessmentType as AssessmentType,
+          ruleKey: input.ruleKey,
+          kind: input.kind,
+          name: input.name,
+          message: input.message,
+          when: (input.when ?? undefined) as Prisma.InputJsonValue | undefined,
+          expression: input.expression as unknown as Prisma.InputJsonValue,
+          referenceKeys: input.referenceKeys as unknown as Prisma.InputJsonValue,
+          isActive: true,
+          order,
+        },
+      })
+
+      await QuestionRegistryService.bumpVersions(tx, assessmentType, { structure: true })
+      await QuestionRegistryService.writeAudit(tx, {
+        entityType: 'RULE',
+        entityId: rule.id,
+        action: 'CREATE',
+        after: {
+          ruleKey: rule.ruleKey,
+          assessmentType: rule.assessmentType,
+          kind: rule.kind,
+          order: rule.order,
+        },
+        actorId,
+        reason,
+        structural: true,
+      })
+      return rule
+    })
+
+    invalidateRegistryCaches()
+    return created
+  }
+
+  /**
+   * Updates a rule (name/message/kind/when/expression/referenceKeys/order/
+   * isActive). `ruleKey` and `assessmentType` are immutable
+   * (400 `rule_key_immutable`). Structure bump + UPDATE audit.
+   */
+  static async updateRule(
+    id: string,
+    input: UpdateRuleInput,
+    actorId: string,
+    reason?: string
+  ): Promise<CrossFieldRule> {
+    const updated = await prisma.$transaction(async (tx) => {
+      const existing = await tx.crossFieldRule.findUnique({ where: { id } })
+      if (!existing) {
+        throw new ApiError('rule_not_found', 404)
+      }
+      if (input.ruleKey !== undefined && input.ruleKey !== existing.ruleKey) {
+        throw new ApiError('rule_key_immutable', 400, {
+          ruleKey: existing.ruleKey,
+          requested: input.ruleKey,
+        })
+      }
+
+      const data: Prisma.CrossFieldRuleUpdateInput = {}
+      const diff: Record<string, { from: unknown; to: unknown }> = {}
+      const touch = (field: string, from: unknown, to: unknown): void => {
+        diff[field] = { from, to }
+      }
+
+      if (input.kind !== undefined && input.kind !== existing.kind) {
+        data.kind = input.kind
+        touch('kind', existing.kind, input.kind)
+      }
+      if (input.name !== undefined && input.name !== existing.name) {
+        data.name = input.name
+        touch('name', existing.name, input.name)
+      }
+      if (input.message !== undefined && input.message !== existing.message) {
+        data.message = input.message
+        touch('message', existing.message, input.message)
+      }
+      if (input.order !== undefined && input.order !== existing.order) {
+        data.order = input.order
+        touch('order', existing.order, input.order)
+      }
+      if (input.isActive !== undefined && input.isActive !== existing.isActive) {
+        data.isActive = input.isActive
+        touch('isActive', existing.isActive, input.isActive)
+      }
+      if (input.when !== undefined) {
+        const from = existing.when ?? null
+        const to = input.when ?? null
+        if (JSON.stringify(from) !== JSON.stringify(to)) {
+          data.when = (input.when ?? undefined) as Prisma.InputJsonValue | undefined
+          touch('when', from, to)
+        }
+      }
+      if (input.expression !== undefined) {
+        const from = existing.expression
+        if (JSON.stringify(from) !== JSON.stringify(input.expression)) {
+          data.expression = input.expression as unknown as Prisma.InputJsonValue
+          touch('expression', from, input.expression)
+        }
+      }
+      if (input.referenceKeys !== undefined) {
+        const from = existing.referenceKeys as unknown
+        if (JSON.stringify(from) !== JSON.stringify(input.referenceKeys)) {
+          data.referenceKeys = input.referenceKeys as unknown as Prisma.InputJsonValue
+          touch('referenceKeys', from, input.referenceKeys)
+        }
+      }
+
+      if (Object.keys(diff).length === 0) {
+        return existing
+      }
+
+      // Re-validate the merged rule whenever any semantics-bearing field is
+      // in the payload (a pure isActive flip needs no AST re-check).
+      if (
+        input.when !== undefined ||
+        input.expression !== undefined ||
+        input.referenceKeys !== undefined
+      ) {
+        await QuestionRegistryService.validateRuleState(
+          tx,
+          existing.assessmentType as CatalogAssessmentType,
+          {
+            when:
+              input.when !== undefined
+                ? input.when ?? null
+                : (existing.when as BoolGate | Compare | null),
+            expression: input.expression ?? (existing.expression as unknown as Compare),
+            referenceKeys: input.referenceKeys ?? (existing.referenceKeys as unknown as string[]),
+          }
+        )
+      }
+
+      const before = {
+        kind: existing.kind,
+        name: existing.name,
+        message: existing.message,
+        when: existing.when ?? null,
+        expression: existing.expression,
+        referenceKeys: existing.referenceKeys,
+        order: existing.order,
+        isActive: existing.isActive,
+      }
+
+      const rule = await tx.crossFieldRule.update({
+        where: { id },
+        data: { ...data, updatedAt: new Date() },
+      })
+
+      await QuestionRegistryService.bumpVersions(tx, existing.assessmentType as CatalogAssessmentType, {
+        structure: true,
+      })
+      await QuestionRegistryService.writeAudit(tx, {
+        entityType: 'RULE',
+        entityId: id,
+        action: 'UPDATE',
+        before,
+        after: diff,
+        actorId,
+        reason,
+        structural: true,
+      })
+      return rule
+    })
+
+    invalidateRegistryCaches()
+    return updated
+  }
+
+  /**
+   * Soft-deactivates a rule (isActive=false). Reason + audit + structure
+   * bump, like every rule mutation. Deactivating the LAST active REFINEMENT
+   * of a type is allowed — cross-field validation is optional by design
+   * (plan §4.4).
+   */
+  static async deactivateRule(id: string, actorId: string, reason?: string): Promise<CrossFieldRule> {
+    const deactivated = await prisma.$transaction(async (tx) => {
+      const existing = await tx.crossFieldRule.findUnique({ where: { id } })
+      if (!existing) {
+        throw new ApiError('rule_not_found', 404)
+      }
+      if (!existing.isActive) {
+        return existing
+      }
+
+      const rule = await tx.crossFieldRule.update({
+        where: { id },
+        data: { isActive: false },
+      })
+
+      await QuestionRegistryService.bumpVersions(tx, existing.assessmentType as CatalogAssessmentType, {
+        structure: true,
+      })
+      await QuestionRegistryService.writeAudit(tx, {
+        entityType: 'RULE',
+        entityId: id,
+        action: 'DEACTIVATE',
+        before: {
+          ruleKey: existing.ruleKey,
+          assessmentType: existing.assessmentType,
+          kind: existing.kind,
+          order: existing.order,
+          isActive: existing.isActive,
+        },
+        actorId,
+        reason,
+        structural: true,
+      })
+      return rule
+    })
+
+    invalidateRegistryCaches()
+    return deactivated
+  }
+
   /**
    * GAP-question severity update (coordinator/admin surface). Content bump
    * only — severity is never frozen into snapshots, so no freeze gate. Because
@@ -808,7 +1214,7 @@ export class QuestionRegistryService {
     severity: 'CRITICAL' | 'HIGH' | 'MEDIUM',
     actorId: string,
     reason?: string
-  ): Promise<{ question: Question; affectedCount: number }> {
+  ): Promise<{ question: Question; affectedCount: number; affectedIncidentIds: string[] }> {
     // Pre-transaction fast path (P10-1): resolve the question and, when the
     // severity actually changes, scan recompute candidates OUTSIDE the
     // interactive transaction (plain prisma reads) so the expensive
@@ -897,7 +1303,7 @@ export class QuestionRegistryService {
       }
     }
 
-    return { question, affectedCount }
+    return { question, affectedCount, affectedIncidentIds }
   }
 
   /**

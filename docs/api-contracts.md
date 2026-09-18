@@ -513,15 +513,17 @@ Offline data synchronization, conflict resolution, and batch processing.
 ### 4.25 Question Registry
 
 The dynamic question registry — the single source of the assessment form, gap
-severities, and snapshot versioning. Severities live on `Question.severity`
-(the legacy `GapFieldSeverity` table and its `/gap-field-severities` routes
-were deleted in DQR P1).
+severities, cross-field rules, and snapshot versioning. Severities live on
+`Question.severity` (the legacy `GapFieldSeverity` table and its
+`/gap-field-severities` routes were deleted in DQR P1); cross-field rules
+live on `CrossFieldRule` rows (P10-2; the 15 legacy predicates seeded in both
+partitions, deterministic ids `{TYPE}:{ruleKey}`).
 
 Read surface (all authenticated roles):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/questions?assessmentType={type}[&includeInactive=1]` | Returns the type's active sections with nested questions in presentation order, plus `structureVersion`/`contentVersion`. `includeInactive=1` requires ADMIN. |
+| GET | `/questions?assessmentType={type}[&includeInactive=1]` | Returns the type's active sections with nested questions in presentation order, `structureVersion`/`contentVersion`, and `rules` — the type's cross-field rules ordered by `order` (tie-break `ruleKey`; the deterministic evaluation order). `includeInactive=1` requires ADMIN and additionally returns inactive questions and rules. |
 
 Governance (ADMIN only; every mutation requires a `reason`, is validated against registry invariants, and is audit-logged):
 
@@ -529,15 +531,31 @@ Governance (ADMIN only; every mutation requires a `reason`, is validated against
 |--------|------|-------------|
 | POST | `/admin/questions` | Creates a question (camelCase `questionKey`, category-matched, GAP ⇒ BOOLEAN + required + gap metadata). |
 | PUT | `/admin/questions/{id}` | Tier A edits (label/helperText/gap phrasing/recommendation/severity copy) bump `contentVersion`; Tier B edits (type/category/inverted/required/section move/number bounds/option-value removal) bump `structureVersion` and are freeze-gated (409 `question_frozen`). `questionKey` renames are 400 `question_key_immutable`. |
-| DELETE | `/admin/questions/{id}` | Soft-deactivates the question (freeze-gated; deactivating the last active GAP of a non-POPULATION type rolls back with 400 `registry_invalid`). |
-| PATCH | `/admin/questions/{id}/severity` | Pins a GAP severity (`CRITICAL|HIGH|MEDIUM`; Tier A — content bump). |
+| DELETE | `/admin/questions/{id}` | Soft-deactivates the question (freeze-gated; deactivating the last active GAP of a non-POPULATION type, or a question whose key an ACTIVE cross-field rule references, rolls back with 400 `registry_invalid` listing the rules). |
+| PATCH | `/admin/questions/{id}/severity` | Pins a GAP severity (`CRITICAL|HIGH|MEDIUM`; Tier A — content bump). Response: `{ data: { question, affectedCount, affectedIncidentIds } }` — affected ACTIVE-incident assessments are re-derived in the same transaction and their incident ids surfaced. |
 | GET | `/admin/questions/{id}/audit` | Returns the question's audit timeline. |
-| GET | `/admin/questions/{id}/impact` | Returns deactivation impact (assessments referencing the question). |
+| GET | `/admin/questions/{id}/impact` | Returns deactivation impact: `snapshotCount`, `activeUnderIncidentCount`/`affectedCount`, `latestSnapshot`, and `referencingRules` — the ACTIVE cross-field rules whose `referenceKeys` contain the question key (the deactivation guard's block list). ADMIN or COORDINATOR. |
 | POST | `/admin/questions/reorder` | Reorders sections or the questions within a section. |
 | GET | `/admin/questions/export` | Exports the full registry (sections + questions + versions) as JSON. |
 | POST | `/admin/sections` | Creates a section (kebab-case `sectionKey`). |
 | PUT | `/admin/sections/{id}` | Updates a section's title/description/category/order. |
 | DELETE | `/admin/sections/{id}` | Soft-deactivates a section (invariant-checked). |
+| POST | `/admin/rules` | Creates a cross-field rule for a type (kebab-case `ruleKey`, `kind` `REFINEMENT|AGGREGATE`, `message` with optional `{{value:key}}`/`{{sum:k1,k2}}` tokens, optional `when` gate `BoolGate|Compare`, `expression` compare AST, `referenceKeys` ⊆ active question keys of the type). Every rule mutation bumps `structureVersion` only (never `contentVersion`) and is never per-question freeze-gated. |
+| PUT | `/admin/rules/{id}` | Edits name/message/kind/when/expression/referenceKeys/order/isActive; re-validates the merged AST + references on semantic fields. `ruleKey` renames are 400 `rule_key_immutable`; duplicates 409 `rule_key_duplicate`; invalid AST/references 400 `registry_invalid`. |
+| DELETE | `/admin/rules/{id}` | Soft-deactivates the rule (`isActive: false`) with a mandatory `reason`. Deactivating the last active REFINEMENT of a type is allowed (validation is optional by design) and lifts the question-deactivation guard for its keys. |
+| GET | `/admin/rules/{id}/audit` | Returns the rule's audit timeline (`entityType: 'RULE'` rows). |
+
+**Cross-field enforcement (P10-2):** `POST /rapid-assessments`,
+`PUT /rapid-assessments/{id}`, and `POST /rapid-assessments/{id}/submit`
+evaluate the type's ACTIVE `REFINEMENT` rules server-side; a violating
+payload is rejected with 400 `Cross-field validation failed` and
+`details[] = [{ key, message, kind }]` per violation (`key` = the rule's
+primary `referenceKeys[0]`; `/submit` evaluates the row's stored answers).
+`AGGREGATE` rules are never server-enforced (client-live warnings only). The
+offline `POST /sync/batch` path is exempt (never-reject): the same replay
+persists with the violations stored as an informational, REFINEMENT-only
+`gapAnalysis.crossFieldViolations` array — an additive key written only when
+non-empty — and the batch still returns 200/207.
 
 **ACTIVE-incident submission guard (P9):** `POST /rapid-assessments` rejects
 submissions whose target incident does not exist with `404 Incident not
@@ -606,24 +624,24 @@ Non-versioned entity endpoints.
 | Exports | 10 |
 | Reports | 13 |
 | Sync | 8 |
-| Question Registry | 12 |
+| Question Registry | 16 |
 | Severity Thresholds | 5 |
 | Entities (Non-Versioned) | 1 |
-| **Total** | **192** |
+| **Total** | **196** |
 
 ### HTTP Method Distribution
 
 Verified against the codebase (counting exported handlers in
-`src/app/api/**/route.ts` at DQR P9):
+`src/app/api/**/route.ts` at DQR P10-2):
 
 | Method | Count | Description |
 |--------|-------|-------------|
-| GET | 138 | Read and query operations |
-| POST | 68 | Create and action operations |
-| PUT | 25 | Full update operations |
+| GET | 139 | Read and query operations |
+| POST | 69 | Create and action operations |
+| PUT | 26 | Full update operations |
 | PATCH | 7 | Partial update operations |
-| DELETE | 19 | Delete operations |
-| **Total** | **257 method handlers across 180 route files** | |
+| DELETE | 20 | Delete operations |
+| **Total** | **261 method handlers across 183 route files** | |
 
 Note: The resource-group table above counts endpoints this document
 **contracts for** (a curated inventory); the method distribution counts every

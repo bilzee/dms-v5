@@ -475,8 +475,36 @@ model Question {
   @@map("questions")
 }
 
+/// DQR P10-2 — cross-field validation rule (registry-managed parity of
+/// src/lib/questions/cross-field-rules.ts; prompt 3 flips the live form to
+/// these rows). `kind` is 'REFINEMENT' (server-enforced blocker) or
+/// 'AGGREGATE' (client-live warning, never server-rejected). `expression` is
+/// the violation-when AST, `when` an optional BoolGate/Compare gate,
+/// `referenceKeys` the invariant's question keys (first = the violation
+/// attachment key; all are deactivation-guard targets). Mutations are
+/// governed: QuestionAuditLog (`entityType: 'RULE'`) + structureVersion bump.
+model CrossFieldRule {
+  id             String         @id @default(uuid())
+  assessmentType AssessmentType @map("assessment_type")
+  ruleKey        String         @map("rule_key")
+  kind           String
+  name           String
+  message        String
+  when           Json?
+  expression     Json
+  referenceKeys  Json           @map("reference_keys")
+  isActive       Boolean        @default(true) @map("is_active")
+  order          Int
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  @@unique([assessmentType, ruleKey])
+  @@index([assessmentType, isActive])
+  @@map("cross_field_rules")
+}
+
 /// Polymorphic audit trail for registry governance (P2). `entityType` is
-/// `QUESTION` | `SECTION`; `entityId` is that row's id. `changes` carries the
+/// `QUESTION` | `SECTION` | `RULE`; `entityId` is that row's id. `changes` carries the
 /// after-diff ({field: {from,to}}) and `previous` the before-image. `reason`
 /// is mandatory context for structural actions (create/deactivate/reorder/
 /// section create/delete) — enforced by QuestionRegistryService.writeAudit.
