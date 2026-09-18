@@ -133,3 +133,18 @@
   summary: Nine sibling latest-assessment readers elsewhere in the situation route remain catalog-bound (`fromAnswers`), so post-seed snapshot keys render "N/A" on those older read paths even though the seven P10-1 readers (six per-type + POPULATION aggregation) now hydrate from the stored snapshot.
   evidence: VG-F4 at review — pre-existing read paths untouched by this story's frozen scope (the spec's Code Map lists only `findLatestTypedAssessment` + the POPULATION reader). Fix belongs to a follow-up read-side pass: route those readers through `hydrateAnswersFromRow` exactly as the P10-1 readers do.
 
+
+## From Review (2026-09-18, DQR P10-2)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
+  summary: Seed drift-update unconditionally writes `isActive: true` on rule rows (`prisma/seed-rules.ts` diff comparator), so a re-seed resurrects an admin-deactivated rule with no version bump or governed audit — the DB silently diverges from the admin's governance record.
+  evidence: Finding 10 (ECH4/BH2) at review, verified real — but `prisma/seed-questions.ts:113` carries the identical comparator for the 55 questions, and plan §4.3 binds "registry baseline like the 55 questions"; the reconciliation-over-governance policy predates this story. Fix belongs to a deliberate seed-policy pass covering BOTH seeds (e.g. skip isActive reconciliation on existing rows, or record it as a governed REACTIVATE audit + structure bump), not a rules-only carve-out.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
+  summary: `GET /admin/questions/export` omits cross-field rules, so an export-based registry migration (export → import into a fresh deployment) silently loses admin-authored rules and re-seeding yields only the 15 baseline rows.
+  evidence: Finding 11 (BH11) at review — the export route predates P10-2 and was outside this story's frozen scope; dedicated DB backups are unaffected. Fix belongs to a registry-portability pass: extend the export payload with `rules` (+ an import counterpart) and pin with a round-trip test.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
+  summary: `prisma/seed-essential.ts` rule wiring has no executable verification — only `prisma/seed.ts` (both partitions) is pinned by `tests/api/seed-partition.test.ts` child-process runs; a regression that drops `seedCrossFieldRules` from the essential partition would pass every suite.
+  evidence: Finding 12 (VG-V4, pre-verified) at review — `seedCrossFieldRules` itself is pinned (15-row count + drift behavior via the seed.ts runs and `tests/unit/rule-engine.test.ts` seed completeness), so residual risk is the one call site in `seed-essential.ts` only; a third child-process seed run was judged to outweigh that residual risk. Revisit if the essential partition gains rule-dependent behavior.
+

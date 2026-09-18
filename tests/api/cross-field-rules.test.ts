@@ -5,6 +5,8 @@ import { GET as impactRoute } from '@/app/api/v1/admin/questions/[id]/impact/rou
 import { PATCH as patchSeverityRoute } from '@/app/api/v1/admin/questions/[id]/severity/route'
 import { POST as createRuleRoute } from '@/app/api/v1/admin/rules/route'
 import { PUT as updateRuleRoute, DELETE as deactivateRuleRoute } from '@/app/api/v1/admin/rules/[id]/route'
+import { GET as ruleAuditRoute } from '@/app/api/v1/admin/rules/[id]/audit/route'
+import { SyncProcessingService } from '@/lib/services/sync-processing.service'
 import { POST as createAssessmentRoute } from '@/app/api/v1/rapid-assessments/route'
 import { PUT as updateAssessmentRoute } from '@/app/api/v1/rapid-assessments/[id]/route'
 import { POST as submitAssessmentRoute } from '@/app/api/v1/rapid-assessments/[id]/submit/route'
@@ -245,6 +247,18 @@ describe('P10-2 cross-field rule registry', () => {
 
     test('ADMIN creates a rule → 200, structure bump only, CREATE audit with reason+actor', async () => {
       const before = await versionsOf('SECURITY')
+      // Prime the per-type rule cache so the post-create read proves the
+      // mutation hook cleared it (a stale cache would hide the rule for 30s).
+      const primed = await getQuestionSetRoute(
+        makeRequest('GET', '/api/v1/questions', {
+          query: { assessmentType: 'SECURITY' },
+          token: tokenFor(admin),
+        })
+      )
+      expect(
+        (await jsonOf(primed)).data.rules.map((rule: { ruleKey: string }) => rule.ruleKey)
+      ).not.toContain(ruleKey)
+
       const response = await createRuleRoute(
         makeRequest('POST', '/api/v1/admin/rules', {
           body: validCreate(),
@@ -268,6 +282,52 @@ describe('P10-2 cross-field rule registry', () => {
       })
       expect(audit?.reason).toBe('P10-2 api coverage')
       expect(audit?.actorId).toBe(admin.id)
+
+      // Fresh read AFTER the mutation: the cache-invalidation hook ran.
+      const reread = await getQuestionSetRoute(
+        makeRequest('GET', '/api/v1/questions', {
+          query: { assessmentType: 'SECURITY' },
+          token: tokenFor(admin),
+        })
+      )
+      expect(
+        (await jsonOf(reread)).data.rules.map((rule: { ruleKey: string }) => rule.ruleKey)
+      ).toContain(ruleKey)
+    })
+
+    test('same ruleKey in a different type → 200 (uniqueness is per (type, ruleKey))', async () => {
+      const [hKeyA, hKeyB] = await activeQuestionKeys('HEALTH', 2)
+      const created = await createRuleRoute(
+        makeRequest('POST', '/api/v1/admin/rules', {
+          body: {
+            assessmentType: 'HEALTH',
+            ruleKey, // identical to the SECURITY rule above
+            kind: 'REFINEMENT',
+            name: 'Cross-type twin',
+            message: 'A must not exceed B',
+            expression: {
+              op: '>',
+              left: { type: 'question', key: hKeyA },
+              right: { type: 'question', key: hKeyB },
+            },
+            referenceKeys: [hKeyA, hKeyB],
+            reason: 'P10-2 cross-type uniqueness probe',
+          },
+          token: tokenFor(admin),
+        })
+      )
+      expect(created.status).toBe(200)
+      const twin = await jsonOf(created)
+      expect(twin.data.id).not.toBe(ruleId)
+
+      const cleanup = await deactivateRuleRoute(
+        makeRequest('DELETE', `/api/v1/admin/rules/${twin.data.id}`, {
+          body: { reason: 'cross-type probe cleanup' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: twin.data.id })
+      )
+      expect(cleanup.status).toBe(204)
     })
 
     test('duplicate ruleKey (same type) → 409 rule_key_duplicate', async () => {
@@ -327,6 +387,59 @@ describe('P10-2 cross-field rule registry', () => {
       )
     })
 
+    test('PUT when:null clears the gate (SQL NULL), bumps structure, audits the clear', async () => {
+      const stamp = Date.now().toString(36)
+      const gateRuleKey = `gate-rule-${stamp}`
+      const created = await createRuleRoute(
+        makeRequest('POST', '/api/v1/admin/rules', {
+          body: validCreate({
+            ruleKey: gateRuleKey,
+            name: 'Gated rule',
+            when: { questionKey: keyA, is: true },
+          }),
+          token: tokenFor(admin),
+        })
+      )
+      expect(created.status).toBe(200)
+      const gatedId = (await jsonOf(created)).data.id
+      expect((await testDb.crossFieldRule.findUnique({ where: { id: gatedId } }))?.when).toEqual({
+        questionKey: keyA,
+        is: true,
+      })
+
+      const before = await versionsOf('SECURITY')
+      const cleared = await updateRuleRoute(
+        makeRequest('PUT', `/api/v1/admin/rules/${gatedId}`, {
+          body: { when: null, reason: 'clear the gate' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: gatedId })
+      )
+      expect(cleared.status).toBe(200)
+
+      // The stored gate is SQL NULL — not the stale BoolGate (the silent
+      // no-op flagged in review), and not a JSON null sentinel.
+      const stored = await testDb.crossFieldRule.findUniqueOrThrow({ where: { id: gatedId } })
+      expect(stored.when).toBeNull()
+
+      const after = await versionsOf('SECURITY')
+      expect(after.structureVersion).toBe(before.structureVersion + 1)
+      const audit = await testDb.questionAuditLog.findFirst({
+        where: { entityType: 'RULE', entityId: gatedId, action: 'UPDATE' },
+        orderBy: { actedAt: 'desc' },
+      })
+      expect((audit?.changes as { when?: { to?: unknown } })?.when?.to).toBeNull()
+
+      const cleanup = await deactivateRuleRoute(
+        makeRequest('DELETE', `/api/v1/admin/rules/${gatedId}`, {
+          body: { reason: 'gate probe cleanup' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: gatedId })
+      )
+      expect(cleanup.status).toBe(204)
+    })
+
     test('no-op PUT → 200, no version change, no new audit', async () => {
       const before = await versionsOf('SECURITY')
       const auditBefore = await testDb.questionAuditLog.count({ where: { entityId: ruleId } })
@@ -340,6 +453,49 @@ describe('P10-2 cross-field rule registry', () => {
       expect(response.status).toBe(200)
       expect(await versionsOf('SECURITY')).toEqual(before)
       expect(await testDb.questionAuditLog.count({ where: { entityId: ruleId } })).toBe(auditBefore)
+    })
+
+    test('PUT with reordered JSON keys (same AST) → semantic no-op, no phantom bump', async () => {
+      const before = await versionsOf('SECURITY')
+      const auditBefore = await testDb.questionAuditLog.count({ where: { entityId: ruleId } })
+      const response = await updateRuleRoute(
+        makeRequest('PUT', `/api/v1/admin/rules/${ruleId}`, {
+          body: {
+            // Semantically identical to the stored expression, keys reordered —
+            // canonical comparison must see through key-order-only differences.
+            expression: {
+              left: { key: keyA, type: 'question' },
+              op: '>',
+              right: { key: keyB, type: 'question' },
+            },
+            reason: 'reordered keys probe',
+          },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: ruleId })
+      )
+      expect(response.status).toBe(200)
+      expect(await versionsOf('SECURITY')).toEqual(before)
+      expect(await testDb.questionAuditLog.count({ where: { entityId: ruleId } })).toBe(auditBefore)
+    })
+
+    test('PUT with invalid merged referenceKeys → 400 registry_invalid (re-validated)', async () => {
+      const before = await versionsOf('SECURITY')
+      const response = await updateRuleRoute(
+        makeRequest('PUT', `/api/v1/admin/rules/${ruleId}`, {
+          body: { referenceKeys: [keyA, 'noSuchKeyOnPut'], reason: 're-validation probe' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: ruleId })
+      )
+      expect(response.status).toBe(400)
+      const body = await jsonOf(response)
+      expect(body.error).toBe('registry_invalid')
+      expect(body.details.errors.join('\n')).toContain('noSuchKeyOnPut')
+      expect(await versionsOf('SECURITY')).toEqual(before)
+      expect(
+        (await testDb.crossFieldRule.findUnique({ where: { id: ruleId } }))?.referenceKeys
+      ).toEqual([keyA, keyB])
     })
 
     test('unknown ids → 404 rule_not_found (PUT and DELETE)', async () => {
@@ -400,6 +556,100 @@ describe('P10-2 cross-field rule registry', () => {
       })
       expect(audit?.reason).toBe('retire the test rule')
       expect(audit?.actorId).toBe(admin.id)
+
+      // A fresh /questions read no longer lists the deactivated rule
+      // (cache-invalidation hook, not a 30s TTL expiry).
+      const afterRead = await getQuestionSetRoute(
+        makeRequest('GET', '/api/v1/questions', {
+          query: { assessmentType: 'SECURITY' },
+          token: tokenFor(admin),
+        })
+      )
+      expect(
+        (await jsonOf(afterRead)).data.rules.map((rule: { ruleKey: string }) => rule.ruleKey)
+      ).not.toContain(ruleKey)
+    })
+  })
+
+  // --------------------------------------------- rule audit timeline route ---
+
+  describe('GET /api/v1/admin/rules/[id]/audit', () => {
+    test("ADMIN timeline newest-first with actor; COORDINATOR 403; unknown id → empty", async () => {
+      const [keyA, keyB] = await activeQuestionKeys('SECURITY', 2)
+      const stamp = Date.now().toString(36)
+      const created = await createRuleRoute(
+        makeRequest('POST', '/api/v1/admin/rules', {
+          body: {
+            assessmentType: 'SECURITY',
+            ruleKey: `audit-rule-${stamp}`,
+            kind: 'REFINEMENT',
+            name: 'Audit probe',
+            message: 'A must not exceed B',
+            expression: {
+              op: '>',
+              left: { type: 'question', key: keyA },
+              right: { type: 'question', key: keyB },
+            },
+            referenceKeys: [keyA, keyB],
+            reason: 'audit route probe',
+          },
+          token: tokenFor(admin),
+        })
+      )
+      expect(created.status).toBe(200)
+      const auditRuleId = (await jsonOf(created)).data.id
+
+      const edited = await updateRuleRoute(
+        makeRequest('PUT', `/api/v1/admin/rules/${auditRuleId}`, {
+          body: { message: 'A must NEVER exceed B', reason: 'audit route probe edit' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: auditRuleId })
+      )
+      expect(edited.status).toBe(200)
+
+      const timeline = await ruleAuditRoute(
+        makeRequest('GET', `/api/v1/admin/rules/${auditRuleId}/audit`, {
+          token: tokenFor(admin),
+        }),
+        withParams({ id: auditRuleId })
+      )
+      expect(timeline.status).toBe(200)
+      const body = await jsonOf(timeline)
+      expect(body.data.entries).toHaveLength(2)
+      expect(body.data.entries[0].action).toBe('UPDATE') // newest first
+      expect(body.data.entries[1].action).toBe('CREATE')
+      expect(
+        body.data.entries.every((entry: { entityType: string }) => entry.entityType === 'RULE')
+      ).toBe(true)
+      expect(body.data.entries[1].reason).toBe('audit route probe')
+      expect(body.data.entries[1].actor).toMatchObject({ email: admin.email })
+
+      const denied = await ruleAuditRoute(
+        makeRequest('GET', `/api/v1/admin/rules/${auditRuleId}/audit`, {
+          token: tokenFor(coordinator),
+        }),
+        withParams({ id: auditRuleId })
+      )
+      expect(denied.status).toBe(403)
+
+      const unknown = await ruleAuditRoute(
+        makeRequest('GET', '/api/v1/admin/rules/no-such-rule/audit', {
+          token: tokenFor(admin),
+        }),
+        withParams({ id: 'no-such-rule' })
+      )
+      expect(unknown.status).toBe(200)
+      expect((await jsonOf(unknown)).data.entries).toEqual([])
+
+      const cleanup = await deactivateRuleRoute(
+        makeRequest('DELETE', `/api/v1/admin/rules/${auditRuleId}`, {
+          body: { reason: 'audit probe cleanup' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: auditRuleId })
+      )
+      expect(cleanup.status).toBe(204)
     })
   })
 
@@ -738,6 +988,84 @@ describe('P10-2 cross-field rule registry', () => {
       expect(
         (row.gapAnalysis as { crossFieldViolations?: unknown } | null)?.crossFieldViolations
       ).toBeUndefined()
+    })
+
+    test('offline UPDATE replay of a violating payload re-flags without rejecting', async () => {
+      const entity = await createEntity()
+      const incident = await createIncident({ createdBy: coordinator.id })
+      await createEntityAssignment({
+        userId: assessor.id,
+        entityId: entity.id,
+        assignedBy: admin.id,
+      })
+      const offlineId = `offline-upd-${Date.now().toString(36)}`
+
+      const createResponse = await syncBatchRoute(
+        makeRequest('POST', '/api/v1/sync/batch', {
+          body: {
+            changes: [
+              {
+                type: 'assessment',
+                action: 'create',
+                data: {
+                  type: 'FOOD',
+                  rapidAssessmentDate: new Date().toISOString(),
+                  assessorName: 'Offline Assessor',
+                  entityId: entity.id,
+                  incidentId: incident.id,
+                  answers: FOOD_CLEAN_ANSWERS,
+                },
+                offlineId,
+                versionNumber: 1,
+                entityUuid: entity.id,
+              },
+            ],
+          },
+          token: tokenFor(assessor),
+        })
+      )
+      expect(createResponse.status).toBe(200)
+      const clean = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
+      expect(
+        (clean.gapAnalysis as { crossFieldViolations?: unknown } | null)?.crossFieldViolations
+      ).toBeUndefined()
+
+      // Offline UPDATE with answers delegates to the never-reject ingestion
+      // path — violations flag the stored row, never reject the batch entry.
+      const results = await SyncProcessingService.processBatch(
+        [
+          {
+            type: 'assessment',
+            action: 'update',
+            data: {
+              type: 'FOOD',
+              assessorName: 'Offline Assessor',
+              entityId: entity.id,
+              incidentId: incident.id,
+              answers: FOOD_VIOLATING_ANSWERS,
+            },
+            versionNumber: 2,
+            entityUuid: offlineId,
+            offlineId,
+          },
+        ],
+        assessor.id
+      )
+      expect(results[0]).toMatchObject({ serverId: offlineId, status: 'success' })
+
+      const updated = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: offlineId } })
+      expect(updated.answers).toEqual(FOOD_VIOLATING_ANSWERS)
+      const stored = updated.gapAnalysis as {
+        crossFieldViolations?: Array<{ key: string; kind: string }>
+      } | null
+      expect(stored?.crossFieldViolations).toHaveLength(2)
+      expect(stored!.crossFieldViolations!.map((violation) => violation.key).sort()).toEqual([
+        'additionalFoodRequiredPersons',
+        'availableFoodDurationDays',
+      ])
+      expect(
+        stored!.crossFieldViolations!.every((violation) => violation.kind === 'refinement')
+      ).toBe(true)
     })
   })
 

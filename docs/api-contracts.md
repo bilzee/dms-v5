@@ -541,7 +541,7 @@ Governance (ADMIN only; every mutation requires a `reason`, is validated against
 | PUT | `/admin/sections/{id}` | Updates a section's title/description/category/order. |
 | DELETE | `/admin/sections/{id}` | Soft-deactivates a section (invariant-checked). |
 | POST | `/admin/rules` | Creates a cross-field rule for a type (kebab-case `ruleKey`, `kind` `REFINEMENT|AGGREGATE`, `message` with optional `{{value:key}}`/`{{sum:k1,k2}}` tokens, optional `when` gate `BoolGate|Compare`, `expression` compare AST, `referenceKeys` ⊆ active question keys of the type). Every rule mutation bumps `structureVersion` only (never `contentVersion`) and is never per-question freeze-gated. |
-| PUT | `/admin/rules/{id}` | Edits name/message/kind/when/expression/referenceKeys/order/isActive; re-validates the merged AST + references on semantic fields. `ruleKey` renames are 400 `rule_key_immutable`; duplicates 409 `rule_key_duplicate`; invalid AST/references 400 `registry_invalid`. |
+| PUT | `/admin/rules/{id}` | Edits name/message/kind/when/expression/referenceKeys/order/isActive; re-validates the merged AST + references on semantic fields. `ruleKey` renames are 400 `rule_key_immutable`; invalid AST/references 400 `registry_invalid`. Passing `when: null` clears the gate. |
 | DELETE | `/admin/rules/{id}` | Soft-deactivates the rule (`isActive: false`) with a mandatory `reason`. Deactivating the last active REFINEMENT of a type is allowed (validation is optional by design) and lifts the question-deactivation guard for its keys. |
 | GET | `/admin/rules/{id}/audit` | Returns the rule's audit timeline (`entityType: 'RULE'` rows). |
 

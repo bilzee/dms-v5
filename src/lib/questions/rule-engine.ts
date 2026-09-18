@@ -187,7 +187,9 @@ export function evaluateRules(
   values: Record<string, unknown>
 ): CrossFieldViolation[] {
   const ordered = [...rules].sort(
-    (a, b) => a.order - b.order || a.ruleKey.localeCompare(b.ruleKey)
+    (a, b) =>
+      a.order - b.order ||
+      (a.ruleKey < b.ruleKey ? -1 : a.ruleKey > b.ruleKey ? 1 : 0)
   )
 
   const violations: CrossFieldViolation[] = []

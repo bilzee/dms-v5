@@ -3,8 +3,9 @@ import { prisma } from '@/lib/db/client';
 import { RoleName } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedQuestions } from '../../../../../../prisma/seed-questions';
+import { seedCrossFieldRules } from '../../../../../../prisma/seed-rules';
 import { clearGapQuestionCache } from '@/lib/services/gap-analysis.service';
-import { clearQuestionRegistryCache } from '@/lib/services/question-registry.service';
+import { clearCrossFieldRuleCache, clearQuestionRegistryCache } from '@/lib/services/question-registry.service';
 
 async function assignPermissionsToRole(roleName: RoleName, permCodes: string[]) {
   const role = await prisma.role.findUnique({ where: { name: roleName } });
@@ -145,6 +146,15 @@ export async function POST(request: NextRequest) {
       `${questionSeedResult.unchanged} unchanged) across ${questionSeedResult.sections} sections`
     );
 
+    logs.push('Seeding cross-field rules...');
+    const ruleSeedResult = await seedCrossFieldRules(prisma);
+    clearCrossFieldRuleCache();
+    logs.push(
+      `Cross-field rules: ${ruleSeedResult.rules} rules ` +
+      `(${ruleSeedResult.created} created, ${ruleSeedResult.updated} updated, ` +
+      `${ruleSeedResult.unchanged} unchanged)`
+    );
+
     logs.push('Creating Borno LGAs...');
     const bornoLgas = [
       { id: 'lga-abadam', name: 'Abadam', lat: 13.50, lng: 13.50 },
@@ -220,6 +230,7 @@ export async function POST(request: NextRequest) {
         permissions: 20,
         questions: questionSeedResult.questions,
         questionSections: questionSeedResult.sections,
+        crossFieldRules: ruleSeedResult.rules,
         bornoLgas: 27,
         systemSettings: 9,
       },

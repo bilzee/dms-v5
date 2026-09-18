@@ -67,6 +67,7 @@ import {
   type BoolGate,
   type Compare,
 } from '@/lib/questions/rule-engine'
+import { canonicalJson } from '../../../prisma/seed-questions'
 
 type Tx = Prisma.TransactionClient
 
@@ -1073,21 +1074,23 @@ export class QuestionRegistryService {
       if (input.when !== undefined) {
         const from = existing.when ?? null
         const to = input.when ?? null
-        if (JSON.stringify(from) !== JSON.stringify(to)) {
-          data.when = (input.when ?? undefined) as Prisma.InputJsonValue | undefined
+        if (canonicalJson(from) !== canonicalJson(to)) {
+          // `null` clears the gate to SQL NULL (DbNull) — `undefined` would be
+          // a silent no-op in the Prisma update while the audit claims cleared.
+          data.when = input.when === null ? Prisma.DbNull : (input.when as Prisma.InputJsonValue)
           touch('when', from, to)
         }
       }
       if (input.expression !== undefined) {
         const from = existing.expression
-        if (JSON.stringify(from) !== JSON.stringify(input.expression)) {
+        if (canonicalJson(from) !== canonicalJson(input.expression)) {
           data.expression = input.expression as unknown as Prisma.InputJsonValue
           touch('expression', from, input.expression)
         }
       }
       if (input.referenceKeys !== undefined) {
         const from = existing.referenceKeys as unknown
-        if (JSON.stringify(from) !== JSON.stringify(input.referenceKeys)) {
+        if (canonicalJson(from) !== canonicalJson(input.referenceKeys)) {
           data.referenceKeys = input.referenceKeys as unknown as Prisma.InputJsonValue
           touch('referenceKeys', from, input.referenceKeys)
         }
