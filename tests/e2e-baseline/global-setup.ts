@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { BASELINE_PASSWORD, BASELINE_USERS, E2E_FIXTURES } from './baseline-users'
 import { seedQuestions } from '../../prisma/seed-questions'
+import { seedCrossFieldRules } from '../../prisma/seed-rules'
 
 /**
  * Playwright globalSetup for the E2E baseline suite.
@@ -12,8 +13,10 @@ import { seedQuestions } from '../../prisma/seed-questions'
  *    and hard-guards that the URL targets drms_test.
  * 2. Truncates drms_test and seeds roles + one user per golden-journey role
  *    (including ADMIN for the registry-editor surface), the question
- *    registry, one entity, one ACTIVE incident, and the assessor→entity
- *    assignment that submission authorization requires.
+ *    registry + the 15 seeded cross-field rules (the rules-admin-authoring
+ *    spec edits a seeded rule through the real admin UI), one entity, one
+ *    ACTIVE incident, and the assessor→entity assignment that submission
+ *    authorization requires.
  *
  * Raw Prisma + bcrypt only — no '@/' aliased app imports (Playwright does not
  * apply tsconfig path aliases inside globalSetup). prisma/seed-questions.ts
@@ -101,6 +104,11 @@ export default async function globalSetup(): Promise<void> {
     // content bump → derived priority → rollup → notification) is exercised
     // against governance, not fixture surgery.
     await seedQuestions(db)
+    // The seeded cross-field rules — same contract as the dev seeders
+    // (deterministic ids, idempotent upserts, no version bumps). MUST run
+    // after seedQuestions: the pre-write assertions resolve every rule's
+    // referenceKeys against the ACTIVE questions of its type.
+    await seedCrossFieldRules(db)
 
     await db.entity.create({
       data: {
@@ -132,7 +140,7 @@ export default async function globalSetup(): Promise<void> {
     })
 
     console.log(
-      `[e2e-baseline] seeded drms_test: ${roleNames.length} roles, ${Object.keys(BASELINE_USERS).length} users, question registry, 1 entity, 1 ACTIVE incident`
+      `[e2e-baseline] seeded drms_test: ${roleNames.length} roles, ${Object.keys(BASELINE_USERS).length} users, question registry + 15 cross-field rules, 1 entity, 1 ACTIVE incident`
     )
   } finally {
     await db.$disconnect()

@@ -145,7 +145,15 @@ export const CreateRuleSchema = z.object({
   reason: ReasonSchema,
 })
 
-export const UpdateRuleSchema = CreateRuleSchema.omit({ assessmentType: true }).partial()
+export const UpdateRuleSchema = CreateRuleSchema.omit({ assessmentType: true })
+  .extend({
+    // Lifecycle toggle (plan §4.4 PUT surface): false deactivates, true
+    // reactivates a DELETE-deactivated rule. The service flips the flag with
+    // a structureVersion bump + RULE audit row — a pure isActive flip skips
+    // AST re-validation.
+    isActive: z.boolean().optional(),
+  })
+  .partial()
 
 export type CreateRuleInput = z.infer<typeof CreateRuleSchema>
 export type UpdateRuleInput = z.infer<typeof UpdateRuleSchema>

@@ -569,6 +569,59 @@ describe('P10-2 cross-field rule registry', () => {
         (await jsonOf(afterRead)).data.rules.map((rule: { ruleKey: string }) => rule.ruleKey)
       ).not.toContain(ruleKey)
     })
+
+    test('PUT isActive:true reactivates a deactivated rule → 200, bump, UPDATE audit with isActive diff', async () => {
+      const before = await versionsOf('SECURITY')
+      const response = await updateRuleRoute(
+        makeRequest('PUT', `/api/v1/admin/rules/${ruleId}`, {
+          body: { isActive: true, reason: 'reactivate the test rule' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: ruleId })
+      )
+      expect(response.status).toBe(200)
+      const body = await jsonOf(response)
+      expect(body.data.isActive).toBe(true)
+      expect(
+        (await testDb.crossFieldRule.findUnique({ where: { id: ruleId } }))?.isActive
+      ).toBe(true)
+
+      // Every rule mutation is structural — even a pure lifecycle flip.
+      const after = await versionsOf('SECURITY')
+      expect(after.structureVersion).toBe(before.structureVersion + 1)
+      expect(after.contentVersion).toBe(before.contentVersion)
+
+      const audit = await testDb.questionAuditLog.findFirst({
+        where: { entityType: 'RULE', entityId: ruleId, action: 'UPDATE' },
+        orderBy: { actedAt: 'desc' },
+      })
+      expect(audit?.reason).toBe('reactivate the test rule')
+      expect((audit?.changes as { isActive?: { from?: boolean; to?: boolean } })?.isActive).toEqual({
+        from: false,
+        to: true,
+      })
+
+      // The reactivated rule is visible again on a fresh plain read.
+      const reread = await getQuestionSetRoute(
+        makeRequest('GET', '/api/v1/questions', {
+          query: { assessmentType: 'SECURITY' },
+          token: tokenFor(admin),
+        })
+      )
+      expect(
+        (await jsonOf(reread)).data.rules.map((rule: { ruleKey: string }) => rule.ruleKey)
+      ).toContain(ruleKey)
+
+      // Leave the fixture deactivated for the includeInactive probe below.
+      const reDeactivated = await deactivateRuleRoute(
+        makeRequest('DELETE', `/api/v1/admin/rules/${ruleId}`, {
+          body: { reason: 'restore deactivated fixture state' },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: ruleId })
+      )
+      expect(reDeactivated.status).toBe(204)
+    })
   })
 
   // --------------------------------------------- rule audit timeline route ---

@@ -15,6 +15,7 @@ import {
   type QuestionEditDialogMode,
 } from '@/components/settings/question-registry/QuestionEditDialog'
 import { QuestionAuditTimeline } from '@/components/settings/question-registry/QuestionAuditTimeline'
+import { CrossFieldRulesPanel } from '@/components/settings/question-registry/CrossFieldRulesPanel'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -114,6 +115,13 @@ interface QuestionImpact {
     structureVersion: number
     contentVersion: number
   } | null
+  /** Active cross-field rules referencing the question (P10-3 guard surface). */
+  referencingRules?: Array<{
+    id: string
+    ruleKey: string
+    name: string
+    kind: string
+  }> | null
 }
 
 function formatImpactDate(value: string): string {
@@ -150,6 +158,9 @@ export function QuestionRegistryEditor() {
   // ---- search + questionType filter ----------------------------------------
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<QuestionTypeFilter>('ALL')
+
+  // ---- questions | rules view (P10-3 rule governance surface) ----------------
+  const [view, setView] = useState<'questions' | 'rules'>('questions')
 
   const visibleSections = useMemo(() => {
     const needle = search.trim().toLowerCase()
@@ -473,9 +484,24 @@ export function QuestionRegistryEditor() {
         </TabsList>
       </Tabs>
 
-      <div className="flex flex-col gap-4 sm:flex-row">
-        <div className="flex-1 space-y-2">
-          <Label htmlFor="registry-search">Search</Label>
+      <Tabs value={view} onValueChange={(value) => setView(value as 'questions' | 'rules')}>
+        <TabsList data-testid="registry-view-tabs">
+          <TabsTrigger value="questions" data-testid="registry-view-tab-questions">
+            Questions
+          </TabsTrigger>
+          <TabsTrigger value="rules" data-testid="registry-view-tab-rules">
+            Rules
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {view === 'rules' ? (
+        <CrossFieldRulesPanel assessmentType={assessmentType} />
+      ) : (
+        <>
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <div className="flex-1 space-y-2">
+              <Label htmlFor="registry-search">Search</Label>
           <Input
             id="registry-search"
             value={search}
@@ -707,7 +733,9 @@ export function QuestionRegistryEditor() {
               </Card>
             )
           })}
-        </div>
+          </div>
+        )}
+        </>
       )}
 
       <QuestionEditDialog
@@ -973,6 +1001,29 @@ export function QuestionRegistryEditor() {
                   Structural changes — including deactivation — will be rejected with a
                   <span className="font-mono"> question_frozen</span> error until those
                   incidents close.
+                </AlertDescription>
+              </Alert>
+            )}
+            {impact && (impact.referencingRules?.length ?? 0) > 0 && (
+              <Alert variant="destructive" data-testid="deactivate-referencing-rules">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Referenced by active rules</AlertTitle>
+                <AlertDescription>
+                  {impact.referencingRules!.length} active cross-field rule
+                  {impact.referencingRules!.length === 1 ? '' : 's'} reference
+                  {impact.referencingRules!.length === 1 ? 's' : ''} this question —
+                  deactivation will be rejected with <span className="font-mono">registry_invalid</span> until
+                  the referencing rules are resolved:
+                  <ul className="mt-1 list-disc pl-4 text-xs">
+                    {impact.referencingRules!.map((rule) => (
+                      <li key={rule.id}>
+                        <span className="font-mono">{rule.ruleKey}</span> — {rule.name} (
+                        {rule.kind.toLowerCase()})
+                      </li>
+                    ))}
+                  </ul>
+                  Deactivate or edit the referencing rule(s) in the Rules view first,
+                  then retry.
                 </AlertDescription>
               </Alert>
             )}
