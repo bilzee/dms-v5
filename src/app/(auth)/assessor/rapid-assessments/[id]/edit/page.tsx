@@ -148,6 +148,9 @@ function EditAssessmentContent() {
         entityId={assessment.entityId}
         incidentId={assessment.incidentId}
         initialAnswers={assessment.answers ?? null}
+        // P10-1 — the row's frozen snapshot: questions the live registry no
+        // longer offers render read-only instead of silently vanishing.
+        snapshot={assessment.questionSnapshot ?? null}
         onSubmit={handleAssessmentSubmit}
         onCancel={handleGoBack}
         isReassessment

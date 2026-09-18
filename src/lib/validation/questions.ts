@@ -45,9 +45,11 @@ export const CreateQuestionSchema = z.object({
   options: z.array(QuestionOptionSchema).optional(),
   category: QuestionCategorySchema,
   inverted: z.boolean().optional(),
-  gapLabel: z.string().min(1).optional(),
-  gapMeaning: z.string().min(1).optional(),
-  recommendation: z.string().min(1).optional(),
+  // Nullable = explicitly no GAP metadata (the editor sends null for CONTEXT
+  // questions); the service treats null and undefined identically.
+  gapLabel: z.string().min(1).nullable().optional(),
+  gapMeaning: z.string().min(1).nullable().optional(),
+  recommendation: z.string().min(1).nullable().optional(),
   severity: SeveritySchema.optional(),
   numberMin: z.number().int().nullable().optional(),
   numberMax: z.number().int().nullable().optional(),

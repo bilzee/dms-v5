@@ -1,5 +1,7 @@
 import { exec } from 'child_process'
 import { resolve } from 'path'
+import type { AssessmentType } from '@prisma/client'
+import { analyzeGaps } from '@/lib/questions/gap-engine'
 import { testDb, truncateTestDb, disconnectTestDb } from '../helpers/test-db'
 
 /**
@@ -91,5 +93,55 @@ describe('seed partition (P9 production-safe baseline vs --with-sample-data)', (
     // Registry untouched by the sample-data branch.
     expect(await testDb.question.count()).toBe(55)
     expect(await registrySettingCount()).toBe(12)
+
+    // P10-1: every seeded assessment's stored gapAnalysis is EXACTLY the
+    // engine's derivation from that row's frozen questionSnapshot + answers
+    // (severities resolved against the seeded registry rows), and its
+    // priority is the derivation's severity. A seed edit that hand-writes or
+    // drifts from the engine fails here instead of at read time.
+    const seeded = await testDb.rapidAssessment.findMany({
+      select: {
+        rapidAssessmentType: true,
+        questionSnapshot: true,
+        answers: true,
+        gapAnalysis: true,
+        priority: true,
+      },
+    })
+    expect(seeded).toHaveLength(5)
+    for (const row of seeded) {
+      const registryRows = await testDb.question.findMany({
+        where: { assessmentType: row.rapidAssessmentType as AssessmentType },
+        select: { questionKey: true, severity: true },
+      })
+      const derived = analyzeGaps(
+        row.questionSnapshot as unknown as Parameters<typeof analyzeGaps>[0],
+        (row.answers ?? {}) as Record<string, unknown>,
+        registryRows
+      )
+      expect(row.gapAnalysis).toEqual(derived)
+      expect(row.priority).toBe(derived.severity)
+    }
+
+    // P10-1 derivation matrix (plan §3 2d): the demo world must exercise both
+    // derivation outcomes — gap-fired (MEDIUM) and clean (LOW) — pinned per
+    // fixture. NOTE: the plan's parenthetical ("at least one CRITICAL, one
+    // HIGH, one MEDIUM") is unachievable against the seeded catalog: every GAP
+    // question in QUESTION_CATALOG carries severity MEDIUM (verified
+    // 2026-09-18), so no fixture can derive CRITICAL/HIGH; widening the
+    // severity spread is Tier A catalog authoring deferred to the P10-5
+    // polish pass. Pinning the exact deterministic matrix still catches the
+    // failure mode the ledger names (an argument swap in prisma/seed.ts
+    // derivation wiring would seed all-LOW or scrambled demo priorities).
+    const matrix = Object.fromEntries(
+      seeded.map((row) => [row.rapidAssessmentType, row.priority as string])
+    )
+    expect(matrix).toEqual({
+      HEALTH: 'MEDIUM',
+      WASH: 'MEDIUM',
+      SHELTER: 'LOW',
+      FOOD: 'MEDIUM',
+      SECURITY: 'MEDIUM',
+    })
   })
 })

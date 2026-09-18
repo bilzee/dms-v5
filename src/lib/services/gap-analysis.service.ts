@@ -69,24 +69,22 @@ interface RegistryView {
 
 /**
  * Short-lived per-type cache of the registry view so a single dashboard render
- * does not re-query the registry per assessment.
+ * does not re-query the registry per assessment. Per-entry TTL (P10-1): each
+ * type expires independently — loading a fresh entry for one type never
+ * refreshes another type's clock, so no entry can outlive its 30 s TTL.
  */
-let registryViewCache = new Map<AssessmentType, RegistryView>()
-let registryViewCacheTimestamp = 0
+const registryViewCache = new Map<AssessmentType, { view: RegistryView; expiresAt: number }>()
 const REGISTRY_VIEW_CACHE_DURATION_MS = 30 * 1000
 
 function clearGapQuestionCache(): void {
-  registryViewCache = new Map()
-  registryViewCacheTimestamp = 0
+  registryViewCache.clear()
 }
 
 async function loadRegistryView(assessmentType: AssessmentType): Promise<RegistryView> {
   const now = Date.now()
-  if (
-    now - registryViewCacheTimestamp < REGISTRY_VIEW_CACHE_DURATION_MS &&
-    registryViewCache.has(assessmentType)
-  ) {
-    return registryViewCache.get(assessmentType)!
+  const cached = registryViewCache.get(assessmentType)
+  if (cached && cached.expiresAt > now) {
+    return cached.view
   }
 
   // One query for both engine inputs: every row of the type (the ladder does
@@ -148,12 +146,15 @@ async function loadRegistryView(assessmentType: AssessmentType): Promise<Registr
     severity: row.severity,
   }))
 
-  if (now - registryViewCacheTimestamp >= REGISTRY_VIEW_CACHE_DURATION_MS) {
-    registryViewCache = new Map()
+  // Lazily prune expired entries so the map cannot grow unbounded.
+  for (const [key, entry] of registryViewCache) {
+    if (entry.expiresAt <= now) registryViewCache.delete(key)
   }
   const view = { structure, registryRows }
-  registryViewCache.set(assessmentType, view)
-  registryViewCacheTimestamp = now
+  registryViewCache.set(assessmentType, {
+    view,
+    expiresAt: now + REGISTRY_VIEW_CACHE_DURATION_MS,
+  })
   return view
 }
 

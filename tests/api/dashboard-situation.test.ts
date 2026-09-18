@@ -1,4 +1,5 @@
 import { GET as situationRoute } from '@/app/api/v1/dashboard/situation/route'
+import { QuestionRegistryService } from '@/lib/services/question-registry.service'
 import { clearDashboardConfigCache } from '@/lib/services/dashboard-config.service'
 import { makeRequest, tokenFor, type AuthedUser } from '../helpers/api'
 import {
@@ -168,5 +169,197 @@ describe('DQR P7 — situation dashboard registry-driven summaries', () => {
 
     // No FOOD assessments at all → null aggregate ("Assessment Missing").
     expect(data.aggregatedAssessments.food).toBeNull()
+  })
+})
+
+describe('DQR P10-1 — situation route snapshot-hydrated read side', () => {
+  let coordinator: AuthedUser
+  let snapshotEntity: string
+  let legacyEntity: string
+  let incidentId: string
+
+  beforeAll(async () => {
+    await truncateTestDb()
+    await ensureQuestionRegistry()
+    coordinator = (await createUser({ roles: ['COORDINATOR'] })) as AuthedUser
+
+    const a = await createEntity({ name: 'P10 Snapshot Entity' })
+    const b = await createEntity({ name: 'P10 Legacy Entity' })
+    snapshotEntity = a.id
+    legacyEntity = b.id
+    const incident = await createIncident({ createdBy: coordinator.id, severity: 'MEDIUM' })
+    incidentId = incident.id
+
+    // Row WITH a frozen snapshot that contains an admin-authored post-seed
+    // key: the registry-frozen snapshot is extended with p9tPatientsPerDay —
+    // exactly what a row answered against a registry that later churned
+    // would have stored.
+    const withPostSeed = await createRapidAssessment({
+      assessorId: coordinator.id,
+      assessorName: 'P10 Seeder',
+      entityId: snapshotEntity,
+      incidentId,
+      assessmentType: 'POPULATION',
+      verificationStatus: 'VERIFIED',
+      withSnapshot: true,
+      answers: { totalPopulation: 5000, p9tPatientsPerDay: 42 },
+    })
+    const snapshot = withPostSeed.questionSnapshot as {
+      sections: Array<{ questions: Array<Record<string, unknown>> }>
+    }
+    snapshot.sections[0].questions.push({
+      id: 'q-p9t-post-seed',
+      key: 'p9tPatientsPerDay',
+      label: 'Patients per day',
+      helperText: null,
+      type: 'NUMBER',
+      required: false,
+      options: null,
+      category: 'CONTEXT',
+      inverted: false,
+      gapLabel: null,
+      gapMeaning: null,
+      recommendation: null,
+      numberMin: null,
+      numberMax: null,
+      order: 99,
+    })
+    await testDb.rapidAssessment.update({
+      where: { id: withPostSeed.id },
+      data: { questionSnapshot: snapshot as never },
+    })
+
+    // Pre-data-layer row: answers but NO snapshot → catalog fallback.
+    await createRapidAssessment({
+      assessorId: coordinator.id,
+      assessorName: 'P10 Seeder',
+      entityId: legacyEntity,
+      incidentId,
+      assessmentType: 'POPULATION',
+      verificationStatus: 'VERIFIED',
+      answers: { totalPopulation: 1200 },
+    })
+  })
+
+  afterAll(async () => {
+    await truncateTestDb()
+    await testDb.$disconnect()
+  })
+
+  test('post-seed snapshot keys are carried typed — the card renders the value, not N/A', async () => {
+    const response = await situationRoute(
+      makeRequest(
+        'GET',
+        `/api/v1/dashboard/situation?incidentId=${incidentId}&entityId=${snapshotEntity}`,
+        { token: tokenFor(coordinator) }
+      )
+    )
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    const population = body.data.entityAssessments[0].latestAssessments.population
+    expect(population).not.toBeNull()
+    expect(population.totalPopulation).toBe(5000)
+    // Catalog hydration dropped this key before P10-1 (rendered "N/A"); the
+    // snapshot-hydrated read side carries it typed.
+    expect(population.p9tPatientsPerDay).toBe(42)
+  })
+
+  test('snapshot-less rows fall back to catalog hydration (pre-data-layer)', async () => {
+    const response = await situationRoute(
+      makeRequest(
+        'GET',
+        `/api/v1/dashboard/situation?incidentId=${incidentId}&entityId=${legacyEntity}`,
+        { token: tokenFor(coordinator) }
+      )
+    )
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    const population = body.data.entityAssessments[0].latestAssessments.population
+    expect(population).not.toBeNull()
+    expect(population.totalPopulation).toBe(1200)
+    // fromAnswers parity: unknown keys stay dropped for snapshot-less rows.
+    expect(population).not.toHaveProperty('p9tPatientsPerDay')
+  })
+})
+
+describe('DQR P10-1 — per-type sector readers hydrate post-seed snapshot keys (VG-F3)', () => {
+  let coordinator: AuthedUser
+  let incidentId: string
+
+  const SECTOR_PROBES: Array<{
+    type: 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY'
+    key: 'health' | 'food' | 'wash' | 'shelter' | 'security'
+    probeKey: string
+    entityId?: string
+  }> = [
+    { type: 'HEALTH', key: 'health', probeKey: 'p10tProbeHealth' },
+    { type: 'FOOD', key: 'food', probeKey: 'p10tProbeFood' },
+    { type: 'WASH', key: 'wash', probeKey: 'p10tProbeWash' },
+    { type: 'SHELTER', key: 'shelter', probeKey: 'p10tProbeShelter' },
+    { type: 'SECURITY', key: 'security', probeKey: 'p10tProbeSecurity' },
+  ]
+
+  beforeAll(async () => {
+    await truncateTestDb()
+    await ensureQuestionRegistry()
+    coordinator = (await createUser({ roles: ['COORDINATOR'] })) as AuthedUser
+    const incident = await createIncident({ createdBy: coordinator.id, severity: 'MEDIUM' })
+    incidentId = incident.id
+
+    for (const sector of SECTOR_PROBES) {
+      // Author a post-seed CONTEXT question into the LIVE registry first…
+      const section = await testDb.questionSection.findFirst({
+        where: { assessmentType: sector.type, category: 'CONTEXT', isActive: true },
+      })
+      expect(section).not.toBeNull()
+      await QuestionRegistryService.createQuestion(
+        {
+          assessmentType: sector.type,
+          questionKey: sector.probeKey,
+          sectionId: section!.id,
+          questionType: 'TEXT_LONG',
+          label: `Probe ${sector.key}`,
+          category: 'CONTEXT',
+        },
+        coordinator.id,
+        'P10-1 sector reader coverage probe'
+      )
+      // …then a VERIFIED row whose factory-frozen snapshot contains the probe.
+      const entity = await createEntity({ name: `P10 Probe ${sector.key}` })
+      await createRapidAssessment({
+        assessorId: coordinator.id,
+        assessorName: 'P10 Seeder',
+        entityId: entity.id,
+        incidentId,
+        assessmentType: sector.type,
+        verificationStatus: 'VERIFIED',
+        withSnapshot: true,
+        answers: { [sector.probeKey]: `probe-${sector.key}` },
+      })
+      sector.entityId = entity.id
+    }
+  })
+
+  afterAll(async () => {
+    await truncateTestDb()
+    await testDb.$disconnect()
+  })
+
+  test('every sector reader carries its post-seed snapshot key (not N/A)', async () => {
+    for (const sector of SECTOR_PROBES) {
+      const response = await situationRoute(
+        makeRequest(
+          'GET',
+          `/api/v1/dashboard/situation?incidentId=${incidentId}&entityId=${sector.entityId}`,
+          { token: tokenFor(coordinator) }
+        )
+      )
+      expect(response.status).toBe(200)
+      const body = await response.json()
+      const latest = body.data.entityAssessments[0].latestAssessments[sector.key]
+      expect(latest).not.toBeNull()
+      // Catalog-bound readers dropped this key before P10-1 (rendered "N/A").
+      expect(latest[sector.probeKey]).toBe(`probe-${sector.key}`)
+    }
   })
 })

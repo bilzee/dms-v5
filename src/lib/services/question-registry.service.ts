@@ -109,9 +109,11 @@ export interface CreateQuestionInput {
   options?: QuestionOptionDef[]
   category: CatalogQuestionCategory
   inverted?: boolean
-  gapLabel?: string
-  gapMeaning?: string
-  recommendation?: string
+  // Nullable = explicit "no GAP metadata" (CreateQuestionSchema); the service
+  // treats null and undefined identically (mirrors UpdateQuestionInput).
+  gapLabel?: string | null
+  gapMeaning?: string | null
+  recommendation?: string | null
   severity?: CatalogSeverity
   numberMin?: number | null
   numberMax?: number | null
@@ -210,6 +212,9 @@ function assertNumberBounds(min: number | null | undefined, max: number | null |
 // ---------------------------------------------------------------------------
 
 export class QuestionRegistryService {
+  /** Page size for the severity-recompute scan (P10-1 scaling). */
+  private static readonly RECOMPUTE_PAGE_SIZE = 200
+
   // ---- Read path ----------------------------------------------------------
 
   /**
@@ -804,6 +809,31 @@ export class QuestionRegistryService {
     actorId: string,
     reason?: string
   ): Promise<{ question: Question; affectedCount: number }> {
+    // Pre-transaction fast path (P10-1): resolve the question and, when the
+    // severity actually changes, scan recompute candidates OUTSIDE the
+    // interactive transaction (plain prisma reads) so the expensive
+    // whole-type scan never holds tx locks. Everything is re-verified inside
+    // the transaction; the recompute is idempotent (see
+    // recomputeAssessmentsForKey).
+    const pre = await prisma.question.findUnique({ where: { id } })
+    if (!pre) {
+      throw new ApiError('question_not_found', 404)
+    }
+    if (pre.category !== 'GAP') {
+      throw new ApiError('severity_not_editable', 400, {
+        questionKey: pre.questionKey,
+        category: pre.category,
+        hint: 'Only GAP questions carry editable severity',
+      })
+    }
+    const scanned = severity !== pre.severity
+    const candidateIds = scanned
+      ? await QuestionRegistryService.scanRecomputeCandidates(
+          pre.assessmentType as CatalogAssessmentType,
+          pre.questionKey
+        )
+      : []
+
     const { question, affectedCount, affectedIncidentIds } = await prisma.$transaction(async (tx) => {
       const existing = await tx.question.findUnique({ where: { id } })
       if (!existing) {
@@ -843,7 +873,11 @@ export class QuestionRegistryService {
       const { affectedCount, affectedIncidentIds } = await QuestionRegistryService.recomputeAssessmentsForKey(
         tx,
         existing.assessmentType as CatalogAssessmentType,
-        existing.questionKey
+        existing.questionKey,
+        // Identity-edit race (severity changed between the pre-tx read and
+        // this transaction) → no scan ran → recompute falls back to its own
+        // in-transaction scan. Correctness over latency in a rare interleave.
+        scanned ? candidateIds : undefined
       )
       return { question, affectedCount, affectedIncidentIds }
     })
@@ -867,6 +901,43 @@ export class QuestionRegistryService {
   }
 
   /**
+   * Candidate scan for a severity recompute (P10-1) — runs OUTSIDE the
+   * interactive transaction on plain `prisma` (never holds tx locks). Pages
+   * the type's assessments by descending id in bounded 200-row pages (the
+   * collected id list grows only with matching candidates), keeping only
+   * rows on ACTIVE incidents whose frozen `questionSnapshot` contains the
+   * key. The result is advisory: `recomputeAssessmentsForKey` re-verifies
+   * inside the transaction.
+   */
+  private static async scanRecomputeCandidates(
+    assessmentType: CatalogAssessmentType,
+    questionKey: string
+  ): Promise<string[]> {
+    const keys = new Set([questionKey])
+    const ids: string[] = []
+    let cursor: string | undefined
+    for (;;) {
+      const rows = await prisma.rapidAssessment.findMany({
+        where: {
+          ...(cursor !== undefined ? { id: { lt: cursor } } : {}),
+          rapidAssessmentType: assessmentType as AssessmentType,
+          incident: { status: 'ACTIVE' },
+          questionSnapshot: { not: Prisma.DbNull },
+        },
+        select: { id: true, questionSnapshot: true },
+        orderBy: { id: 'desc' },
+        take: QuestionRegistryService.RECOMPUTE_PAGE_SIZE,
+      })
+      if (rows.length === 0) break
+      cursor = rows[rows.length - 1].id
+      for (const row of rows) {
+        if (snapshotHasAnyKey(row.questionSnapshot, keys)) ids.push(row.id)
+      }
+    }
+    return ids
+  }
+
+  /**
    * In-transaction recompute for a severity edit: re-derives `gapAnalysis` +
    * `priority` of every assessment of the type whose frozen snapshot contains
    * the key AND whose incident is ACTIVE (DRAFT assessments with a snapshot
@@ -875,51 +946,100 @@ export class QuestionRegistryService {
    * so the engine's severity ladder already sees the new value. Rows without
    * answers (pre-data-layer) are skipped — no fabricated gaps. Snapshots and
    * version stamps are never touched.
+   *
+   * Scaling (P10-1): the expensive whole-type candidate scan runs OUTSIDE the
+   * interactive transaction (`scanRecomputeCandidates` on plain `prisma`);
+   * inside, only the pre-scanned ids are re-verified — snapshot still present,
+   * incident still ACTIVE, key-containment post-filter — and rewritten with
+   * the existing per-row derive in chunks of `RECOMPUTE_PAGE_SIZE` (200), so
+   * transaction lock time and memory scale with AFFECTED rows, not table
+   * size.
+   *
+   * Idempotency: the severity row is updated first inside this transaction
+   * and `deriveGaps` resolves severities through `tx` (new value), while each
+   * assessment derives purely from its frozen snapshot + stored answers. A
+   * retry after a failed PATCH therefore converges row-by-row; a row that
+   * drifts between the outside scan and this transaction is either caught by
+   * the in-tx re-verification or corrected by the next severity edit.
    */
   private static async recomputeAssessmentsForKey(
     tx: Tx,
     assessmentType: CatalogAssessmentType,
-    questionKey: string
+    questionKey: string,
+    candidateIds?: string[]
   ): Promise<{ affectedCount: number; affectedIncidentIds: string[] }> {
-    const candidates = await tx.rapidAssessment.findMany({
-      where: {
-        rapidAssessmentType: assessmentType as AssessmentType,
-        incident: { status: 'ACTIVE' },
-      },
-      select: { id: true, incidentId: true, answers: true, questionSnapshot: true },
-    })
-
-    const keys = new Set([questionKey])
-    const targets = candidates.filter(
-      (row) => row.incidentId !== null && snapshotHasAnyKey(row.questionSnapshot, keys)
-    )
-    if (targets.length === 0) {
-      return { affectedCount: 0, affectedIncidentIds: [] }
-    }
-
     const registryRows = await tx.question.findMany({
       where: { assessmentType: assessmentType as AssessmentType },
       select: { questionKey: true, severity: true },
     })
 
+    const keys = new Set([questionKey])
     let affectedCount = 0
     const incidentIds = new Set<string>()
-    for (const row of targets) {
-      if (row.answers == null) continue
-      const gapAnalysis = deriveGaps(
-        row.questionSnapshot as unknown as GapEngineSnapshotStructure,
-        row.answers as Record<string, unknown>,
-        registryRows
-      )
-      await tx.rapidAssessment.update({
-        where: { id: row.id },
-        data: {
-          gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
-          priority: derivePriorityFromGaps(assessmentType as AssessmentType, gapAnalysis),
+
+    // No pre-scan supplied (identity-edit race): page the whole type inside
+    // the transaction — correctness over latency in a rare interleave.
+    let candidates = candidateIds
+    if (candidates === undefined) {
+      candidates = []
+      let cursor: string | undefined
+      for (;;) {
+        const rows = await tx.rapidAssessment.findMany({
+          where: {
+            ...(cursor !== undefined ? { id: { lt: cursor } } : {}),
+            rapidAssessmentType: assessmentType as AssessmentType,
+            incident: { status: 'ACTIVE' },
+          },
+          select: { id: true, questionSnapshot: true },
+          orderBy: { id: 'desc' },
+          take: QuestionRegistryService.RECOMPUTE_PAGE_SIZE,
+        })
+        if (rows.length === 0) break
+        cursor = rows[rows.length - 1].id
+        for (const row of rows) {
+          if (snapshotHasAnyKey(row.questionSnapshot, keys)) candidates.push(row.id)
+        }
+      }
+    }
+    if (candidates.length === 0) {
+      return { affectedCount: 0, affectedIncidentIds: [] }
+    }
+
+    // Re-verify + rewrite in chunks of RECOMPUTE_PAGE_SIZE: each chunk is one
+    // bounded re-read (snapshot present, incident ACTIVE) + the existing
+    // per-row derive and update.
+    for (
+      let offset = 0;
+      offset < candidates.length;
+      offset += QuestionRegistryService.RECOMPUTE_PAGE_SIZE
+    ) {
+      const chunk = candidates.slice(offset, offset + QuestionRegistryService.RECOMPUTE_PAGE_SIZE)
+      const rows = await tx.rapidAssessment.findMany({
+        where: {
+          id: { in: chunk },
+          incident: { status: 'ACTIVE' },
+          questionSnapshot: { not: Prisma.DbNull },
         },
+        select: { id: true, incidentId: true, answers: true, questionSnapshot: true },
       })
-      affectedCount += 1
-      if (row.incidentId) incidentIds.add(row.incidentId)
+      for (const row of rows) {
+        if (row.incidentId === null || row.answers == null) continue
+        if (!snapshotHasAnyKey(row.questionSnapshot, keys)) continue
+        const gapAnalysis = deriveGaps(
+          row.questionSnapshot as unknown as GapEngineSnapshotStructure,
+          row.answers as Record<string, unknown>,
+          registryRows
+        )
+        await tx.rapidAssessment.update({
+          where: { id: row.id },
+          data: {
+            gapAnalysis: gapAnalysis as unknown as Prisma.InputJsonValue,
+            priority: derivePriorityFromGaps(assessmentType as AssessmentType, gapAnalysis),
+          },
+        })
+        affectedCount += 1
+        incidentIds.add(row.incidentId)
+      }
     }
     return { affectedCount, affectedIncidentIds: [...incidentIds] }
   }

@@ -2,18 +2,21 @@ import {
   ASSESSMENT_TYPES,
   coerceArray,
   fromAnswers,
+  hydrateFromSnapshot,
   questionKeysForType,
   type RapidAssessmentType,
 } from '@/lib/questions/answers'
-import { EXPECTED_CATALOG_COUNTS } from '@/lib/questions/registry-validation'
+import { EXPECTED_CATALOG_COUNTS, QUESTION_CATALOG } from '@/lib/questions/registry-validation'
 
 /**
- * Unit — canonical answers map layer (P4).
+ * Unit — canonical answers map layer (P4 + P10-1 read side).
  *
  * `questionKeysForType` / `fromAnswers` / `coerceArray` own everything between
  * the stored `RapidAssessment.answers` map and the UI: presentation order,
  * read-side hydration defaults (legacy form parity), and tolerant multi-select
- * coercion. Pure catalog functions — no DB, no DOM.
+ * coercion. `hydrateFromSnapshot` (P10-1) owns snapshot-driven hydration:
+ * typed values for every frozen-snapshot key with raw passthrough for
+ * unmapped drift. Pure catalog functions — no DB, no DOM.
  */
 
 describe('ASSESSMENT_TYPES (re-export)', () => {
@@ -201,5 +204,151 @@ describe('fromAnswers', () => {
     expect(() => fromAnswers('LOGISTICS' as RapidAssessmentType, {})).toThrow(
       'Unknown assessment type: LOGISTICS'
     )
+  })
+})
+
+describe('hydrateFromSnapshot (P10-1 snapshot-driven read side)', () => {
+  /** Stored-snapshot fixture: one catalog key + one admin-authored post-seed key. */
+  const snapshot = {
+    structureVersion: 3,
+    contentVersion: 1,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    sections: [
+      {
+        id: 'sec-facilities',
+        key: 'facilities',
+        title: 'Healthcare Facilities',
+        category: 'GAP',
+        order: 1,
+        questions: [
+          {
+            id: 'q-hasFunctionalClinic',
+            key: 'hasFunctionalClinic',
+            label: 'Functional Clinic',
+            type: 'BOOLEAN',
+            required: true,
+            category: 'GAP',
+            inverted: false,
+            order: 1,
+          },
+          {
+            id: 'q-p9t',
+            key: 'p9tPatientsPerDay',
+            label: 'Patients per day (post-seed)',
+            type: 'NUMBER',
+            required: false,
+            category: 'CONTEXT',
+            inverted: false,
+            order: 2,
+          },
+          {
+            id: 'q-notes',
+            key: 'clinicianNotes',
+            label: 'Clinician notes',
+            type: 'TEXT_LONG',
+            required: false,
+            category: 'CONTEXT',
+            inverted: false,
+            order: 3,
+          },
+        ],
+      },
+    ],
+  }
+
+  test('post-seed keys in the snapshot hydrate typed (carried, never dropped)', () => {
+    const { values, unmappedKeys } = hydrateFromSnapshot(snapshot, {
+      hasFunctionalClinic: true,
+      p9tPatientsPerDay: 42,
+      clinicianNotes: 'Weekly mobile clinic',
+    })
+    expect(values).toEqual({
+      hasFunctionalClinic: true,
+      p9tPatientsPerDay: 42,
+      clinicianNotes: 'Weekly mobile clinic',
+    })
+    expect(unmappedKeys).toEqual([])
+  })
+
+  test('absent snapshot keys default per type (booleans false, numbers 0, text undefined)', () => {
+    const { values } = hydrateFromSnapshot(snapshot, {})
+    expect(values).toEqual({
+      hasFunctionalClinic: false,
+      p9tPatientsPerDay: 0,
+      clinicianNotes: undefined,
+    })
+  })
+
+  test('unmapped drift passes through RAW and is listed — no fabricated defaults', () => {
+    const { values, unmappedKeys } = hydrateFromSnapshot(snapshot, {
+      mysteryLegacyKey: 'gone',
+    })
+    expect(unmappedKeys).toEqual(['mysteryLegacyKey'])
+    expect(values.mysteryLegacyKey).toBe('gone') // raw stored value, not a default
+    expect(values.hasFunctionalClinic).toBe(false)
+  })
+
+  test('wrong-typed stored values fall back to the snapshot type default', () => {
+    const { values } = hydrateFromSnapshot(snapshot, {
+      hasFunctionalClinic: 'yes', // BOOLEAN expected → false
+      p9tPatientsPerDay: '12', // NUMBER expected → 0
+      clinicianNotes: 99, // TEXT_LONG expected → undefined
+    })
+    expect(values.hasFunctionalClinic).toBe(false)
+    expect(values.p9tPatientsPerDay).toBe(0)
+    expect(values.clinicianNotes).toBeUndefined()
+  })
+
+  test('never throws on malformed/absent structures (stored-JSON tolerance)', () => {
+    expect(hydrateFromSnapshot(null, { a: 1 })).toEqual({ values: { a: 1 }, unmappedKeys: ['a'] })
+    expect(hydrateFromSnapshot(undefined, null)).toEqual({ values: {}, unmappedKeys: [] })
+    expect(hydrateFromSnapshot({}, { a: 1 })).toEqual({ values: { a: 1 }, unmappedKeys: ['a'] })
+    expect(hydrateFromSnapshot({ sections: 'not-an-array' }, { a: 1 }).unmappedKeys).toEqual(['a'])
+    expect(
+      hydrateFromSnapshot(
+        { sections: [{ questions: [{ key: 'a', type: 'NUMBER' }, { nope: true }] }] },
+        { a: 3, b: 'raw' }
+      )
+    ).toEqual({ values: { a: 3, b: 'raw' }, unmappedKeys: ['b'] })
+  })
+
+  test('fromAnswers wrapper drops unmapped keys (catalog parity preserved)', () => {
+    const result = fromAnswers('WASH', { isWaterSufficient: true, mysteryLegacyKey: 'gone' })
+    expect(result).not.toHaveProperty('mysteryLegacyKey')
+  })
+})
+
+describe('fromAnswers catalog-key parity (P10-1 wrapper)', () => {
+  test('catalog-keyed maps hydrate verbatim for all six types (55 keys)', () => {
+    for (const catalog of QUESTION_CATALOG) {
+      const type = catalog.assessmentType as RapidAssessmentType
+      const answers: Record<string, unknown> = {}
+      for (const section of catalog.sections) {
+        for (const question of section.questions) {
+          switch (question.questionType) {
+            case 'BOOLEAN':
+              answers[question.questionKey] = true
+              break
+            case 'NUMBER':
+              answers[question.questionKey] = 7
+              break
+            case 'MULTI_SELECT':
+              answers[question.questionKey] = ['one', 'two']
+              break
+            case 'SINGLE_CHOICE':
+              answers[question.questionKey] = 'CHOICE_A'
+              break
+            default:
+              answers[question.questionKey] = 'some notes'
+              break
+          }
+        }
+      }
+      expect(fromAnswers(type, answers)).toEqual(answers)
+      // Null hydration covers exactly the type's catalog key set.
+      expect(Object.keys(fromAnswers(type, null)).sort()).toEqual(
+        questionKeysForType(type).sort()
+      )
+    }
   })
 })

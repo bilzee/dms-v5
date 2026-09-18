@@ -7,7 +7,67 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, CheckCircle, AlertTriangle, Clock, FileText, MapPin } from '@/lib/icons'
 import { apiGet } from '@/lib/api'
-import { fromAnswers, RapidAssessmentAnswers, RapidAssessmentType } from '@/lib/questions/answers'
+import {
+  fromAnswers,
+  questionKeysForType,
+  RapidAssessmentAnswers,
+  RapidAssessmentType,
+} from '@/lib/questions/answers'
+
+/** One snapshot-only (drifted) answered question for the read-only block. */
+interface SnapshotDriftItem {
+  key: string
+  label: string
+  value: unknown
+}
+
+/** Human-readable rendering of a drifted answer. */
+function formatDriftValue(value: unknown): string {
+  if (Array.isArray(value)) return value.length > 0 ? value.map((entry) => String(entry)).join(', ') : '—'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (value === null || value === undefined || value === '') return '—'
+  return String(value)
+}
+
+/**
+ * Snapshot-vs-catalog drift (P10-1): answered questions defined in the row's
+ * frozen `questionSnapshot` but absent from the catalog key set this page's
+ * typed cards render. Shown in a generic read-only block so registry churn
+ * never makes historical answers vanish. Defensive — never throws.
+ */
+function collectSnapshotDrift(
+  snapshot: unknown,
+  answers: Record<string, unknown> | null | undefined,
+  assessmentType: string
+): SnapshotDriftItem[] {
+  if (!snapshot || typeof snapshot !== 'object' || !answers) return []
+  const sections = (snapshot as { sections?: unknown }).sections
+  if (!Array.isArray(sections)) return []
+  let catalogKeys: Set<string>
+  try {
+    catalogKeys = new Set(questionKeysForType(assessmentType as RapidAssessmentType))
+  } catch {
+    return [] // unknown type — no typed cards, no drift to reconcile
+  }
+  const items: SnapshotDriftItem[] = []
+  for (const section of sections) {
+    const questions = (section as { questions?: unknown })?.questions
+    if (!Array.isArray(questions)) continue
+    for (const question of questions) {
+      const key = (question as { key?: unknown })?.key
+      if (typeof key !== 'string' || catalogKeys.has(key)) continue
+      const value = answers[key]
+      if (value === undefined || value === null || value === '') continue
+      const label = (question as { label?: unknown })?.label
+      items.push({
+        key,
+        label: typeof label === 'string' && label.length > 0 ? label : key,
+        value,
+      })
+    }
+  }
+  return items
+}
 
 interface Assessment {
   id: string
@@ -39,6 +99,8 @@ interface Assessment {
   } | null
   incidentId: string
   answers?: Record<string, unknown> | null
+  /** The row's frozen question snapshot (P10-1 read-side drift). */
+  questionSnapshot?: unknown
   healthAssessment?: {
     rapidAssessmentId: string
     hasFunctionalClinic: boolean
@@ -113,6 +175,7 @@ export default function AssessmentDetailsPage() {
   const params = useParams()
   const router = useRouter()
   const [assessment, setAssessment] = useState<Assessment | null>(null)
+  const [snapshotDrift, setSnapshotDrift] = useState<SnapshotDriftItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -143,6 +206,10 @@ export default function AssessmentDetailsPage() {
                 ),
               }
             : data
+        )
+        // P10-1 — answered snapshot questions the typed cards cannot render.
+        setSnapshotDrift(
+          collectSnapshotDrift(data.questionSnapshot, data.answers ?? null, data.rapidAssessmentType)
         )
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load assessment')
@@ -571,6 +638,36 @@ export default function AssessmentDetailsPage() {
                 <p className="text-sm">{assessment.securityAssessment.additionalSecurityDetails}</p>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* P10-1 — read-only drift: answered snapshot questions outside the
+          catalog key set the typed cards above render */}
+      {snapshotDrift.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Additional Registry Answers</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2">
+              {snapshotDrift.map((item) => (
+                <div
+                  key={item.key}
+                  className="flex items-center justify-between py-1"
+                  data-testid={`snapshot-drift-${item.key}`}
+                >
+                  <span className="text-sm text-muted-foreground flex-1">{item.label}</span>
+                  <span className="text-sm font-semibold text-foreground bg-muted px-2 py-1 rounded text-right min-w-0 flex-shrink-0">
+                    {formatDriftValue(item.value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              These questions were part of the registry when this assessment was submitted. They are
+              shown read-only from the assessment&apos;s frozen question snapshot.
+            </p>
           </CardContent>
         </Card>
       )}

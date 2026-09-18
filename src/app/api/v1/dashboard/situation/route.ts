@@ -3,7 +3,13 @@ import { withAuth } from '@/lib/auth/middleware';
 import { prisma } from '@/lib/db/client';
 import { z } from 'zod';
 import type { EntityType } from '@prisma/client';
-import { fromAnswers, RapidAssessmentAnswers } from '@/lib/questions/answers';
+import {
+  AnswerValue,
+  fromAnswers,
+  hydrateFromSnapshot,
+  RapidAssessmentAnswers,
+  SnapshotHydrationStructure,
+} from '@/lib/questions/answers';
 import type { GapEngineResult } from '@/lib/questions/gap-engine';
 import { buildCategoryGapSummary, type CategoryGapSummary, type QuestionTypeMetadata, type SummaryQuestionMeta } from '@/lib/questions/gap-summary';
 import { QuestionRegistryService } from '@/lib/services/question-registry.service';
@@ -503,6 +509,7 @@ async function getPopulationImpact(incidentId: string): Promise<PopulationImpact
           entityId: true,
           rapidAssessmentDate: true,
           answers: true,
+          questionSnapshot: true,
         },
         orderBy: {
           rapidAssessmentDate: 'desc',
@@ -518,7 +525,13 @@ async function getPopulationImpact(incidentId: string): Promise<PopulationImpact
         assessment !== null
     )
     .map((assessment) => ({
-      payload: fromAnswers('POPULATION', (assessment.answers ?? {}) as RapidAssessmentAnswers),
+      // P10-1: hydrate from the row's frozen snapshot when present so
+      // post-seed keys aggregate; pre-data-layer rows fall back to the catalog.
+      payload: hydrateAnswersFromRow(
+        'POPULATION',
+        assessment.questionSnapshot,
+        (assessment.answers ?? {}) as RapidAssessmentAnswers
+      ),
       rapidAssessmentDate: assessment.rapidAssessmentDate,
     }));
 
@@ -925,7 +938,29 @@ interface LatestTypedAssessment {
   assessorName: string | null;
   assessorNameFallback: string | null;
   answers: RapidAssessmentAnswers;
+  questionSnapshot: unknown;
   gapAnalysis: unknown;
+}
+
+/**
+ * Snapshot-hydrated read side (P10-1): typed values for every key of the
+ * row's frozen `questionSnapshot` — admin-authored post-seed keys included
+ * (raw passthrough for keys in neither) — falling back to catalog hydration
+ * (`fromAnswers`) for pre-data-layer rows stored without a snapshot. Pure
+ * hydration; never throws.
+ */
+function hydrateAnswersFromRow(
+  assessmentType: 'HEALTH' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY' | 'POPULATION',
+  questionSnapshot: unknown,
+  answers: RapidAssessmentAnswers
+): Record<string, AnswerValue> {
+  if (questionSnapshot && typeof questionSnapshot === 'object') {
+    return hydrateFromSnapshot(
+      questionSnapshot as SnapshotHydrationStructure,
+      answers
+    ).values;
+  }
+  return fromAnswers(assessmentType, answers);
 }
 
 async function findLatestTypedAssessment(
@@ -943,6 +978,7 @@ async function findLatestTypedAssessment(
     select: {
       id: true,
       answers: true,
+      questionSnapshot: true,
       gapAnalysis: true,
       rapidAssessmentDate: true,
       verificationStatus: true,
@@ -967,6 +1003,7 @@ async function findLatestTypedAssessment(
     assessorName: assessment.assessorName,
     assessorNameFallback: assessment.assessor?.name ?? null,
     answers: (assessment.answers ?? {}) as RapidAssessmentAnswers,
+    questionSnapshot: assessment.questionSnapshot,
     gapAnalysis: assessment.gapAnalysis,
   };
 }
@@ -975,7 +1012,7 @@ async function getLatestHealthAssessment(entityId: string, incidentId?: string):
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'HEALTH');
   if (!assessment) return null;
 
-  const payload = fromAnswers('HEALTH', assessment.answers) as unknown as HealthAssessmentData;
+  const payload = hydrateAnswersFromRow('HEALTH', assessment.questionSnapshot, assessment.answers) as unknown as HealthAssessmentData;
   const data: HealthAssessmentData = {
     ...payload,
     rapidAssessmentId: assessment.id,
@@ -994,7 +1031,7 @@ async function getLatestFoodAssessment(entityId: string, incidentId?: string): P
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'FOOD');
   if (!assessment) return null;
 
-  const payload = fromAnswers('FOOD', assessment.answers) as unknown as FoodAssessmentData;
+  const payload = hydrateAnswersFromRow('FOOD', assessment.questionSnapshot, assessment.answers) as unknown as FoodAssessmentData;
   const data: FoodAssessmentData = {
     ...payload,
     rapidAssessmentId: assessment.id,
@@ -1013,7 +1050,7 @@ async function getLatestWASHAssessment(entityId: string, incidentId?: string): P
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'WASH');
   if (!assessment) return null;
 
-  const payload = fromAnswers('WASH', assessment.answers) as unknown as WASHAssessmentData;
+  const payload = hydrateAnswersFromRow('WASH', assessment.questionSnapshot, assessment.answers) as unknown as WASHAssessmentData;
   const data: WASHAssessmentData = {
     ...payload,
     rapidAssessmentId: assessment.id,
@@ -1032,7 +1069,7 @@ async function getLatestShelterAssessment(entityId: string, incidentId?: string)
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'SHELTER');
   if (!assessment) return null;
 
-  const payload = fromAnswers('SHELTER', assessment.answers) as unknown as ShelterAssessmentData;
+  const payload = hydrateAnswersFromRow('SHELTER', assessment.questionSnapshot, assessment.answers) as unknown as ShelterAssessmentData;
   const data: ShelterAssessmentData = {
     ...payload,
     rapidAssessmentId: assessment.id,
@@ -1051,7 +1088,7 @@ async function getLatestSecurityAssessment(entityId: string, incidentId?: string
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'SECURITY');
   if (!assessment) return null;
 
-  const payload = fromAnswers('SECURITY', assessment.answers) as unknown as SecurityAssessmentData;
+  const payload = hydrateAnswersFromRow('SECURITY', assessment.questionSnapshot, assessment.answers) as unknown as SecurityAssessmentData;
   const data: SecurityAssessmentData = {
     ...payload,
     rapidAssessmentId: assessment.id,
@@ -1070,7 +1107,7 @@ async function getLatestPopulationAssessment(entityId: string, incidentId?: stri
   const assessment = await findLatestTypedAssessment(entityId, incidentId, 'POPULATION');
   if (!assessment) return null;
 
-  const payload = fromAnswers('POPULATION', assessment.answers) as unknown as PopulationAssessmentData;
+  const payload = hydrateAnswersFromRow('POPULATION', assessment.questionSnapshot, assessment.answers) as unknown as PopulationAssessmentData;
 
   return {
     ...payload,

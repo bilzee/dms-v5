@@ -37,24 +37,30 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p2-registry-service-api-governance.md`
   summary: `LOGISTICS` passed as an assessment type at `src/lib/services/action-signal.service.ts:289` throws `PrismaClientValidationError` because `LOGISTICS` is a `ResponseType`, not a Prisma `AssessmentType`.
   evidence: Pre-existing failure path present in the prompt-1 baseline, outside the P2 diff (confirmed in `dqr-p1-*` review logs); the query with an enum-invalid `assessmentType` value throws at Prisma query validation. Settling/fixing belongs to the action-signal owner: guard the type before the query or map `LOGISTICS` to a valid assessment-type context.
+  status: RESOLVED (verified 2026-09-17) — `LOGISTICS` no longer appears anywhere in `action-signal.service.ts`; signal creation now guards the type (`payload.assessmentType || 'HEALTH'` / `|| ''` at src/lib/services/action-signal.service.ts:99,117,137), so the enum-invalid Prisma query path is gone.
 
 ## From Review (2026-09-15, DQR P3)
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p3-gap-engine-derivation.md`
   summary: `recomputeAssessmentsForKey` reads and rewrites every matching assessment inside the severity-edit interactive transaction — lock duration and memory grow with history.
   evidence: Real scaling debt once live (routine severity PATCH over thousands of ACTIVE-incident assessments could hold locks long enough to time out); negligible at current pre-live scale. Chunk the findMany/update loop or push key-containment filtering into the query when load warrants it.
+  status: RESOLVED (2026-09-18, P10-1) — the candidate scan now runs OUTSIDE the severity-edit interactive transaction (`scanRecomputeCandidates` on plain `prisma`: cursor-paginated `id: { lt: cursor }`, 200-row `RECOMPUTE_PAGE_SIZE` pages, key-containment post-filter), and inside the transaction only the pre-scanned ids are re-verified (`questionSnapshot: { not: Prisma.DbNull }`, incident-still-ACTIVE re-check, key-containment) and rewritten with the existing per-row derive in 200-row chunks; a rare identity-edit race falls back to an in-tx scan, and the whole recompute is idempotent (severity row updates first; derive is pure per row; a retry converges — see `src/lib/services/question-registry.service.ts` `recomputeAssessmentsForKey`).
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p3-gap-engine-derivation.md`
   summary: `docs/api-contracts.md:271-272` still lists the deleted `POST/GET /rapid-assessments/update-priorities` endpoints, and the severity PATCH response-shape change (`data.severity` → `data.question.severity` + `affectedCount`) is undocumented.
   evidence: Verified stale against the P3 diff; prompt-3's out-of-scope defers docs to p9 — fold into the p9 documentation pass.
+  status: PARTIALLY RESOLVED (verified 2026-09-17) — the stale `update-priorities` rows are gone from `docs/api-contracts.md` §4.10 and the severity endpoint is now documented (§4.25, `PATCH /admin/questions/{id}/severity`); still open: the response shape (`data.question.severity` + `affectedCount`) remains undocumented.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p3-gap-engine-derivation.md`
   summary: `gap-analysis.service.ts` uses one global cache timestamp for all assessment types, so per-type entries can outlive their 30 s TTL while other types keep refreshing the clock.
   evidence: Carried-over p1/p2 mechanism (`gapQuestionCache` had the identical single clock), now caching the full engine derivation input; fix is per-entry timestamps. Only matters if a write path ever misses `invalidateRegistryCaches`.
+  status: RESOLVED (2026-09-18, P10-1) — the registry-view cache is now `Map<AssessmentType, { view, expiresAt }>` with a per-entry 30 s TTL and lazy pruning of expired entries; loading one type never refreshes another type's clock (pinned by the per-entry TTL unit test in `tests/unit/gap-analysis.test.ts`).
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p3-gap-engine-derivation.md`
   summary: Seed derivation rewiring (`prisma/seed.ts` → gap engine) has no automated verification.
   evidence: No test executes the seed's `main()`; a future argument swap would seed all-LOW demo data with every suite green. Engine, snapshot builder, and the mirrored service create-path are each pinned, so residual risk is dev/demo-data only; a seed-derivation assertion harness would close it.
+  status: PARTIALLY RESOLVED (verified 2026-09-17) — `tests/api/seed-partition.test.ts` now executes the seed's `main()` (both the default and `--with-sample-data` forms, as real child processes against drms_test); still open: it asserts row partitioning, not severity derivation, so a derivation argument swap on the demo assessments would still pass green.
+  update: RESOLVED (2026-09-18, P10-1) — the `--with-sample-data` leg now also asserts, for every seeded `rapidAssessment` row, that the stored `gapAnalysis` equals `analyzeGaps(row.questionSnapshot, row.answers, registryRows)` and that `priority === derivation.severity`, PLUS pins the exact demo derivation matrix (HEALTH/WASH/FOOD/SECURITY=MEDIUM, SHELTER=LOW), so a derivation argument swap fails the api suite. Plan note: the plan's "≥1 CRITICAL, ≥1 HIGH" spread is unachievable against the seeded catalog (every GAP question in `QUESTION_CATALOG` is severity MEDIUM); widening the spread is Tier A catalog authoring deferred to the P10-5 polish pass.
 
 ## From Spec Decision (2026-09-15, DQR P4)
 
@@ -71,6 +77,8 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
   summary: The edit page's `fromAnswers(...)` read side is catalog-bound (`src/lib/questions/answers.ts` typed defaults), so reading an assessment whose answers reference renamed/removed registry keys renders blanks even though the snapshot on the row still has the old definitions.
   evidence: Read-side hydration uses the live `useQuestionSet` view, not the row's frozen `questionSnapshot`; correctness of the snapshot for derivation is unaffected (p3 pins). Fix belongs with the p7/p9 read-side work that renders from the stored snapshot when keys drift.
+  status: OPEN (browser-confirmed 2026-09-17) — Situation Dashboard CONTEXT values render "N/A" for admin-authored post-seed keys: `fromAnswers` (`src/lib/questions/answers.ts:65-96`) only emits static `QUESTION_CATALOG` keys, and the situation route (`route.ts:974-991`) spreads that filtered payload into `latestAssessments`. GAP rows are unaffected (they flow from the stored `gapAnalysis`). Fix: hydrate read-side values from the stored snapshot when keys drift.
+  update: RESOLVED (2026-09-18, P10-1) — new pure `hydrateFromSnapshot(structure, answers)` in `src/lib/questions/answers.ts` (typed values for every snapshot key, raw passthrough + `unmappedKeys` for drift; `fromAnswers` is now a byte-identical catalog wrapper over it); all six per-type situation readers plus the POPULATION aggregation hydrate from the row's frozen `questionSnapshot` with `fromAnswers` fallback for snapshot-less rows (post-seed keys render instead of "N/A", pinned by api tests); the edit form renders snapshot-only answered keys in a read-only drift block (`snapshot-drift-block`, new optional `snapshot` prop) and the view page gets a generic read-only "Additional Registry Answers" card (pinned by unit + component tests and `tests/e2e-baseline/assessment-drift.spec.ts`).
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
   summary: `test:api` (jest, drms_test@5435) and `test:baseline:e2e` (Playwright, port 3100) share the `drms_test` database; running them concurrently truncates rows under each other.
@@ -108,4 +116,19 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p9-hardening-holistic-gate-close.md`
   summary: Catalog wording/option-value polish — seeded catalog rows with inconsistent label registers (noun phrase vs question, e.g. `Functional Clinic`) and choice options whose `value`/`label` pairs are not normalized (`'River/Stream'`, `'Water trucks'` vs Title Case labels).
   evidence: Blind-hunter findings at P9 review, traced to the pre-existing P1 catalog (`src/lib/questions/registry-validation.ts` QUESTION_CATALOG) — outside the P9 diff. Renaming labels is Tier A content churn (bumps every type's `contentVersion`, reverts on re-seed per the reconciliation policy in `docs/question-authoring-guide.md`) with zero behavioral effect; bundle with a deliberate catalog-authoring pass if wanted. The authoring guide's Appendix A now documents the target registers.
+
+
+## From Review (2026-09-18, DQR P10-1)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p1-read-side-hardening.md`
+  summary: `docs/operation-manual-ui.html` — a third UI operation manual that is an unreferenced planning orphan: zero inbound references anywhere in `_bmad-output/` or `docs/`, content stale at birth (predates the P4 dynamic form), dead scroll-spy code, and a TOC null-deref.
+  evidence: BH12/BH13/BH14 + EC7 at review — pre-existing untracked planning artifact (`git status` shows it staged alongside this story's tree but nothing caused by the P10-1 diff); excluded from this story's commit. Fix belongs to a docs owner: delete it or fold its still-true content into the p9 documentation pass (`docs/question-authoring-guide.md` / api-contracts).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p1-read-side-hardening.md`
+  summary: `_bmad-output/implementation-artifacts/dqr-p10-prompts/prompt-5-*.md` mixes pnpm and npm commands in its gate chain, so a verbatim run would install a second package-manager lockfile and diverge from the repo's npm-based gates.
+  evidence: BH15 at review — pre-existing planning input, not this story's diff. Fix belongs to the P10-5 execution pass: normalize the prompt's commands to the npm scripts the earlier prompts use (`npm run lint && npm run type-check && ...`).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p1-read-side-hardening.md`
+  summary: Nine sibling latest-assessment readers elsewhere in the situation route remain catalog-bound (`fromAnswers`), so post-seed snapshot keys render "N/A" on those older read paths even though the seven P10-1 readers (six per-type + POPULATION aggregation) now hydrate from the stored snapshot.
+  evidence: VG-F4 at review — pre-existing read paths untouched by this story's frozen scope (the spec's Code Map lists only `findLatestTypedAssessment` + the POPULATION reader). Fix belongs to a follow-up read-side pass: route those readers through `hydrateAnswersFromRow` exactly as the P10-1 readers do.
 

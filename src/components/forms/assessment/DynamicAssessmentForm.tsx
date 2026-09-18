@@ -88,6 +88,13 @@ export interface DynamicAssessmentFormProps {
   incidentId?: string
   /** Stored answers map (edit/reassessment hydration). */
   initialAnswers?: Record<string, unknown> | null
+  /**
+   * The row's frozen `questionSnapshot` (P10-1). When present, questions the
+   * snapshot knows that the live registry no longer offers render read-only
+   * (label + value) instead of silently vanishing. Loose JSON — parsed
+   * defensively, never throws.
+   */
+  snapshot?: unknown
   /** Disable the incident/entity selectors (reassessment lock). */
   lockIncidentEntity?: boolean
   /** Meta field names to disable (e.g. rejected-edit freezes). */
@@ -202,6 +209,56 @@ function isAdditionalTextSection(section: QuestionSectionDef): boolean {
   return section.questions.length > 0 && section.questions.every((q) => q.type === 'TEXT_LONG')
 }
 
+/** One snapshot-only (drifted) answered question for the read-only block. */
+interface SnapshotDriftEntry {
+  key: string
+  label: string
+  value: unknown
+}
+
+/** Human-readable rendering of a drifted answer (never raw JSON). */
+function formatSnapshotDriftValue(value: unknown): string {
+  if (Array.isArray(value)) return value.length > 0 ? value.map((entry) => String(entry)).join(', ') : '—'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (value === null || value === undefined || value === '') return '—'
+  return String(value)
+}
+
+/**
+ * Snapshot-vs-live drift (P10-1): answered questions defined in the stored
+ * `questionSnapshot` but absent from the live registry. Rendered read-only
+ * (label + value) so rejected assessments edited after registry churn never
+ * lose their historical answers. Pure + defensive — never throws.
+ */
+function collectSnapshotDrift(
+  snapshot: unknown,
+  initialAnswers: Record<string, unknown> | null | undefined,
+  liveQuestions: QuestionDef[]
+): SnapshotDriftEntry[] {
+  if (!snapshot || typeof snapshot !== 'object' || !initialAnswers) return []
+  const sections = (snapshot as { sections?: unknown }).sections
+  if (!Array.isArray(sections)) return []
+  const liveKeys = new Set(liveQuestions.map((question) => question.key))
+  const entries: SnapshotDriftEntry[] = []
+  for (const section of sections) {
+    const questions = (section as { questions?: unknown })?.questions
+    if (!Array.isArray(questions)) continue
+    for (const question of questions) {
+      const key = (question as { key?: unknown })?.key
+      if (typeof key !== 'string' || liveKeys.has(key)) continue
+      const value = initialAnswers[key]
+      if (value === undefined || value === null || value === '') continue
+      const label = (question as { label?: unknown })?.label
+      entries.push({
+        key,
+        label: typeof label === 'string' && label.length > 0 ? label : key,
+        value,
+      })
+    }
+  }
+  return entries
+}
+
 /**
  * Dismissable-banner state (ZoomAdjustmentHint pattern): a null key renders
  * nothing, a localStorage-backed key survives reloads until re-triggered.
@@ -291,6 +348,7 @@ function DynamicAssessmentFormInner(props: InnerProps) {
     entityId,
     incidentId,
     initialAnswers,
+    snapshot,
     lockIncidentEntity,
     readonlyFields = [],
     isReassessment,
@@ -625,6 +683,12 @@ function DynamicAssessmentFormInner(props: InnerProps) {
     return restoredDraftMeta.questionKeys.filter((key) => !currentQuestionKeys.has(key))
   }, [restoredDraftMeta, currentQuestionKeys])
 
+  // P10-1 — snapshot-only answered keys (registry drift on stored rows).
+  const snapshotDriftEntries = useMemo(
+    () => collectSnapshotDrift(snapshot, initialAnswers, questions),
+    [snapshot, initialAnswers, questions]
+  )
+
   const draftSnapshot = useCallback(() => {
     return {
       answers: getValues(),
@@ -784,6 +848,30 @@ function DynamicAssessmentFormInner(props: InnerProps) {
           <p className="mt-2 text-xs text-slate-500">
             These answers no longer match a question in the current set. They are kept with the draft
             and never deleted.
+          </p>
+        </details>
+      )}
+
+      {/* P10-1 — read-only drift: snapshot questions the live registry no longer offers */}
+      {snapshotDriftEntries.length > 0 && (
+        <details
+          className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
+          data-testid="snapshot-drift-block"
+        >
+          <summary className="cursor-pointer font-medium">
+            Answers from questions no longer in the current set ({snapshotDriftEntries.length})
+          </summary>
+          <ul className="mt-2 list-disc pl-5">
+            {snapshotDriftEntries.map((entry) => (
+              <li key={entry.key} data-testid={`snapshot-drift-${kebabCase(entry.key)}`}>
+                <span className="font-medium">{entry.label}</span>:{' '}
+                {formatSnapshotDriftValue(entry.value)}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-slate-500">
+            These questions were part of the registry when this assessment was submitted. They are
+            shown read-only for reference — they are not carried into the updated submission.
           </p>
         </details>
       )}

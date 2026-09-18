@@ -11,9 +11,12 @@
  * This module owns:
  * - the answer value types (`AnswerValue`, `RapidAssessmentAnswers`)
  * - `questionKeysForType` — catalog presentation order
- * - `fromAnswers` — read-side hydration: rebuild a fully-defaulted form values
- *   object (booleans `false`, numbers `0`, arrays `[]`, choices `''`, free
- *   text `undefined`) from a stored answers map, tolerant of missing keys.
+ * - `hydrateFromSnapshot` — snapshot-driven hydration: typed values for every
+ *   key of a snapshot's sections (raw passthrough + `unmappedKeys` for
+ *   drifted keys, never fabricating defaults)
+ * - `fromAnswers` — catalog-hydration wrapper over `hydrateFromSnapshot`
+ *   (read-side hydration with the legacy typed defaults, tolerant of missing
+ *   keys, dropping unknown ones)
  */
 
 import {
@@ -55,44 +58,130 @@ export function coerceArray(value: unknown): string[] {
   return []
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot hydration (P10-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Loose structural view of a question snapshot: `sections[].questions[]` each
+ * carrying `{ key, type }`. Deliberately permissive so stored
+ * `RapidAssessment.questionSnapshot` JSON, live `QuestionSnapshot` objects,
+ * catalog projections, and test fixtures all fit without adapters.
+ */
+export interface SnapshotHydrationStructure {
+  sections?: unknown
+}
+
+/** Result of snapshot hydration: typed values + the raw-drift manifest. */
+export interface HydratedAnswers {
+  /**
+   * Every question key of the structure hydrated to its typed default/value,
+   * plus the RAW stored value for unmapped keys (present in `answers` but in
+   * neither the structure nor the catalog) — typed defaults are never
+   * fabricated for unknown keys.
+   */
+  values: Record<string, AnswerValue>
+  /** Answer keys present in neither the structure nor the catalog (drift). */
+  unmappedKeys: string[]
+}
+
+/** Hydrates one value against its question type (default on shape mismatch). */
+function hydrateTypedValue(questionType: unknown, value: unknown): AnswerValue {
+  switch (questionType) {
+    case 'BOOLEAN':
+      return typeof value === 'boolean' ? value : false
+    case 'NUMBER':
+      return typeof value === 'number' ? value : 0
+    case 'MULTI_SELECT':
+      return coerceArray(value)
+    case 'SINGLE_CHOICE':
+      return typeof value === 'string' ? value : ''
+    case 'TEXT_LONG':
+    default:
+      return typeof value === 'string' ? value : undefined
+  }
+}
+
+/**
+ * Hydrates a stored answers map against a snapshot structure (pure; never
+ * throws). Every question of every section is emitted with its typed value or
+ * type default (booleans `false`, numbers `0`, arrays `[]`, choices `''`,
+ * free-text `undefined`); answer keys found in neither the structure nor the
+ * catalog pass through RAW and are listed in `unmappedKeys` — mirroring the
+ * gap-engine's drift semantics (no fabricated defaults for unknown keys).
+ */
+export function hydrateFromSnapshot(
+  structure: SnapshotHydrationStructure | null | undefined,
+  answers: Record<string, unknown> | null | undefined
+): HydratedAnswers {
+  const source = answers ?? {}
+  const values: Record<string, AnswerValue> = {}
+  const present = new Set<string>()
+
+  const sections = Array.isArray(structure?.sections) ? (structure!.sections as unknown[]) : []
+  for (const section of sections) {
+    const questions = Array.isArray((section as { questions?: unknown })?.questions)
+      ? ((section as { questions: unknown[] }).questions as unknown[])
+      : []
+    for (const question of questions) {
+      const key = (question as { key?: unknown })?.key
+      if (typeof key !== 'string') continue
+      present.add(key)
+      values[key] = hydrateTypedValue((question as { type?: unknown })?.type, source[key])
+    }
+  }
+
+  const unmappedKeys: string[] = []
+  for (const key of Object.keys(source)) {
+    if (!present.has(key)) {
+      unmappedKeys.push(key)
+      values[key] = source[key] as AnswerValue
+    }
+  }
+  return { values, unmappedKeys }
+}
+
+// Module-level memo: catalog structure per type (`{questionKey, questionType}`
+// mapped once to `{key, type}`), so `fromAnswers` never re-projects the catalog.
+const catalogStructureMemo = new Map<RapidAssessmentType, SnapshotHydrationStructure>()
+
+function catalogStructureFor(assessmentType: RapidAssessmentType): SnapshotHydrationStructure {
+  const memoized = catalogStructureMemo.get(assessmentType)
+  if (memoized) return memoized
+  const catalog = catalogForType(assessmentType)
+  const structure: SnapshotHydrationStructure = {
+    sections: catalog.sections.map((section) => ({
+      questions: section.questions.map((question) => ({
+        key: question.questionKey,
+        type: question.questionType,
+      })),
+    })),
+  }
+  catalogStructureMemo.set(assessmentType, structure)
+  return structure
+}
+
 /**
  * Rebuilds a fully-defaulted form-values object from an answers map
  * (read/detail-page hydration). Defaults follow the legacy form schemas:
  * booleans `false`, numbers `0`, arrays `[]`, choices `''`, free-text
  * `undefined`. Unknown/absent keys fall back to the default for their
  * catalog question type.
+ *
+ * Thin wrapper over `hydrateFromSnapshot` with the memoized catalog structure
+ * (P10-1): output is byte-identical to the pre-P10 implementation for the 55
+ * catalog keys, and unknown (unmapped) keys are still dropped.
  */
 export function fromAnswers(
   assessmentType: RapidAssessmentType,
   answers: RapidAssessmentAnswers | null | undefined
 ): Record<string, AnswerValue> {
-  const catalog = catalogForType(assessmentType)
-  const source = answers ?? {}
-  const result: Record<string, AnswerValue> = {}
-  for (const section of catalog.sections) {
-    for (const question of section.questions) {
-      const value = source[question.questionKey]
-      switch (question.questionType) {
-        case 'BOOLEAN':
-          result[question.questionKey] = typeof value === 'boolean' ? value : false
-          break
-        case 'NUMBER':
-          result[question.questionKey] = typeof value === 'number' ? value : 0
-          break
-        case 'MULTI_SELECT':
-          result[question.questionKey] = coerceArray(value)
-          break
-        case 'SINGLE_CHOICE':
-          result[question.questionKey] = typeof value === 'string' ? value : ''
-          break
-        case 'TEXT_LONG':
-        default:
-          result[question.questionKey] = typeof value === 'string' ? value : undefined
-          break
-      }
-    }
-  }
-  return result
+  const { values, unmappedKeys } = hydrateFromSnapshot(
+    catalogStructureFor(assessmentType),
+    answers
+  )
+  for (const key of unmappedKeys) delete values[key]
+  return values
 }
 
 export { ASSESSMENT_TYPES }

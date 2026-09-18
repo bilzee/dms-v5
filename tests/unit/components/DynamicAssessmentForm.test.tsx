@@ -993,6 +993,126 @@ describe('DynamicAssessmentForm — P5 draft migration UX', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// P10-1 snapshot drift — snapshot-only ANSWERED questions render read-only
+// (label + value) instead of silently vanishing; never validated, never
+// blocking submit, never riding the answers payload.
+// ---------------------------------------------------------------------------
+
+describe('DynamicAssessmentForm — P10-1 snapshot drift (read-only)', () => {
+  const driftSnapshot = {
+    structureVersion: 2,
+    contentVersion: 4,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    sections: [
+      {
+        id: 'sec-water-access',
+        key: 'water-access',
+        title: 'Water Access and Availability',
+        category: 'GAP',
+        order: 1,
+        questions: [
+          {
+            id: 'q-live',
+            key: 'hasCleanWaterAccess',
+            label: 'Clean Water Access',
+            type: 'BOOLEAN',
+            required: true,
+            category: 'GAP',
+            inverted: false,
+            order: 1,
+          },
+          {
+            id: 'q-p9t',
+            key: 'p9tLitersPerPerson',
+            label: 'Liters per person per day',
+            type: 'NUMBER',
+            required: false,
+            category: 'CONTEXT',
+            inverted: false,
+            order: 2,
+          },
+          {
+            id: 'q-silent',
+            key: 'p9tSilentUnanswered',
+            label: 'Silent unanswered',
+            type: 'TEXT_LONG',
+            required: false,
+            category: 'CONTEXT',
+            inverted: false,
+            order: 3,
+          },
+        ],
+      },
+    ],
+  }
+
+  test('snapshot-only answered questions render read-only (label + value); live/unanswered keys never drift', () => {
+    renderForm({
+      initialAnswers: {
+        isWaterSufficient: false,
+        hasCleanWaterAccess: false,
+        p9tLitersPerPerson: 42,
+      },
+      snapshot: driftSnapshot,
+    })
+
+    const block = screen.getByTestId('snapshot-drift-block')
+    expect(block).toHaveTextContent('Answers from questions no longer in the current set (1)')
+    expect(block).toHaveTextContent('Liters per person per day')
+    expect(block).toHaveTextContent('42')
+    expect(block).toHaveTextContent(/shown read-only/i)
+    // Per-entry testid for the drifted key (kebab-case convention).
+    expect(screen.getByTestId('snapshot-drift-p9t-liters-per-person')).toBeInTheDocument()
+    // Unanswered snapshot-only key is not rendered.
+    expect(screen.queryByTestId('snapshot-drift-p9t-silent-unanswered')).not.toBeInTheDocument()
+    // No editable widget for the drifted key inside the live form.
+    expect(screen.queryByTestId('question-p9t-liters-per-person')).not.toBeInTheDocument()
+    // No validation errors from the drift.
+    expect(screen.queryAllByTestId(/cross-field-alert-/i)).toHaveLength(0)
+  })
+
+  test('drift needs both a snapshot and stored answers; malformed snapshots render nothing', () => {
+    const { rerender, mockOnSubmit } = renderForm({ snapshot: driftSnapshot })
+    // No initialAnswers → nothing to show read-only.
+    expect(screen.queryByTestId('snapshot-drift-block')).not.toBeInTheDocument()
+
+    rerender(
+      <DynamicAssessmentForm
+        assessmentType="WASH"
+        entityId="entity-1"
+        incidentId="incident-1"
+        initialAnswers={{ p9tLitersPerPerson: 42 }}
+        snapshot={{ sections: 'not-an-array' }}
+        onSubmit={mockOnSubmit}
+      />
+    )
+    expect(screen.queryByTestId('snapshot-drift-block')).not.toBeInTheDocument()
+  })
+
+  test('drift never blocks submit and never rides the answers payload', async () => {
+    const { user, mockOnSubmit } = renderForm({
+      initialAnswers: {
+        isWaterSufficient: false,
+        hasCleanWaterAccess: false,
+        p9tLitersPerPerson: 42,
+      },
+      snapshot: driftSnapshot,
+    })
+
+    // Satisfy the required SINGLE_CHOICE, then submit alongside the drift.
+    await user.click(screen.getByTestId('select-option-Borehole'))
+    expect(screen.getByTestId('snapshot-drift-block')).toBeInTheDocument()
+    expect(screen.getByTestId('submit-assessment-button')).not.toBeDisabled()
+
+    await user.click(screen.getByTestId('submit-assessment-button'))
+    await waitFor(() => expect(mockOnSubmit).toHaveBeenCalledTimes(1))
+    const payload = mockOnSubmit.mock.calls[0][0]
+    expect(payload.answers).not.toHaveProperty('p9tLitersPerPerson')
+    expect(payload.questionKeys).not.toContain('p9tLitersPerPerson')
+  })
+})
+
 describe('DynamicAssessmentForm — POPULATION (context-only) suppression', () => {
   beforeEach(() => {
     mockUseQuestionSet.mockReturnValue({

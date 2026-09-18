@@ -455,4 +455,41 @@ describe('unit — gap-analysis registry analyzers', () => {
       expect(prisma.question.findMany).toHaveBeenCalledTimes(2)
     })
   })
+
+  describe('registry query caching — per-entry TTL (P10-1)', () => {
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    test('entries expire independently: loading one type never refreshes another type\u2019s clock', async () => {
+      jest.useFakeTimers()
+      jest.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const FOOD_ANSWERS = { isFoodSufficient: false, hasRegularMealAccess: true, hasInfantNutrition: true }
+
+      // t=0 — HEALTH caches its own entry.
+      await analyzeHealthGaps(ALL_DIRE_HEALTH)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(1)
+
+      // t=20s — FOOD loads its own entry; HEALTH is still fresh.
+      jest.setSystemTime(new Date('2026-01-01T00:00:20Z'))
+      await analyzeFoodGaps(FOOD_ANSWERS)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(2)
+      await analyzeHealthGaps(ALL_DIRE_HEALTH)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(2)
+
+      // t=31s — HEALTH's OWN 30s clock elapsed; the FOOD load at t=20 did not
+      // refresh it (per-entry TTL), so HEALTH re-queries…
+      jest.setSystemTime(new Date('2026-01-01T00:00:31Z'))
+      await analyzeHealthGaps(ALL_DIRE_HEALTH)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(3)
+      // …while FOOD (cached at t=20) is still fresh.
+      await analyzeFoodGaps(FOOD_ANSWERS)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(3)
+
+      // t=55s — FOOD's own clock (t=20 + 30s < 55s) elapsed too.
+      jest.setSystemTime(new Date('2026-01-01T00:00:55Z'))
+      await analyzeFoodGaps(FOOD_ANSWERS)
+      expect(prisma.question.findMany).toHaveBeenCalledTimes(4)
+    })
+  })
 })

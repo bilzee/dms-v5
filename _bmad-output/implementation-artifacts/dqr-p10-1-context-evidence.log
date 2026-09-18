@@ -1,0 +1,113 @@
+# DQR P10-1 evidence — snapshot-hydrated situation read side (api, drms_test, 2026-09-18T15:23:23+01:00)
+# Fixture: POPULATION row whose frozen snapshot contains admin-authored NUMBER key p9tPatientsPerDay=42;
+# assertion: latestAssessments.population.p9tPatientsPerDay === 42 (was dropped -> rendered N/A pre-P10-1).
+
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+  console.error
+    Error fetching entity locations: PrismaClientKnownRequestError: 
+    Invalid `prisma.$queryRaw()` invocation:
+    
+    
+    Raw query failed. Code: `42703`. Message: `column dc.createdAt does not exist`
+        at ei.handleRequestError (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:228:13)
+        at ei.handleRequestError [as handleAndLogRequestError] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:174:12)
+        at ei.handleAndLogRequestError [as request] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:143:12)
+        at a (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:833:24)
+        at getEntityLocations (B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\dashboard\situation\route.ts:1545:27)
+        at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\dashboard\situation\route.ts:2108:25
+        at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+        at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\dashboard-situation.test.ts:107:22) {
+      code: 'P2010',
+      clientVersion: '6.18.0',
+      meta: { code: '42703', message: 'column dc.createdAt does not exist' }
+    }
+
+    [0m [90m 1616 |[39m     }[33m;[39m
+     [90m 1617 |[39m   } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 1618 |[39m     console[33m.[39merror([32m'Error fetching entity locations:'[39m[33m,[39m error)[33m;[39m
+     [90m      |[39m             [31m[1m^[22m[39m
+     [90m 1619 |[39m     [36mreturn[39m {
+     [90m 1620 |[39m       entities[33m:[39m [][33m,[39m
+     [90m 1621 |[39m       mapBounds[33m:[39m {[0m
+
+      at error (src/app/api/v1/dashboard/situation/route.ts:1618:13)
+      at src/app/api/v1/dashboard/situation/route.ts:2108:25
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/dashboard-situation.test.ts:107:22)
+
+  console.error
+    Error fetching entity locations: PrismaClientKnownRequestError: 
+    Invalid `prisma.$queryRaw()` invocation:
+    
+    
+    Raw query failed. Code: `42703`. Message: `column dc.createdAt does not exist`
+        at ei.handleRequestError (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:228:13)
+        at ei.handleRequestError [as handleAndLogRequestError] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:174:12)
+        at ei.handleAndLogRequestError [as request] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:143:12)
+        at a (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:833:24)
+        at getEntityLocations (B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\dashboard\situation\route.ts:1545:27)
+        at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\dashboard\situation\route.ts:2108:25
+        at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+        at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\dashboard-situation.test.ts:249:22) {
+      code: 'P2010',
+      clientVersion: '6.18.0',
+      meta: { code: '42703', message: 'column dc.createdAt does not exist' }
+    }
+
+    [0m [90m 1616 |[39m     }[33m;[39m
+     [90m 1617 |[39m   } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 1618 |[39m     console[33m.[39merror([32m'Error fetching entity locations:'[39m[33m,[39m error)[33m;[39m
+     [90m      |[39m             [31m[1m^[22m[39m
+     [90m 1619 |[39m     [36mreturn[39m {
+     [90m 1620 |[39m       entities[33m:[39m [][33m,[39m
+     [90m 1621 |[39m       mapBounds[33m:[39m {[0m
+
+      at error (src/app/api/v1/dashboard/situation/route.ts:1618:13)
+      at src/app/api/v1/dashboard/situation/route.ts:2108:25
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/dashboard-situation.test.ts:249:22)
+
+  console.error
+    Error fetching entity locations: PrismaClientKnownRequestError: 
+    Invalid `prisma.$queryRaw()` invocation:
+    
+    
+    Raw query failed. Code: `42703`. Message: `column dc.createdAt does not exist`
+        at ei.handleRequestError (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:228:13)
+        at ei.handleRequestError [as handleAndLogRequestError] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:174:12)
+        at ei.handleAndLogRequestError [as request] (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\RequestHandler.ts:143:12)
+        at a (B:\Dev\Claude Code\dms-v4-bmad-v6\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:833:24)
+        at getEntityLocations (B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\dashboard\situation\route.ts:1545:27)
+        at B:\Dev\Claude Code\dms-v4-bmad-v6\src\app\api\v1\dashboard\situation\route.ts:2108:25
+        at B:\Dev\Claude Code\dms-v4-bmad-v6\src\lib\auth\middleware.ts:63:14
+        at Object.<anonymous> (B:\Dev\Claude Code\dms-v4-bmad-v6\tests\api\dashboard-situation.test.ts:267:22) {
+      code: 'P2010',
+      clientVersion: '6.18.0',
+      meta: { code: '42703', message: 'column dc.createdAt does not exist' }
+    }
+
+    [0m [90m 1616 |[39m     }[33m;[39m
+     [90m 1617 |[39m   } [36mcatch[39m (error) {
+    [31m[1m>[22m[39m[90m 1618 |[39m     console[33m.[39merror([32m'Error fetching entity locations:'[39m[33m,[39m error)[33m;[39m
+     [90m      |[39m             [31m[1m^[22m[39m
+     [90m 1619 |[39m     [36mreturn[39m {
+     [90m 1620 |[39m       entities[33m:[39m [][33m,[39m
+     [90m 1621 |[39m       mapBounds[33m:[39m {[0m
+
+      at error (src/app/api/v1/dashboard/situation/route.ts:1618:13)
+      at src/app/api/v1/dashboard/situation/route.ts:2108:25
+      at src/lib/auth/middleware.ts:63:14
+      at Object.<anonymous> (tests/api/dashboard-situation.test.ts:267:22)
+
+PASS api tests/api/dashboard-situation.test.ts (13.489 s)
+  DQR P7 — situation dashboard registry-driven summaries
+    √ All-Entities payload ranks stored gaps, chips overflow, stamps the registry version (358 ms)
+  DQR P10-1 — situation route snapshot-hydrated read side
+    √ post-seed snapshot keys are carried typed — the card renders the value, not N/A (84 ms)
+    √ snapshot-less rows fall back to catalog hydration (pre-data-layer) (91 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        13.538 s, estimated 14 s
+Ran all test suites matching /tests\\api\\dashboard-situation.test.ts/i.

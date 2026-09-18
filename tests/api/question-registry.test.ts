@@ -1461,5 +1461,59 @@ describe('P2 question registry governance', () => {
       )
       expect(restore.status).toBe(200)
     })
+
+    test('CONTEXT create/update with explicit null GAP metadata is accepted and stored (P10-1 VG-F1)', async () => {
+      const section = await testDb.questionSection.findFirst({
+        where: { assessmentType: 'SECURITY', category: 'CONTEXT' },
+      })
+      expect(section).not.toBeNull()
+      const stamp = Date.now().toString(36)
+
+      const created = await createQuestionRoute(
+        makeRequest('POST', '/api/v1/admin/questions', {
+          body: {
+            assessmentType: 'SECURITY',
+            questionKey: `nullMeta${stamp}`,
+            sectionId: section!.id,
+            questionType: 'TEXT_LONG',
+            label: 'Null metadata probe',
+            category: 'CONTEXT',
+            gapLabel: null,
+            gapMeaning: null,
+            recommendation: null,
+            reason: 'P10-1 VG-F1 explicit null GAP metadata',
+          },
+          token: tokenFor(admin),
+        })
+      )
+      expect(created.status).toBe(201)
+      const createdData = await jsonOf(created).then((b) => b.data)
+
+      const stored = await testDb.question.findUnique({ where: { id: createdData.id } })
+      expect(stored).not.toBeNull()
+      expect(stored!.gapLabel).toBeNull()
+      expect(stored!.gapMeaning).toBeNull()
+      expect(stored!.recommendation).toBeNull()
+
+      const updated = await updateQuestionRoute(
+        makeRequest('PUT', `/api/v1/admin/questions/${createdData.id}`, {
+          body: {
+            label: 'Null metadata probe (renamed)',
+            gapLabel: null,
+            gapMeaning: null,
+            recommendation: null,
+            reason: 'P10-1 VG-F1 null metadata survives update',
+          },
+          token: tokenFor(admin),
+        }),
+        withParams({ id: createdData.id })
+      )
+      expect(updated.status).toBe(200)
+      const after = await testDb.question.findUnique({ where: { id: createdData.id } })
+      expect(after!.label).toBe('Null metadata probe (renamed)')
+      expect(after!.gapLabel).toBeNull()
+      expect(after!.gapMeaning).toBeNull()
+      expect(after!.recommendation).toBeNull()
+    })
   })
 })
