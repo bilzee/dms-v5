@@ -8,7 +8,10 @@
  *
  * - sections/questions keyed by `key` / `type` (snapshot naming),
  * - `options` parsed into `QuestionOption[]`,
- * - `severity` retained (preview severities must match the server's ladder).
+ * - `severity` retained (preview severities must match the server's ladder),
+ * - `rules` — the type's cross-field rule rows normalized into the rule
+ *   engine's record shape, so the form validates against the LIVE payload
+ *   (admin rule edits reach the assessor immediately; P10-3).
  *
  * The hook deliberately does NO answer logic — defaults/hydration live in
  * `@/lib/questions/answers`, submit validation in
@@ -19,6 +22,7 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from '@/lib/api'
 import type { RapidAssessmentType } from '@/lib/questions/answers'
+import type { RegistryRuleRecord } from '@/lib/questions/rule-engine'
 
 /** Selectable option for SINGLE_CHOICE / MULTI_SELECT questions (registry `options` JSON). */
 export interface QuestionOption {
@@ -57,6 +61,8 @@ export interface QuestionSectionDef {
 export interface QuestionSetView {
   sections: QuestionSectionDef[]
   questions: QuestionDef[]
+  /** The type's cross-field rules in the rule engine's record shape. */
+  rules: RegistryRuleRecord[]
   structureVersion: number
   contentVersion: number
 }
@@ -91,8 +97,40 @@ interface SectionRow {
 
 interface QuestionSetResponse {
   sections: SectionRow[]
+  /** Cross-field rule rows (`ruleKey`/`kind`/`message`/`when`/`expression`/`referenceKeys`/`order`). */
+  rules?: unknown[]
   structureVersion: number
   contentVersion: number
+}
+
+/** Raw cross-field rule row as returned by the questions route. */
+interface RuleRow {
+  ruleKey?: unknown
+  kind?: unknown
+  message?: unknown
+  when?: unknown
+  expression?: unknown
+  referenceKeys?: unknown
+  order?: unknown
+}
+
+/**
+ * Normalizes one raw rule row into the evaluator's record shape. Only the
+ * scalar fields are sanitized; `when`/`expression`/`referenceKeys` pass
+ * through raw because `evaluateRules` safeParse-skips any row whose AST
+ * fails the shared zod grammar (forward-incompatible payloads degrade to
+ * "rule skipped", never a thrown error).
+ */
+function normalizeRule(row: RuleRow): RegistryRuleRecord {
+  return {
+    ruleKey: typeof row.ruleKey === 'string' ? row.ruleKey : '',
+    kind: typeof row.kind === 'string' ? row.kind : 'REFINEMENT',
+    message: typeof row.message === 'string' ? row.message : '',
+    when: row.when ?? undefined,
+    expression: row.expression,
+    referenceKeys: row.referenceKeys,
+    order: typeof row.order === 'number' ? row.order : 0,
+  }
 }
 
 function normalizeOptions(options: unknown): QuestionOption[] {
@@ -151,6 +189,11 @@ function normalizeQuestionSet(data: QuestionSetResponse): QuestionSetView {
   return {
     sections,
     questions: sections.flatMap((section) => section.questions),
+    rules: Array.isArray(data.rules)
+      ? data.rules
+          .filter((row): row is RuleRow => typeof row === 'object' && row !== null)
+          .map(normalizeRule)
+      : [],
     structureVersion: typeof data.structureVersion === 'number' ? data.structureVersion : 1,
     contentVersion: typeof data.contentVersion === 'number' ? data.contentVersion : 1,
   }
@@ -191,6 +234,7 @@ export function useQuestionSet(assessmentType: RapidAssessmentType) {
     questionSet,
     sections: questionSet?.sections ?? [],
     questions: questionSet?.questions ?? [],
+    rules: questionSet?.rules ?? [],
     structureVersion: questionSet?.structureVersion ?? null,
     contentVersion: questionSet?.contentVersion ?? null,
     isLoading: query.isLoading,

@@ -1,0 +1,9 @@
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+PASS tests/unit/rule-engine.test.ts
+PASS tests/unit/cross-field-rules.test.ts
+
+Test Suites: 2 passed, 2 total
+Tests:       96 passed, 96 total
+Snapshots:   0 total
+Time:        0.835 s, estimated 1 s
+Ran all test suites matching /tests\\unit\\rule-engine.test.ts|tests\\unit\\cross-field-rules.test.ts/i.

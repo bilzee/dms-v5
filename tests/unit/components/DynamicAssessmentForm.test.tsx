@@ -9,6 +9,7 @@ import {
 import { useQuestionSet } from '@/hooks/useQuestionSet'
 import type { QuestionDef, QuestionSectionDef } from '@/hooks/useQuestionSet'
 import { useRapidAssessmentDrafts } from '@/hooks/useRapidAssessmentDrafts'
+import { seedRuleRecordsFor } from '@/lib/questions/rule-engine'
 
 /**
  * Unit — DynamicAssessmentForm (P4): one registry-driven form for every
@@ -349,6 +350,12 @@ const WASH_SECTIONS: QuestionSectionDef[] = [
 
 const WASH_QUESTIONS = WASH_SECTIONS.flatMap((section) => section.questions)
 
+// P10-3: the form evaluates cross-field rules from the `/questions` payload
+// (no more hardcoded module), so the mock must deliver them like the real
+// endpoint — the seeded baseline projected into the engine's record shape.
+const WASH_RULES = seedRuleRecordsFor('WASH')
+const POPULATION_RULES = seedRuleRecordsFor('POPULATION')
+
 const mockUseQuestionSet = useQuestionSet as jest.Mock
 const mockUseDrafts = useRapidAssessmentDrafts as jest.Mock
 const mockSaveDraft = jest.fn()
@@ -362,11 +369,13 @@ beforeEach(() => {
     questionSet: {
       sections: WASH_SECTIONS,
       questions: WASH_QUESTIONS,
+      rules: WASH_RULES,
       structureVersion: 3,
       contentVersion: 7,
     },
     sections: WASH_SECTIONS,
     questions: WASH_QUESTIONS,
+    rules: WASH_RULES,
     structureVersion: 3,
     contentVersion: 7,
     isLoading: false,
@@ -403,6 +412,7 @@ describe('DynamicAssessmentForm — loader and error shells', () => {
       questionSet: null,
       sections: [],
       questions: [],
+      rules: [],
       structureVersion: null,
       contentVersion: null,
       isLoading: true,
@@ -418,6 +428,7 @@ describe('DynamicAssessmentForm — loader and error shells', () => {
       questionSet: null,
       sections: [],
       questions: [],
+      rules: [],
       structureVersion: null,
       contentVersion: null,
       isLoading: false,
@@ -434,6 +445,7 @@ describe('DynamicAssessmentForm — loader and error shells', () => {
       questionSet: null,
       sections: [],
       questions: [],
+      rules: [],
       structureVersion: null,
       contentVersion: null,
       isLoading: false,
@@ -1119,11 +1131,13 @@ describe('DynamicAssessmentForm — POPULATION (context-only) suppression', () =
       questionSet: {
         sections: POPULATION_SECTIONS,
         questions: POPULATION_SECTIONS.flatMap((section) => section.questions),
+        rules: POPULATION_RULES,
         structureVersion: 1,
         contentVersion: 1,
       },
       sections: POPULATION_SECTIONS,
       questions: POPULATION_SECTIONS.flatMap((section) => section.questions),
+      rules: POPULATION_RULES,
       structureVersion: 1,
       contentVersion: 1,
       isLoading: false,

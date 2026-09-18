@@ -3,8 +3,12 @@
  *
  * Pure evaluator + shared zod AST schema for `CrossFieldRule` rows (plan §4.2
  * grammar, with the recorded `when` extension accepting `BoolGate | Compare`).
- * Exact behavioral parity with the legacy hardcoded module
- * `src/lib/questions/cross-field-rules.ts` is the contract:
+ * The legacy hardcoded module `src/lib/questions/cross-field-rules.ts` was
+ * deleted in P10-3 — this module now owns its types (`CrossFieldViolation`/
+ * `CrossFieldKind`/`CrossFieldAssessmentType`) and re-exports its three
+ * functions as seed-backed shims. Exact behavioral parity is the contract,
+ * pinned by the golden parity tests and the archived pre-deletion log
+ * `_bmad-output/implementation-artifacts/dqr-p10-3-parity-final.log`:
  *
  * - same `num()` coercion — `typeof value === 'number' && !Number.isNaN(value)`
  *   else 0 (no string parsing, null/undefined/NaN → 0);
@@ -23,7 +27,7 @@
  */
 
 import { z } from 'zod'
-import type { CrossFieldKind, CrossFieldViolation } from './cross-field-rules'
+import { CROSS_FIELD_RULE_SEED } from './rule-seed-data'
 
 // ---------------------------------------------------------------------------
 // AST grammar (plan §4.2 + recorded `when` extension)
@@ -229,4 +233,103 @@ export function evaluateRefinements(
   return evaluateRules(rules, values).filter(
     (violation) => violation.kind === 'refinement'
   )
+}
+
+// ---------------------------------------------------------------------------
+// Re-homed legacy types (P10-3 — the legacy module is deleted; types move here)
+// ---------------------------------------------------------------------------
+
+export type CrossFieldAssessmentType = 'HEALTH' | 'POPULATION' | 'FOOD' | 'WASH' | 'SHELTER' | 'SECURITY'
+
+export type CrossFieldKind = 'refinement' | 'aggregate'
+
+export interface CrossFieldViolation {
+  /** Registry question key the violation attaches to (legacy zod `path`). */
+  key: string
+  message: string
+  /**
+   * 'refinement' — exact legacy zod refinement predicate (submit-time
+   *                superRefine parity).
+   * 'aggregate'  — legacy live-form check rendered as a destructive alert
+   *                and disabling submit (Population sums).
+   */
+  kind: CrossFieldKind
+}
+
+export interface SuperRefineContext {
+  addIssue: (issue: { code: 'custom'; path: (string | number)[]; message: string }) => void
+}
+
+// ---------------------------------------------------------------------------
+// Seed-backed shims + payload superRefine (P10-3 legacy cutover)
+// ---------------------------------------------------------------------------
+
+/**
+ * Projects one type's rows from the pure seed constant into the evaluator's
+ * record shape — the shim backing that keeps `evaluateCrossFieldRules` pure
+ * and synchronous after the legacy module's deletion. (Types in
+ * `rule-seed-data` are imported `import type`, so there is no runtime cycle.)
+ */
+export function seedRuleRecordsFor(assessmentType: CrossFieldAssessmentType): RegistryRuleRecord[] {
+  return CROSS_FIELD_RULE_SEED.filter((rule) => rule.assessmentType === assessmentType).map(
+    (rule) => ({
+      ruleKey: rule.ruleKey,
+      kind: rule.kind,
+      message: rule.message,
+      when: rule.when,
+      expression: rule.expression,
+      referenceKeys: rule.referenceKeys,
+      order: rule.order,
+    })
+  )
+}
+
+/**
+ * Submit-time superRefine factory over the GIVEN rules (the `/questions`
+ * payload — live, admin-editable rows): adds one custom issue per
+ * REFINEMENT violation on the violation's key (legacy path/message
+ * semantics). AGGREGATE rules stay client-live-only. The dynamic form uses
+ * this directly; the `crossFieldSuperRefine` shim delegates here so both
+ * share emission semantics.
+ */
+export function payloadSuperRefine(
+  rules: RegistryRuleRecord[]
+): (answers: Record<string, unknown>, ctx: SuperRefineContext) => void {
+  return (answers, ctx) => {
+    for (const violation of evaluateRefinements(rules, answers)) {
+      ctx.addIssue({ code: 'custom', path: [violation.key], message: violation.message })
+    }
+  }
+}
+
+/**
+ * Legacy `evaluateCrossFieldRules` (same signature), now backed by
+ * `evaluateRules` over the seed constant — exactly the wiring the golden
+ * parity harness proved against the deleted hardcoded module.
+ */
+export function evaluateCrossFieldRules(
+  assessmentType: CrossFieldAssessmentType,
+  values: Record<string, unknown>
+): CrossFieldViolation[] {
+  return evaluateRules(seedRuleRecordsFor(assessmentType), values)
+}
+
+/** Narrowing helper for submit-time gating (legacy signature). */
+export function hasCrossFieldViolations(
+  assessmentType: CrossFieldAssessmentType,
+  values: Record<string, unknown>
+): boolean {
+  return evaluateCrossFieldRules(assessmentType, values).length > 0
+}
+
+/**
+ * Legacy `crossFieldSuperRefine` (same signature): refinement-only closure
+ * over the SEED baseline. The dynamic form must NOT use this — it validates
+ * payload rules via `payloadSuperRefine(rules)`; this shim exists for
+ * parity-pinning consumers.
+ */
+export function crossFieldSuperRefine(
+  assessmentType: CrossFieldAssessmentType
+): (answers: Record<string, unknown>, ctx: SuperRefineContext) => void {
+  return payloadSuperRefine(seedRuleRecordsFor(assessmentType))
 }

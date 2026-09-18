@@ -1,19 +1,17 @@
 import {
   evaluateRules,
   evaluateRefinements,
+  evaluateCrossFieldRules,
   interpolateMessage,
   num,
   BoolGateSchema,
   CompareSchema,
   WhenSchema,
   type Compare,
+  type CrossFieldAssessmentType,
   type RegistryRuleRecord,
 } from '@/lib/questions/rule-engine'
-import {
-  evaluateCrossFieldRules,
-  type CrossFieldAssessmentType,
-} from '@/lib/questions/cross-field-rules'
-import { CROSS_FIELD_RULE_SEED } from '../../prisma/seed-rules'
+import { CROSS_FIELD_RULE_SEED } from '@/lib/questions/rule-seed-data'
 
 /**
  * Unit — registry-driven rule engine (P10-2): operator matrix, gates
@@ -21,8 +19,11 @@ import { CROSS_FIELD_RULE_SEED } from '../../prisma/seed-rules'
  * operands, legacy `num()` coercion, `{{value:}}`/`{{sum:}}` token
  * interpolation, deterministic ordering, skip-not-throw on invalid rows —
  * and the GOLDEN PARITY harness: per-type fixtures (violating, boundary,
- * clean) run through BOTH the legacy hardcoded module and the engine over
- * `CROSS_FIELD_RULE_SEED`, asserting deep-equal violation arrays.
+ * clean) run through BOTH `evaluateRules` over `CROSS_FIELD_RULE_SEED` and
+ * the `evaluateCrossFieldRules` shim, asserting deep-equal violation arrays
+ * (guards the shim≡seed wiring). The legacy hardcoded module was deleted in
+ * P10-3; its pre-deletion parity against this engine is archived in
+ * `_bmad-output/implementation-artifacts/dqr-p10-3-parity-final.log`.
  */
 
 /** Projects the type's seed rows into the evaluator's record shape (getRules parity). */
@@ -376,7 +377,7 @@ const VALID_POPULATION = {
   numberInjured: 12,
 }
 
-describe('golden parity — engine-over-CROSS_FIELD_RULE_SEED === legacy evaluateCrossFieldRules', () => {
+describe('golden parity — engine-over-CROSS_FIELD_RULE_SEED === evaluateCrossFieldRules shim', () => {
   type Fixture = [string, CrossFieldAssessmentType, Record<string, unknown>]
   const fixtures: Fixture[] = [
     // --- POPULATION: clean ---
@@ -487,9 +488,9 @@ describe('golden parity — engine-over-CROSS_FIELD_RULE_SEED === legacy evaluat
   ]
 
   test.each(fixtures)('%s → deep-equal arrays (order included)', (_label, assessmentType, values) => {
-    const legacy = evaluateCrossFieldRules(assessmentType, values)
+    const shim = evaluateCrossFieldRules(assessmentType, values)
     const engine = evaluateRules(seedRowsFor(assessmentType), values)
-    expect(engine).toEqual(legacy)
+    expect(engine).toEqual(shim)
   })
 
   test('the seed itself is complete: 15 rows, POPULATION 11 / FOOD 2 / WASH 1 / SHELTER 1', () => {

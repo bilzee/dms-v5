@@ -234,9 +234,63 @@ describe('useQuestionSet — success path', () => {
     expect(result.current.questionSet).toEqual({
       sections: result.current.sections,
       questions: result.current.questions,
+      rules: [],
       structureVersion: 3,
       contentVersion: 7,
     })
+  })
+
+  test('normalizes cross-field rule rows into the evaluator record shape (P10-3)', async () => {
+    const raw = rawQuestionSet() as Record<string, unknown>
+    raw.rules = [
+      {
+        ruleKey: 'wash-latrines-sufficient-but-none-functional',
+        kind: 'REFINEMENT',
+        message: 'Latrines marked sufficient but none are functional',
+        when: { questionKey: 'areLatrinesSufficient', is: true },
+        expression: {
+          op: '==',
+          left: { type: 'question', key: 'functionalLatrinesAvailable' },
+          right: { type: 'literal', value: 0 },
+        },
+        referenceKeys: ['functionalLatrinesAvailable', 'areLatrinesSufficient'],
+        order: 1,
+      },
+      { ruleKey: 42 }, // scalar garbage: sanitized to defaults, not dropped
+      'not-an-object', // non-object row: dropped entirely
+    ]
+    mockedApiGet.mockResolvedValue({ success: true, data: raw })
+    const { result } = renderQuestionSetHook()
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    // Well-formed row passes through with its AST fields intact.
+    expect(result.current.rules[0]).toEqual({
+      ruleKey: 'wash-latrines-sufficient-but-none-functional',
+      kind: 'REFINEMENT',
+      message: 'Latrines marked sufficient but none are functional',
+      when: { questionKey: 'areLatrinesSufficient', is: true },
+      expression: {
+        op: '==',
+        left: { type: 'question', key: 'functionalLatrinesAvailable' },
+        right: { type: 'literal', value: 0 },
+      },
+      referenceKeys: ['functionalLatrinesAvailable', 'areLatrinesSufficient'],
+      order: 1,
+    })
+    // Garbage row keeps the shape with sanitized defaults — evaluateRules'
+    // safeParse skips it wholesale rather than throwing.
+    expect(result.current.rules[1]).toEqual({
+      ruleKey: '',
+      kind: 'REFINEMENT',
+      message: '',
+      when: undefined,
+      expression: undefined,
+      referenceKeys: undefined,
+      order: 0,
+    })
+    expect(result.current.rules).toHaveLength(2)
+    // The view and the top-level accessor expose the same normalized array.
+    expect(result.current.questionSet?.rules).toBe(result.current.rules)
   })
 
   test('defaults missing versions to 1', async () => {

@@ -3,13 +3,17 @@ import {
   evaluateCrossFieldRules,
   hasCrossFieldViolations,
   type SuperRefineContext,
-} from '@/lib/questions/cross-field-rules'
+} from '@/lib/questions/rule-engine'
 
 /**
- * Unit — cross-field rules (P4): the EXACT refinement predicates of the six
- * deleted hardcoded forms, keyed by registry question keys, plus the three
- * legacy live aggregate alerts (Population sums) with their interpolated
- * messages. Pure functions — deterministic order, no I/O.
+ * Unit — cross-field rules semantics (P4, re-homed in P10-3): the EXACT
+ * refinement predicates of the six deleted hardcoded forms, keyed by registry
+ * question keys, plus the three legacy live aggregate alerts (Population sums)
+ * with their interpolated messages. The hardcoded module was deleted in
+ * P10-3 — these pins now run against its seed-backed parity shims in
+ * `rule-engine.ts` (same signatures; pre-deletion legacy parity is archived
+ * in `_bmad-output/implementation-artifacts/dqr-p10-3-parity-final.log`).
+ * Pure functions — deterministic order, no I/O.
  */
 
 const VALID_POPULATION = {

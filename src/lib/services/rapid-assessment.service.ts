@@ -22,8 +22,7 @@ import type { GapEngineSnapshotStructure } from '@/lib/questions/gap-engine'
 import type { QuestionSnapshot } from '@/lib/questions/question-snapshot'
 import { ApiError } from '@/types/api'
 import { QuestionRegistryService } from '@/lib/services/question-registry.service'
-import { evaluateRefinements } from '@/lib/questions/rule-engine'
-import type { CrossFieldViolation } from '@/lib/questions/cross-field-rules'
+import { evaluateRefinements, type CrossFieldViolation } from '@/lib/questions/rule-engine'
 
 /**
  * Rapid Assessment Service — Dynamic Question Registry edition (P4).

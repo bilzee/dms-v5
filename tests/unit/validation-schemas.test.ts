@@ -4,7 +4,7 @@ import {
   AssessmentTypeName,
 } from '@/lib/validation/rapid-assessment'
 import { buildAssessmentSchema, type DynamicQuestionSet } from '@/lib/validation/dynamic-assessment'
-import { crossFieldSuperRefine } from '@/lib/questions/cross-field-rules'
+import { crossFieldSuperRefine } from '@/lib/questions/rule-engine'
 import { CreateIncidentSchema } from '@/lib/validation/incidents'
 import { ConfirmDeliverySchema } from '@/lib/validation/response'
 
@@ -13,12 +13,14 @@ import { ConfirmDeliverySchema } from '@/lib/validation/response'
  *
  * The legacy typed sector schemas (FoodAssessmentSchema / WASHAssessmentSchema /
  * ShelterAssessmentSchema / discriminated union) were deleted; their exact
- * refinement predicates now live in cross-field-rules. The composition below
- * mirrors the client form wiring (`buildAssessmentSchema` +
- * `crossFieldSuperRefine`) — the server validates with buildAssessmentSchema
- * alone (cross-field rules are client-side only, Q2=B). These tests pin both
- * the refinements (legacy parity) and the new transport contract (shape-only
- * answers map, priority stripped).
+ * refinement predicates now live in the registry rule engine
+ * (`rule-engine.ts` — `crossFieldSuperRefine` is the seed-backed parity
+ * shim). The composition below mirrors the client form wiring
+ * (`buildAssessmentSchema` + superRefine over payload rules; this file pins
+ * the seed baseline) — the server validates with buildAssessmentSchema plus
+ * the type's ACTIVE refinement rules (evaluateRefinements, P10-2). These
+ * tests pin both the refinements (legacy parity) and the new transport
+ * contract (shape-only answers map, priority stripped).
  */
 
 function compileAnswersSchema(type: AssessmentTypeName, set: DynamicQuestionSet) {

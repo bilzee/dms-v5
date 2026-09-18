@@ -32,7 +32,7 @@ import type { AnswerValue, RapidAssessmentType } from '@/lib/questions/answers'
 import { coerceArray } from '@/lib/questions/answers'
 import { analyzeGaps } from '@/lib/questions/gap-engine'
 import { applyDraftMigration, restoreOfflineDraft, type UnmappedAnswer } from '@/lib/questions/draft-migration'
-import { crossFieldSuperRefine, evaluateCrossFieldRules, type CrossFieldViolation } from '@/lib/questions/cross-field-rules'
+import { evaluateRules, payloadSuperRefine, type CrossFieldViolation, type RegistryRuleRecord } from '@/lib/questions/rule-engine'
 import { buildAssessmentSchema } from '@/lib/validation/dynamic-assessment'
 import { useQuestionSet, type QuestionDef, type QuestionSectionDef } from '@/hooks/useQuestionSet'
 import { useRapidAssessmentDrafts } from '@/hooks/useRapidAssessmentDrafts'
@@ -291,7 +291,7 @@ function useDismissableBanner(storageKey: string | null) {
 
 export function DynamicAssessmentForm(props: DynamicAssessmentFormProps) {
   const { assessmentType } = props
-  const { sections, questions, isLoading, error, structureVersion, contentVersion } = useQuestionSet(assessmentType)
+  const { sections, questions, rules, isLoading, error, structureVersion, contentVersion } = useQuestionSet(assessmentType)
 
   if (isLoading) {
     return (
@@ -329,6 +329,7 @@ export function DynamicAssessmentForm(props: DynamicAssessmentFormProps) {
       {...props}
       sections={sections.filter((section) => section.questions.length > 0)}
       questions={questions}
+      rules={rules}
       structureVersion={structureVersion}
       contentVersion={contentVersion}
     />
@@ -338,6 +339,8 @@ export function DynamicAssessmentForm(props: DynamicAssessmentFormProps) {
 interface InnerProps extends DynamicAssessmentFormProps {
   sections: QuestionSectionDef[]
   questions: QuestionDef[]
+  /** The type's cross-field rules from the `/questions` payload (P10-3). */
+  rules: RegistryRuleRecord[]
   structureVersion: number | null
   contentVersion: number | null
 }
@@ -357,6 +360,7 @@ function DynamicAssessmentFormInner(props: InnerProps) {
     onCancel,
     sections,
     questions,
+    rules,
     structureVersion,
     contentVersion,
   } = props
@@ -415,8 +419,8 @@ function DynamicAssessmentFormInner(props: InnerProps) {
     [sections]
   )
   const submitSchema = useMemo(
-    () => buildAssessmentSchema(schemaInput).superRefine(crossFieldSuperRefine(assessmentType)),
-    [schemaInput, assessmentType]
+    () => buildAssessmentSchema(schemaInput).superRefine(payloadSuperRefine(rules)),
+    [schemaInput, rules]
   )
 
   const defaultValues = useMemo(() => buildDefaultValues(questions, initialAnswers), []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -520,9 +524,11 @@ function DynamicAssessmentFormInner(props: InnerProps) {
   }, [questions, touchedKeys, watchedValues])
 
   // ---- cross-field rules (live alerts + submit gating) ---------------------
+  // Payload-driven (P10-3): evaluates the type's LIVE registry rules — admin
+  // edits reach the form immediately (messages, order, activeness).
   const crossFieldViolations = useMemo(
-    () => evaluateCrossFieldRules(assessmentType, (watchedValues ?? {}) as Record<string, unknown>),
-    [assessmentType, watchedValues]
+    () => evaluateRules(rules, (watchedValues ?? {}) as Record<string, unknown>),
+    [rules, watchedValues]
   )
   const violationsBySection = useMemo(() => {
     const keyToSection = new Map<string, string>()
