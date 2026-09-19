@@ -222,7 +222,7 @@ export function AssessmentCategorySummary({
               {row.spread}
             </span>
           )}
-          <GapIndicator hasGap severity={row.severity} size="sm" />
+          <GapIndicator hasGap severity={row.severity} size="sm" badgeMode="initial" />
         </div>
       </div>
     </div>

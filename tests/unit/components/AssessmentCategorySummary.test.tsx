@@ -198,8 +198,11 @@ describe('unit — AssessmentCategorySummary (P7 rendering contract)', () => {
     )
 
     expect(screen.getByText('No functional clinic')).toBeInTheDocument()
-    // CRITICAL appears in the header severity badge AND the ranked row chip.
-    expect(screen.getAllByText('CRITICAL').length).toBeGreaterThanOrEqual(2)
+    // The header badge keeps the full severity word; the ranked row badge is
+    // initial-only ("C") with the full word carried in its tooltip.
+    expect(screen.getByText('CRITICAL')).toBeInTheDocument()
+    const rowBadge = screen.getByTitle('CRITICAL')
+    expect(rowBadge).toHaveTextContent(/^C$/)
     // Stamps are aggregate-only (individual cards are unstamped).
     expect(screen.queryByTestId('gap-summary-stamp')).not.toBeInTheDocument()
   })

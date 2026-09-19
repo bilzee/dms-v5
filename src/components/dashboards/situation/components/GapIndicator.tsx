@@ -12,6 +12,9 @@ interface GapIndicatorProps {
   field?: string;
   size?: 'sm' | 'md' | 'lg';
   showLabel?: boolean;
+  /** 'initial' renders the severity's first letter only (full word in the
+   *  tooltip) — for space-constrained gap rows; 'full' (default) keeps the word. */
+  badgeMode?: 'full' | 'initial';
   className?: string;
 }
 
@@ -80,6 +83,7 @@ export function GapIndicator({
   field,
   size = 'md',
   showLabel = false,
+  badgeMode = 'full',
   className
 }: GapIndicatorProps) {
   const sizeClasses = sizeConfig[size];
@@ -148,13 +152,14 @@ export function GapIndicator({
       {!showLabel && severity !== 'LOW' && (
         <Badge 
           variant="outline" 
+          title={severity}
           className={cn(
             sizeClasses.badge,
             badgeClasses,
             "font-semibold shadow-sm"
           )}
         >
-          {severity}
+          {badgeMode === 'initial' ? severity.charAt(0) : severity}
         </Badge>
       )}
     </div>
