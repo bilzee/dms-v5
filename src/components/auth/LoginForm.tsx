@@ -23,56 +23,52 @@ const loginSchema = z.object({
 
 type LoginFormData = z.infer<typeof loginSchema>
 
-// Development test users (only visible in development)
-// Passwords are read from environment variables (DEV_TEST_USER_PASSWORDS)
+// Development test users (only visible in development) — the E2E baseline
+// users seeded into the test database by tests/e2e-baseline/global-setup.ts
+// (mirrors tests/e2e-baseline/baseline-users.ts). Per-user password overrides
+// can be supplied via the NEXT_PUBLIC_DEV_TEST_PASSWORDS JSON env var.
+const DEV_TEST_DEFAULT_PASSWORD = 'Baseline#Pass1'
+
 const DEV_TEST_USERS = [
   {
     id: 'admin',
-    name: 'System Administrator',
-    email: 'admin@dms.gov.ng',
+    name: 'E2E Admin',
+    email: 'e2e.admin@baseline.test',
     roles: ['Admin'],
     icon: Shield,
     description: 'Full system access'
   },
   {
     id: 'coordinator',
-    name: 'Crisis Coordinator',
-    email: 'coordinator@dms.gov.ng',
+    name: 'E2E Coordinator',
+    email: 'e2e.coordinator@baseline.test',
     roles: ['Coordinator'],
     icon: Users,
     description: 'Verifies assessments, manages entities'
   },
   {
     id: 'assessor',
-    name: 'Field Assessor',
-    email: 'assessor@test.com',
+    name: 'E2E Assessor',
+    email: 'e2e.assessor@baseline.test',
     roles: ['Assessor'],
     icon: Heart,
     description: 'Conducts rapid assessments in the field'
   },
   {
     id: 'responder',
-    name: 'Response Responder',
-    email: 'responder@dms.gov.ng',
+    name: 'E2E Responder',
+    email: 'e2e.responder@baseline.test',
     roles: ['Responder'],
     icon: Package,
     description: 'Plans and delivers disaster response resources'
   },
   {
     id: 'donor',
-    name: 'Donor Organization Contact',
-    email: 'donor@test.com',
+    name: 'E2E Donor',
+    email: 'e2e.donor@baseline.test',
     roles: ['Donor'],
     icon: Heart,
     description: 'Donor role only - manages contributions and assessments'
-  },
-  {
-    id: 'multirole',
-    name: 'Multi Role Test User',
-    email: 'multirole@dms.gov.ng',
-    roles: ['Assessor', 'Coordinator', 'Donor', 'Responder'],
-    icon: User,
-    description: 'Test user with multiple roles including response planning'
   }
 ]
 
@@ -105,10 +101,7 @@ export function LoginForm() {
     const user = DEV_TEST_USERS.find(u => u.id === userId)
     if (user) {
       setValue('email', user.email)
-      const password = DEV_TEST_PASSWORDS[userId] || ''
-      if (password) {
-        setValue('password', password)
-      }
+      setValue('password', DEV_TEST_PASSWORDS[userId] ?? DEV_TEST_DEFAULT_PASSWORD)
       setSelectedTestUser(userId)
     }
   }
