@@ -5,6 +5,7 @@ import { CreateRuleSchema, UpdateRuleSchema } from '@/lib/validation/questions'
 import {
   COMPARE_OPS,
   evaluateRules,
+  describeWhen,
   WhenSchema,
   type CompareOp,
   type Operand,
@@ -157,21 +158,11 @@ function toWhen(state: GateState): { ok: true; when: When | null } | { ok: false
   }
 }
 
-function describeOperand(operand: Operand): string {
-  switch (operand.type) {
-    case 'question':
-      return operand.key
-    case 'sum':
-      return `sum(${operand.keys.join('+')})`
-    case 'literal':
-      return String(operand.value)
-  }
-}
-
-function describeWhen(when: When | null): string {
-  if (!when) return 'always'
-  if ('questionKey' in when) return `${when.questionKey} = ${when.is}`
-  return `${describeOperand(when.left)} ${when.op} ${describeOperand(when.right)}`
+/** Question keys an operand references (literals reference none). */
+function operandQuestionKeys(operand: Operand): string[] {
+  if (operand.type === 'question') return [operand.key]
+  if (operand.type === 'sum') return operand.keys
+  return []
 }
 
 function formatAuditDate(value: string): string {
@@ -316,7 +307,10 @@ export function RuleEditDialog({
     () => questions.filter((question) => question.questionType === 'BOOLEAN'),
     [questions]
   )
-  const gateQuestions = booleanQuestions.length > 0 ? booleanQuestions : questions
+  // Gates are strict: `whenHolds` compares `values[key] === is`, so only BOOLEAN
+  // questions can ever fire. No fallback — types without BOOLEAN questions
+  // (e.g. POPULATION) must not offer NUMBER keys as silently dead gates.
+  const gateQuestions = booleanQuestions
   const numberQuestions = useMemo(
     () => questions.filter((question) => question.questionType === 'NUMBER'),
     [questions]
@@ -324,6 +318,14 @@ export function RuleEditDialog({
   // Numeric operands are the sane default (num() coerces booleans/text to 0);
   // fall back to all questions when the type has no NUMBER questions.
   const operandQuestions = numberQuestions.length > 0 ? numberQuestions : questions
+  const knownKeys = useMemo(
+    () => new Set(questions.map((question) => question.questionKey)),
+    [questions]
+  )
+  const booleanKeys = useMemo(
+    () => new Set(booleanQuestions.map((question) => question.questionKey)),
+    [booleanQuestions]
+  )
 
   /** Question keys referenced by the draft gate + condition (derived referenceKeys). */
   const derivedReferenceKeys = useMemo(() => {
@@ -370,6 +372,8 @@ export function RuleEditDialog({
 
   useEffect(() => {
     if (!open) return
+    const defaultLeftQuestion =
+      questions.find((question) => question.questionType === 'NUMBER') ?? questions[0]
     setRuleKey(rule?.ruleKey ?? '')
     setKind(rule?.kind ?? 'REFINEMENT')
     setName(rule?.name ?? '')
@@ -379,7 +383,9 @@ export function RuleEditDialog({
     setLeft(
       operandToState(
         rule?.expression.left ??
-          (questions[0] ? { type: 'question', key: questions[0].questionKey } : { type: 'literal', value: 0 })
+          (defaultLeftQuestion
+            ? { type: 'question', key: defaultLeftQuestion.questionKey }
+            : { type: 'literal', value: 0 })
       )
     )
     setRight(operandToState(rule?.expression.right ?? { type: 'literal', value: 0 }))
@@ -446,6 +452,42 @@ export function RuleEditDialog({
     if (!leftResult.ok) return leftResult
     const rightResult = toOperand(right)
     if (!rightResult.ok) return rightResult
+    // Operand keys must be live questions of this type — the server validates
+    // referenceKeys only, so the dialog is the last line against dangling keys
+    // that `num()` would silently coerce to 0.
+    const unknownConditionKeys = [
+      ...new Set([
+        ...operandQuestionKeys(leftResult.operand),
+        ...operandQuestionKeys(rightResult.operand),
+      ]),
+    ].filter((key) => !knownKeys.has(key))
+    if (unknownConditionKeys.length > 0) {
+      return {
+        ok: false,
+        error: `The condition references question keys that are not active questions of this assessment type: ${unknownConditionKeys.join(', ')}.`,
+      }
+    }
+    if (gateResult.when) {
+      const when = gateResult.when
+      if ('questionKey' in when) {
+        if (!booleanKeys.has(when.questionKey)) {
+          return {
+            ok: false,
+            error: 'Boolean gates must reference a BOOLEAN question of this assessment type.',
+          }
+        }
+      } else {
+        const unknownGateKeys = [
+          ...new Set([...operandQuestionKeys(when.left), ...operandQuestionKeys(when.right)]),
+        ].filter((key) => !knownKeys.has(key))
+        if (unknownGateKeys.length > 0) {
+          return {
+            ok: false,
+            error: `The gate references question keys that are not active questions of this assessment type: ${unknownGateKeys.join(', ')}.`,
+          }
+        }
+      }
+    }
     if (effectiveReferenceKeys.length === 0) {
       return {
         ok: false,

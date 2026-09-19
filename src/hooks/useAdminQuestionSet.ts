@@ -74,6 +74,8 @@ export interface AdminQuestionSetView {
   sections: AdminSectionRow[]
   structureVersion: number
   contentVersion: number
+  /** Raw cross-field rule rows from the same response (normalized by the hook when `rules: true`). */
+  rules?: unknown[]
 }
 
 /**
@@ -153,25 +155,8 @@ async function fetchAdminQuestionSet(
     structureVersion:
       typeof payload.structureVersion === 'number' ? payload.structureVersion : 1,
     contentVersion: typeof payload.contentVersion === 'number' ? payload.contentVersion : 1,
+    rules: Array.isArray(payload.rules) ? payload.rules : [],
   }
-}
-
-async function fetchAdminRules(
-  assessmentType: RapidAssessmentType,
-  includeInactive: boolean
-): Promise<AdminRuleRow[]> {
-  const query = new URLSearchParams({ assessmentType })
-  if (includeInactive) query.set('includeInactive', '1')
-  const result = await apiGet<{ rules?: unknown[] }>(`/api/v1/questions?${query.toString()}`)
-  if (!result.success) {
-    throw new Error(result.error || 'Failed to load cross-field rules')
-  }
-  const rows = result.data?.rules
-  if (!Array.isArray(rows)) {
-    throw new Error('Question set response is missing rules')
-  }
-  // RuleAstSchema.parse inside normalizeRule is the drift tripwire.
-  return rows.map((row) => normalizeRule(row as RuleRowRaw))
 }
 
 export interface UseAdminQuestionSetOptions {
@@ -203,14 +188,6 @@ export function useAdminQuestionSet(
     retry: 1,
   })
 
-  const rulesQuery = useQuery({
-    queryKey: ['admin-rule-set', assessmentType, includeInactive],
-    queryFn: () => fetchAdminRules(assessmentType, includeInactive),
-    enabled: withRules,
-    staleTime: 15_000,
-    retry: 1,
-  })
-
   const questionSet = useMemo(() => query.data ?? null, [query.data])
   const sections = useMemo(
     () =>
@@ -226,18 +203,39 @@ export function useAdminQuestionSet(
     [questionSet]
   )
 
+  // Rules normalize out of the SAME query payload (single request). AST drift
+  // is isolated to the rules view via rulesError — it never breaks questions.
+  const { rules, rulesError } = useMemo(() => {
+    if (!withRules) return { rules: [] as AdminRuleRow[], rulesError: null as string | null }
+    const rows = questionSet?.rules
+    if (!Array.isArray(rows)) {
+      return {
+        rules: [] as AdminRuleRow[],
+        rulesError: 'Question set response is missing rules',
+      }
+    }
+    try {
+      // RuleAstSchema.parse inside normalizeRule is the drift tripwire.
+      return { rules: rows.map((row) => normalizeRule(row as RuleRowRaw)), rulesError: null }
+    } catch (normalizeError) {
+      return {
+        rules: [] as AdminRuleRow[],
+        rulesError:
+          normalizeError instanceof Error
+            ? normalizeError.message
+            : String(normalizeError),
+      }
+    }
+  }, [withRules, questionSet])
+
   return {
     questionSet,
     sections,
     questions: sections.flatMap((section) => section.questions),
     structureVersion: questionSet?.structureVersion ?? null,
     contentVersion: questionSet?.contentVersion ?? null,
-    rules: withRules ? (rulesQuery.data ?? []) : [],
-    rulesError: withRules && rulesQuery.error
-      ? rulesQuery.error instanceof Error
-        ? rulesQuery.error.message
-        : String(rulesQuery.error)
-      : null,
+    rules,
+    rulesError,
     isLoading: query.isLoading,
     error:
       query.error instanceof Error
@@ -247,7 +245,6 @@ export function useAdminQuestionSet(
           : null,
     refetch: async () => {
       await query.refetch()
-      if (withRules) await rulesQuery.refetch()
     },
   }
 }
@@ -314,7 +311,6 @@ export function useAdminRuleMutations(assessmentType: RapidAssessmentType) {
 
   const invalidate = useCallback(async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['admin-rule-set', assessmentType] }),
       queryClient.invalidateQueries({ queryKey: ['admin-question-set', assessmentType] }),
       queryClient.invalidateQueries({ queryKey: ['question-set', assessmentType] }),
     ])

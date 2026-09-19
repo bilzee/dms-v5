@@ -8,7 +8,7 @@ import {
   type AdminRuleRow,
 } from '@/hooks/useAdminQuestionSet'
 import type { RapidAssessmentType } from '@/lib/questions/answers'
-import type { Operand, When } from '@/lib/questions/rule-engine'
+import { describeWhen, type When } from '@/lib/questions/rule-engine'
 import { RuleEditDialog } from '@/components/settings/question-registry/RuleEditDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -70,21 +70,8 @@ import {
 const KIND_FILTERS = ['ALL', 'REFINEMENT', 'AGGREGATE'] as const
 type KindFilter = (typeof KIND_FILTERS)[number]
 
-function describeOperand(operand: Operand): string {
-  switch (operand.type) {
-    case 'question':
-      return operand.key
-    case 'sum':
-      return `sum(${operand.keys.join('+')})`
-    case 'literal':
-      return String(operand.value)
-  }
-}
-
 function describeGate(when: When | null): string {
-  if (!when) return '—'
-  if ('questionKey' in when) return `${when.questionKey} = ${when.is}`
-  return `${describeOperand(when.left)} ${when.op} ${describeOperand(when.right)}`
+  return when ? describeWhen(when) : '—'
 }
 
 interface RuleDialogState {
@@ -141,7 +128,9 @@ export function CrossFieldRulesPanel({ assessmentType }: { assessmentType: Rapid
   // ---- reorder (shared reason dialog; two sequential PUTs swap orders) -------
   // CrossFieldRule has no unique order constraint, so a swap is two PUTs each
   // carrying the other row's order — every PUT bumps the structure version and
-  // is audit-logged with the shared reason.
+  // is audit-logged with the shared reason. If the second PUT fails, the first
+  // is compensated (best effort) so no duplicate order value survives a
+  // transient failure.
   const [moveTarget, setMoveTarget] = useState<{ rule: AdminRuleRow; direction: -1 | 1 } | null>(
     null
   )
@@ -160,24 +149,41 @@ export function CrossFieldRulesPanel({ assessmentType }: { assessmentType: Rapid
     const reason = moveReason.trim()
     if (!reason) return
     const index = ruleIndexById.get(moveTarget.rule.id)
-    if (index === undefined) return
-    const neighbor = rules[index + moveTarget.direction]
-    if (!neighbor) return
+    const neighbor = index === undefined ? undefined : rules[index + moveTarget.direction]
+    if (index === undefined || !neighbor) {
+      // The row list changed under the open dialog (refetch raced) — a silent
+      // no-op would look like success; surface it instead.
+      toast.error('The rule list changed — refresh and try again.')
+      setMoveOpen(false)
+      setMoveTarget(null)
+      return
+    }
+    const targetId = moveTarget.rule.id
+    const targetOrder = moveTarget.rule.order
     setMoving(true)
     try {
-      await updateRule.mutateAsync({ id: moveTarget.rule.id, order: neighbor.order, reason })
-      await updateRule.mutateAsync({ id: neighbor.id, order: moveTarget.rule.order, reason })
+      await updateRule.mutateAsync({ id: targetId, order: neighbor.order, reason })
+      try {
+        await updateRule.mutateAsync({ id: neighbor.id, order: targetOrder, reason })
+      } catch (secondError) {
+        try {
+          await updateRule.mutateAsync({ id: targetId, order: targetOrder, reason })
+        } catch {
+          // compensation failed — the refetch below shows the durable state
+        }
+        throw secondError
+      }
       toast.success('Rule order updated')
       setMoveOpen(false)
       setMoveTarget(null)
       setMoveReason('')
-      void refetch()
     } catch (mutationError) {
       toast.error(
         mutationError instanceof Error ? mutationError.message : 'Failed to reorder rule'
       )
     } finally {
       setMoving(false)
+      void refetch()
     }
   }
 

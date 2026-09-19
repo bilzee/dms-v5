@@ -409,6 +409,47 @@ describe('RuleEditDialog (P10-3)', () => {
     )
   })
 
+  test('validation: condition sum keys must be active questions of the assessment type', async () => {
+    renderDialog()
+    const user = userEvent.setup()
+
+    await waitForDryRunSeed()
+    await user.click(screen.getAllByTestId('select-option-sum')[0])
+    fireEvent.change(screen.getByTestId('rule-dialog-left-operand-sum'), {
+      target: { value: 'ghostKey, populationUnder5' },
+    })
+    await user.click(screen.getByTestId('rule-dialog-dry-run-button'))
+
+    expect(screen.getByTestId('rule-dialog-dry-run-error').textContent).toContain(
+      'not active questions of this assessment type: ghostKey'
+    )
+  })
+
+  test('validation: boolean gates need BOOLEAN questions — NUMBER keys are never offered', async () => {
+    renderDialog({
+      questions: [question('totalPopulation'), question('populationUnder5')],
+    })
+    const user = userEvent.setup()
+
+    await waitForDryRunSeed()
+    // "Boolean question gate" with zero BOOLEAN questions → no fallback key.
+    await user.click(screen.getByTestId('select-option-bool'))
+    await user.click(screen.getByTestId('rule-dialog-dry-run-button'))
+    expect(screen.getByTestId('rule-dialog-dry-run-error').textContent).toContain(
+      'Select a gate question'
+    )
+
+    // Advanced path: a hand-written bool gate on a NUMBER key is rejected.
+    await user.click(screen.getByTestId('select-option-advanced'))
+    fireEvent.change(screen.getByTestId('rule-dialog-gate-json'), {
+      target: { value: '{"questionKey": "totalPopulation", "is": true}' },
+    })
+    await user.click(screen.getByTestId('rule-dialog-dry-run-button'))
+    expect(screen.getByTestId('rule-dialog-dry-run-error').textContent).toContain(
+      'Boolean gates must reference a BOOLEAN question'
+    )
+  })
+
   test('token inserter appends {{value:key}} and {{sum:…}} tokens', async () => {
     renderDialog()
     const user = userEvent.setup()

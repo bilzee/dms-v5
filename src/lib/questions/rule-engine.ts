@@ -333,3 +333,26 @@ export function crossFieldSuperRefine(
 ): (answers: Record<string, unknown>, ctx: SuperRefineContext) => void {
   return payloadSuperRefine(seedRuleRecordsFor(assessmentType))
 }
+
+// ---------------------------------------------------------------------------
+// Human-readable rendering (shared by the rules panel and the edit dialog)
+// ---------------------------------------------------------------------------
+
+/** Renders one Compare operand: `key`, `sum(k1+k2)` or the literal number. */
+export function describeOperand(operand: Operand): string {
+  switch (operand.type) {
+    case 'question':
+      return operand.key
+    case 'sum':
+      return `sum(${operand.keys.join('+')})`
+    case 'literal':
+      return String(operand.value)
+  }
+}
+
+/** Renders a gate (`key is true` / `a > b`); `null`/undefined renders "always". */
+export function describeWhen(when: When | null | undefined): string {
+  if (!when) return 'always'
+  if ('questionKey' in when) return `${when.questionKey} is ${when.is}`
+  return `${describeOperand(when.left)} ${when.op} ${describeOperand(when.right)}`
+}

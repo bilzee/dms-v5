@@ -140,6 +140,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
   summary: Seed drift-update unconditionally writes `isActive: true` on rule rows (`prisma/seed-rules.ts` diff comparator), so a re-seed resurrects an admin-deactivated rule with no version bump or governed audit — the DB silently diverges from the admin's governance record.
   evidence: Finding 10 (ECH4/BH2) at review, verified real — but `prisma/seed-questions.ts:113` carries the identical comparator for the 55 questions, and plan §4.3 binds "registry baseline like the 55 questions"; the reconciliation-over-governance policy predates this story. Fix belongs to a deliberate seed-policy pass covering BOTH seeds (e.g. skip isActive reconciliation on existing rows, or record it as a governed REACTIVATE audit + structure bump), not a rules-only carve-out.
+  update: RE-CONFIRMED at P10-3 review (EC-3, 2026-09-18) with raised stakes — the cutover inverted ownership (the live form now evaluates DB rule rows, not the hardcoded module), so a re-seed against a non-truncated DB now also reverts admin-authored rule CONTENT (message/expression drift branch overwrites) that the assessor form enforces. Same route stands: ownership-aware seeding policy for both seeds, not a rules-only carve-out.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
   summary: `GET /admin/questions/export` omits cross-field rules, so an export-based registry migration (export → import into a fresh deployment) silently loses admin-authored rules and re-seeding yields only the 15 baseline rows.
@@ -148,4 +149,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
   summary: `prisma/seed-essential.ts` rule wiring has no executable verification — only `prisma/seed.ts` (both partitions) is pinned by `tests/api/seed-partition.test.ts` child-process runs; a regression that drops `seedCrossFieldRules` from the essential partition would pass every suite.
   evidence: Finding 12 (VG-V4, pre-verified) at review — `seedCrossFieldRules` itself is pinned (15-row count + drift behavior via the seed.ts runs and `tests/unit/rule-engine.test.ts` seed completeness), so residual risk is the one call site in `seed-essential.ts` only; a third child-process seed run was judged to outweigh that residual risk. Revisit if the essential partition gains rule-dependent behavior.
+
+
+## From Review (2026-09-18, DQR P10-3)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p3-rule-admin-ui-cutover.md`
+  summary: `tests/e2e-baseline/rules-admin-authoring.spec.ts` leaves persistent mutations in the shared baseline DB (the authored 5000-cap rule stays ACTIVE; the seeded `population-under5-plus-pregnant-exceeds-total` message is permanently rewritten), unlike the suite's usual truncate-per-run hygiene maintained by global-setup re-seeding.
+  evidence: BH-13 at review, maybe-false today — no current baseline spec collides (gates green; assessment-drift stays under 5000 and does not assert the seeded message text), but any future POPULATION spec that drives a sum above 5000 or asserts the seeded message would break non-deterministically. Settle when adding new POPULATION baseline specs: audit their assertions against these two durable rows, or add a cleanup step to this spec.
 
