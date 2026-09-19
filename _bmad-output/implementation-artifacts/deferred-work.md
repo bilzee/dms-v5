@@ -163,3 +163,18 @@
   summary: `tests/e2e-baseline/rules-admin-authoring.spec.ts` leaves persistent mutations in the shared baseline DB (the authored 5000-cap rule stays ACTIVE; the seeded `population-under5-plus-pregnant-exceeds-total` message is permanently rewritten), unlike the suite's usual truncate-per-run hygiene maintained by global-setup re-seeding.
   evidence: BH-13 at review, maybe-false today — no current baseline spec collides (gates green; assessment-drift stays under 5000 and does not assert the seeded message text), but any future POPULATION spec that drives a sum above 5000 or asserts the seeded message would break non-deterministically. Settle when adding new POPULATION baseline specs: audit their assertions against these two durable rows, or add a cleanup step to this spec.
 
+
+## From Review (2026-09-19, DQR P10-4)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p4-sync-hardening-signals-popup.md`
+  summary: Assessment `delete` sync changes remain id-conflated — the batch route still gates deletes on `entityUuid` being an assigned ENTITY id while the consumer resolves deletes by that slot as an assessment ROW id, so any future delete producer is mis-gated at the route or mis-resolved in the consumer (the exact mismatch 4c fixed for updates).
+  evidence: BH at review, pre-existing — no assessment-delete producer exists client-side (assessment-offline.service exposes create/update only), and the spec's Never scoped 4c to updates ("Create/delete/entity changes keep the original gate"). Fix belongs to the pass that first ships a delete producer: pick one id semantics for the slot (row id like updates + route exemption + per-entry owner guard, mirroring the G1 pattern).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p4-sync-hardening-signals-popup.md`
+  summary: `CommitmentService.createCommitment` — where the 5a donor-linked-user fix landed — has no production callers; the live commitment surface (`src/app/api/v1/donors/[id]/commitments/route.ts`) creates rows via Prisma directly and already dispatches its signal with `donorId: user.id`, so the service's corrected semantics are correct-but-unreachable until callers adopt it.
+  evidence: VG-O2 at review, verified by grep (only client-side mutations call the API; no src file invokes the service method). Fix belongs to a service-consolidation pass: route the live endpoint through `CommitmentService.createCommitment` (or port the resolveDonorLinkedUserId skip+log semantics into the route) so both creation paths share one donor-branch dispatch contract.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p4-sync-hardening-signals-popup.md`
+  summary: `AssessmentOfflineService.updateAssessment`'s online-first attempt always 405s — it calls `apiPost(url, { _method: 'PATCH' })` but `apiPost` only issues POST and the rapid-assessments route exports GET/PUT/DELETE, so every client assessment update silently flows through the offline queue (making the offline producer the only functioning update channel).
+  evidence: VG-O3 at review, pre-existing (the apiPost call predates this story; the diff touched only its catch branch). Fix belongs to an API-client pass: add PATCH support to `apiPost` honoring `_method` (or switch the call to a PUT-shaped helper) and pin the online-first path with a test.
+

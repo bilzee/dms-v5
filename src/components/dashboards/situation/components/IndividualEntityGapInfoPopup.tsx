@@ -4,7 +4,7 @@ import React from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CheckCircle, AlertTriangle, AlertCircle, Info, X, BarChart3, UserCheck, Eye, Heart, Wheat, Droplets, Home, Shield } from '@/lib/icons';
+import { AlertTriangle, Info, X, BarChart3, UserCheck, Eye, Heart, Wheat, Droplets, Home, Shield } from '@/lib/icons';
 import type { SummaryQuestionMeta } from '@/lib/questions/gap-summary';
 
 interface IndividualEntityGapInfoPopupProps {

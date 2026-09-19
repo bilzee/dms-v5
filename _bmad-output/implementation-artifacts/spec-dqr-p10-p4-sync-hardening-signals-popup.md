@@ -2,7 +2,7 @@
 title: 'DQR P10-4 — Offline Sync Hardening, Commitment Donor Signal, Registry Gap Popup'
 type: 'bugfix'
 created: '2026-09-19'
-status: 'in-progress'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '047d67ca64fd609bc05ebf2d791b6f067c7cb450'
 review_loop_iteration: 0
@@ -92,9 +92,42 @@ context:
 
 ## Review Triage Log
 
+Verdicts (BH=blind-hunter, EC=edge-case-hunter, VG=verification-gap pre-verified, VG-O=VG other findings):
+
+- [BH/EC/VG/VG-O] Raw (answers-free) offline update path has no ownership check; the route exemption (route.ts:43-46) makes it reachable by any authenticated user who also controls `versionNumber`, and writes client `priority` — **high** — verified at sync-processing.service.ts:241-251 (owner guard lives only in `updateOfflineAssessment`, answers path); the route/spec claim of downstream per-entry authz is false for this path. → patch (guard + non-owner tests, G1)
+- [BH] `assertAssignmentForTargets` incidentId is a dead parameter — **false** — the no-op is documented in the docstring and spec notes ("gate keys off entityId"); both call sites pass `entityId: data.entityId || existing.entityId`, so an incident-only invocation with no entity gate never occurs.
+- [BH] Authorizer duplicates `isUserAssigned`/`canCreateAssessment` with weaker semantics (no isActive, any role) — **false** — `withAuth` rejects inactive users (middleware.ts:39) before the authorizer runs; the role-breadth difference from the *creation* gate has no demonstrated bad outcome for an owner re-pointing an assessment they already own.
+- [BH] Fragile 'authorized' substring→403 contract — **low** — pre-existing route convention, spec-sanctioned (Code Map documents it); the two new throw sites follow the tested phrasing. Rejected: everyday use unaffected, typed-ApiError migration exceeds a direct correction.
+- [BH/EC] Donor resolution can pick an arbitrary user (findFirst on org/name/username, case-sensitive email) — **medium** — verified at commitment.service.ts:185-210: free-text `organization`/`name` matches return an arbitrary first user as push recipient. → patch (unique-match required + insensitive email, G3b)
+- [BH/EC] `resolveDonorLinkedUserId` runs outside the signal-isolation try/catch — **medium** — verified at commitment.service.ts:250-255: a lookup throw 500s after `donorCommitment.create` persisted, defeating the catch's isolation contract. → patch (move inside guarded region, G3a)
+- [BH] Producer version handshake stalls at 2 (`decryptedData.version` never populated) — **medium** — verified at assessment-offline.service.ts:115: offline records carry `versionNumber` (API shape) or nothing, so `(undefined || 1) + 1 = 2` always; conflict detection silently weakens. → patch (G2)
+- [BH] Delete-branch row-id/entity-uuid conflation left unresolved — **low (defer)** — pre-existing (no assessment-delete producer exists; spec scoped 4c to updates); recorded in deferred-work.
+- [BH/EC] Only HEALTH wired to popup; other presentation configs dead — **low** — single render site (CoordinatorPanelLayout) is health-context; pre-diff call also defaulted to health (no regression); spec's Never pins presentation config static. Rejected.
+- [BH] `CheckCircle`/`AlertCircle` unused imports in popup — **low** — verified (import line 7 only). → patch (trivial deletion, G6)
+- [BH] Additive flag-merge block duplicated in create/update offline — **low** — verbatim duplication is real but harm is speculative ("before a third key appears"); extraction is refactoring beyond a direct correction. Rejected.
+- [BH] 4b/4d SyncConflict rows overload LAST_WRITE_WINS semantics — **low** — `resolutionMethod` is a plain String and `winningVersion` already labels `{rejected: …}` / message carries 'Re-point rejected'; coordinator-facing impact minimal, distinct disposition exceeds a direct correction. Rejected.
+- [BH] Missing compensating-control tests (non-owner update; flag on update path; incident-only online re-point; 4b non-string variants) — non-owner and update-flag parts carried by G1/G4; incident-only online re-point runs the identical authorizer path already exercised — **low**, rejected; 4b non-string variants fall through to per-entry failed (never-reject holds) — **low**, rejected.
+- [BH] Spec metadata inconsistent (status/empty logs/expected-only Verification) — **false** — status was flipped to in-review per step-04 before review launch (reviewer read the committed snapshot); empty Spec Change/Triage logs are workflow-stage-correct; Verification commands + outcomes live in the evidence log.
+- [BH] Popup description fallback echoes label when both gap fields null — **low** — registry GAP questions carry gapMeaning by convention (fixture + seeds); duplicate text in a degenerate case. Rejected.
+- [EC] Update→create fallthrough mislabels row-absence as 'missing-incidentId' — **low** — pre-4b behavior corrupted the incident FK in the same corner; a flagged conflict is strictly better, mislabel only affects an already-broken reconciliation. Rejected.
+- [EC] `__proto__` answer key mutates the transient normalized object's prototype / drops the answer — **low** — JSON.parse own-property + assignment changes only that local object's prototype (no global pollution); impact is a malicious client dropping its own answer. Rejected.
+- [VG] V1 raw-path authorization hole untested and real — **high** (pre-verified) → patch (G1).
+- [VG] V2 4a flag unpinned on offline UPDATE path (create pinned; cross-field sibling proves the pattern) — **medium** (pre-verified) → patch (G4).
+- [VG] V3 producer change executed by no test anywhere — **medium** (pre-verified) → patch (G2, with B7 version fix).
+- [VG] V4 panel→popup registry wiring untested; dropped prop silently regresses to the neutral fallback — **low** (pre-verified, disposition patch small, test-only) → patch (G5).
+- [VG-O] VO1 raw-path defect incl. client `priority` — **high** (verified) → G1 (guard closes the unauthorized vector; owner-supplied `priority` on the raw path is pre-existing behavior left to the deferred priority-derivation rulings).
+- [VG-O] VO2 `createCommitment` has no src callers; live route (`donors/[id]/commitments`) already passes user id — **low (defer)** — fix was plan-mandated and correct for the code it covers; dead-path status is pre-existing. Recorded in deferred-work.
+- [VG-O] VO3 online-first `apiPost(_method:'PATCH')` always 405s (apiPost is POST-only; route exports GET/PUT/DELETE) — pre-existing, unchanged by this diff — **defer**.
+
+Groups & routing: **G1** high {raw-path hole + tests} → patch; **G2** medium {version stall + producer test} → patch; **G3a** medium {isolation} → patch; **G3b** medium {ambiguous recipient} → patch; **G4** medium {update-path flag test} → patch; **G5** low {panel wiring test} → patch (test-only); **G6** low {unused imports} → patch (trivial). Defers: delete-branch conflation; dead `createCommitment` path; PATCH-405 online-first. No intent_gap, no bad_spec → no loopback; step-03 subagent no longer continuable (session compacted away), patches applied in-session per step-04 fallback.
+
 ## Verification
 
 **Commands:**
 - `npx jest --config jest.api.config.js tests/api/sync-hardening.test.ts tests/api/rapid-assessment-update-authz.test.ts tests/api/commitment-donor-signal.test.ts --collectCoverage=false` -- expected: all green
 - `npx jest tests/unit/offline-answers.test.ts tests/unit/components/IndividualEntityGapInfoPopup.test.tsx --collectCoverage=false` -- expected: all green
 - `npm run lint && npm run type-check && npm run test:unit && npm run db:push:test && npm run test:api && npm run test:baseline:e2e && npm run build` -- expected: full chain green
+
+**Outcomes:**
+- Story gates (pre-review, 2026-09-19): all three commands green (transcripts in `dqr-p10-4-sync-hardening.log`; first chain attempt hit a machine-load `assessment-edit.test.ts` beforeAll timeout — suite green in isolation, full chain then green end-to-end).
+- Post-review-patch re-run (2026-09-19): `npx tsc --noEmit` clean; unit 4 suites green incl. the new `tests/unit/assessment-offline-producer.test.ts` (G2/V3) and `tests/unit/components/EntityAssessmentPanel.gap-popup.test.tsx` (G5/V4) — 50 tests; api 3 suites green incl. the new G1 non-owner and G4 update-path-flag tests — 12 tests; full gate chain (lint → type-check → test:unit → db:push:test → test:api → test:baseline:e2e → build) `ALL_GATES_GREEN` (transcript appended to `dqr-p10-4-sync-hardening.log`).

@@ -279,4 +279,134 @@ describe('P10-4 offline sync hardening (4a/4b/4c/4d)', () => {
     })
     expect(conflictRow.resolutionMethod).toBe('LAST_WRITE_WINS')
   })
+
+  test('G1 (review): non-owner update — raw (answers-free) AND answers paths are per-entry failed, row untouched, batch never 4xx', async () => {
+    const rowId = `p104-g1-${Date.now()}`
+    await postBatch([
+      {
+        type: 'assessment',
+        action: 'create',
+        data: createData(rowId, { [stableKey]: 'owner answer' }),
+        versionNumber: 1,
+        entityUuid: entityId,
+        offlineId: rowId,
+      },
+    ])
+
+    const foreign = (await createUser({ roles: ['ASSESSOR'] })) as AuthedUser
+    // Attacker-controlled version number — must not bypass ownership.
+    const response = await postBatch(
+      [
+        {
+          type: 'assessment',
+          action: 'update',
+          versionNumber: 999999,
+          entityUuid: rowId,
+          offlineId: rowId,
+          // Raw path: NO answers key — previously reached prisma.update unguarded.
+          data: { location: 'hijacked', priority: 'CRITICAL' },
+        },
+        {
+          type: 'assessment',
+          action: 'update',
+          versionNumber: 999999,
+          entityUuid: rowId,
+          offlineId: rowId,
+          data: {
+            type: 'WASH',
+            entityId,
+            incidentId,
+            structureVersion: 2,
+            answers: { [stableKey]: 'hijack attempt' },
+          },
+        },
+      ],
+      foreign
+    )
+    // Never-reject: enforcement is per-entry, never a batch-level 4xx/5xx.
+    expect([200, 207]).toContain(response.status)
+    const body = await response.json()
+    expect(body.data.summary).toEqual({
+      totalProcessed: 2,
+      successful: 0,
+      conflicts: 0,
+      failed: 2,
+    })
+    for (const result of body.data.results) {
+      expect(result).toMatchObject({ status: 'failed', serverId: '' })
+      expect(result.message).toMatch(/authorized/i)
+    }
+
+    // The victim row is untouched: location, answers, priority, version.
+    const stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: rowId } })
+    expect(stored.location).toBe('Offline location')
+    expect(stored.priority).not.toBe('CRITICAL')
+    expect(stored.answers).toEqual({ [stableKey]: 'owner answer' })
+    expect(stored.versionNumber).toBe(1)
+  })
+
+  test('G4 (review): unparseable MULTI_SELECT replay on the UPDATE path persists verbatim + flags gapAnalysis (create path pinned above)', async () => {
+    const rowId = `p104-g4-${Date.now()}`
+    await postBatch([
+      {
+        type: 'assessment',
+        action: 'create',
+        data: createData(rowId, { [stableKey]: 'v1' }),
+        versionNumber: 1,
+        entityUuid: entityId,
+        offlineId: rowId,
+      },
+    ])
+
+    // Clean update: parseable replay normalizes and writes NO flag key (additive).
+    await postBatch([
+      {
+        type: 'assessment',
+        action: 'update',
+        versionNumber: 2,
+        entityUuid: rowId,
+        offlineId: rowId,
+        data: {
+          type: 'WASH',
+          entityId,
+          incidentId,
+          structureVersion: 2,
+          answers: { [stableKey]: 'v2', [multiSelectKey]: '["Borehole"]' },
+        },
+      },
+    ])
+    let stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: rowId } })
+    expect((stored.answers as Record<string, unknown>)[multiSelectKey]).toEqual(['Borehole'])
+    expect(
+      (stored.gapAnalysis as Record<string, unknown>).answerNormalizationFlags
+    ).toBeUndefined()
+
+    // Dirty update: unparseable replay persists VERBATIM and is flagged on the
+    // updated row — the exact drift-replay scenario 4a was written for.
+    const raw = 'still not json {'
+    await postBatch([
+      {
+        type: 'assessment',
+        action: 'update',
+        versionNumber: 3,
+        entityUuid: rowId,
+        offlineId: rowId,
+        data: {
+          type: 'WASH',
+          entityId,
+          incidentId,
+          structureVersion: 2,
+          answers: { [stableKey]: 'v3', [multiSelectKey]: raw },
+        },
+      },
+    ])
+    stored = await testDb.rapidAssessment.findUniqueOrThrow({ where: { id: rowId } })
+    expect((stored.answers as Record<string, unknown>)[multiSelectKey]).toBe(raw)
+    const gap = stored.gapAnalysis as {
+      answerNormalizationFlags?: Array<{ key: string; message: string }>
+    }
+    expect(gap.answerNormalizationFlags).toEqual([
+      { key: multiSelectKey, message: expect.stringContaining(multiSelectKey) },
+    ])
+  })
 })

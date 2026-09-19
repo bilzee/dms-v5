@@ -176,6 +176,11 @@ export class CommitmentService {
    * heuristic (contactEmail → organization → name → username), reused here in
    * reverse. Returns null when no user matches (donor branch is skipped).
    */
+  // P10-4 review (G3b) — this picks a PUSH recipient, so a heuristic match
+  // must be unambiguous: email matches case-insensitively, and the free-text
+  // organization/name/username fallbacks resolve only when EXACTLY ONE user
+  // matches (an ambiguous match skips the donor branch instead of notifying
+  // an arbitrary user).
   private async resolveDonorLinkedUserId(donor: {
     id: string;
     contactEmail?: string | null;
@@ -184,29 +189,29 @@ export class CommitmentService {
   }): Promise<string | null> {
     if (donor.contactEmail) {
       const byEmail = await prisma.user.findFirst({
-        where: { email: donor.contactEmail },
+        where: { email: { equals: donor.contactEmail, mode: 'insensitive' } },
         select: { id: true }
       });
       if (byEmail) return byEmail.id;
     }
     if (donor.organization) {
-      const byOrganization = await prisma.user.findFirst({
-        where: { organization: donor.organization },
+      const byOrganization = await prisma.user.findMany({
+        where: { organization: { equals: donor.organization, mode: 'insensitive' } },
         select: { id: true }
       });
-      if (byOrganization) return byOrganization.id;
+      if (byOrganization.length === 1) return byOrganization[0].id;
     }
     if (donor.name) {
-      const byName = await prisma.user.findFirst({
-        where: { name: donor.name },
+      const byName = await prisma.user.findMany({
+        where: { name: { equals: donor.name, mode: 'insensitive' } },
         select: { id: true }
       });
-      if (byName) return byName.id;
-      const byUsername = await prisma.user.findFirst({
+      if (byName.length === 1) return byName[0].id;
+      const byUsername = await prisma.user.findMany({
         where: { username: donor.name },
         select: { id: true }
       });
-      if (byUsername) return byUsername.id;
+      if (byUsername.length === 1) return byUsername[0].id;
     }
     return null;
   }
@@ -246,15 +251,18 @@ export class CommitmentService {
     // P10-4 (5a) — the signal engine's donor branch expects a recipient USER
     // id; `data.donorId` is a Donor ORG id whose FK failure killed the later
     // responder rows. Resolve the linked user (users/me/donor heuristic in
-    // reverse) or skip the donor branch with a log when unlinked.
-    const donorUserId = await this.resolveDonorLinkedUserId(donor);
-    if (!donorUserId) {
-      console.warn(
-        `[CommitmentService] donor ${data.donorId} has no linked user — skipping donor-branch signal for commitment ${commitment.id}`
-      );
-    }
-
+    // reverse) or skip the donor branch with a log when unlinked. Review
+    // (G3a): the resolution lives INSIDE the isolation guard — a lookup
+    // failure must degrade to a skipped donor branch, never reject the
+    // request after the commitment row has already been persisted.
+    let donorUserId: string | null = null;
     try {
+      donorUserId = await this.resolveDonorLinkedUserId(donor);
+      if (!donorUserId) {
+        console.warn(
+          `[CommitmentService] donor ${data.donorId} has no linked user — skipping donor-branch signal for commitment ${commitment.id}`
+        );
+      }
       const { ActionSignalService } = await import('@/lib/services/action-signal.service');
       await ActionSignalService.evaluateAndGenerate({
         trigger: 'commitment-created',

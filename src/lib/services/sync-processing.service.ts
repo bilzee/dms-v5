@@ -173,6 +173,19 @@ export class SyncProcessingService {
         )
       }
 
+      // P10-4 review (G1) — assessment updates are exempt from the route's
+      // entity-uuid gate (4c), so the consumer must enforce assessor-own
+      // ownership here, ahead of BOTH update paths (the answers path used to
+      // be the only one guarded). Per-entry failed, never a batch 4xx.
+      if (existing.assessorId !== userId) {
+        return {
+          offlineId: change.offlineId,
+          serverId: '',
+          status: 'failed',
+          message: 'Not authorized to update this assessment'
+        }
+      }
+
       if (existing.versionNumber > change.versionNumber) {
         return SyncProcessingService.handleConflict(change, existing)
       }

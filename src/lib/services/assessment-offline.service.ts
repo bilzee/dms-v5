@@ -112,7 +112,14 @@ export class AssessmentOfflineService {
           {
             ...offlineUpdate,
             ...(entityId ? { entityId } : {}),
-            version: (existing?.decryptedData?.version || 1) + 1
+            // P10-4 review (G2) — API-hydrated offline rows carry
+            // `versionNumber`; `version` only exists on queue-shaped records.
+            // Derive from whichever is present so consecutive offline edits
+            // advance the version instead of stalling at 2.
+            version:
+              (existing?.decryptedData?.versionNumber ??
+                existing?.decryptedData?.version ??
+                1) + 1
           },
           5
         )
