@@ -200,6 +200,7 @@ The project uses a multi-layer testing strategy with Playwright for end-to-end t
 ```
 tests/
   e2e/              # Playwright end-to-end tests
+  e2e-baseline/     # Registry-driven baseline E2E suite (own database, see below)
   smoke/            # Smoke tests for critical paths
   unit/             # Jest unit tests
     services/       # Service layer unit tests
@@ -207,6 +208,40 @@ tests/
   integration/      # Integration tests
   schema-validation.test.ts  # Schema validation tests
 ```
+
+### Test Database Separation and Concurrent Runs (DQR P10-5)
+
+The Jest API suite (`npm run test:api`) and the Playwright baseline E2E suite
+(`npm run test:baseline:e2e`) each truncate and reseed their database in
+setup, so they historically had to run sequentially against the shared
+`drms_test` database. The E2E suite can now be pointed at a dedicated
+database via `E2E_DATABASE_URL`:
+
+```bash
+# One-time provisioning of the dedicated e2e database (same postgres instance,
+# localhost:5435 — creates drms_e2e if missing):
+npm run db:push:e2e
+
+# Run the API suite (drms_test) and the baseline E2E suite (drms_e2e)
+# CONCURRENTLY — neither truncates the other's data:
+E2E_DATABASE_URL="postgresql://dms_dev:dev_password_change_in_prod@localhost:5435/drms_e2e?schema=public" \
+  npm run test:baseline:e2e &
+npm run test:api
+wait
+```
+
+Behavior and rollback safety:
+
+- With `E2E_DATABASE_URL` set, both the Playwright `webServer` (the spawned
+  `next dev`) and the global setup seed/truncate target that URL. The
+  global-setup guard accepts `drms_test` or `drms_e2e` and refuses anything
+  else.
+- With `E2E_DATABASE_URL` unset, the E2E suite targets `drms_test` exactly as
+  before — all sequential scripts (`npm run test:baseline:all`, the gate
+  chain) keep working unchanged.
+- The API suite's guard (`tests/setup-api.ts`) still hard-requires
+  `drms_test`; the two suites can never be pointed at the same database by
+  accident.
 
 ---
 

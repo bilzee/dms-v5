@@ -1,0 +1,28 @@
+=== DQR P10-5 governed catalog polish against http://localhost:3101 ===
+server responding
+login OK (admin@dms.gov.ng)
+versions BEFORE: {"FOOD":{"s":1,"c":1},"WASH":{"s":1,"c":1},"SHELTER":{"s":1,"c":1},"SECURITY":{"s":1,"c":1},"HEALTH":{"s":1,"c":1},"POPULATION":{"s":1,"c":1}}
+PUT FOOD:isFoodSufficient -> 200 label="Sufficient Food" version=1
+PUT FOOD:hasInfantNutrition -> 200 label="Available Infant Nutrition" version=1
+PUT WASH:isWaterSufficient -> 200 label="Sufficient Water" version=1
+PUT WASH:areLatrinesSufficient -> 200 label="Sufficient Latrines" version=1
+PUT WASH:hasHandwashingFacilities -> 200 label="Available Handwashing Facilities" version=1
+PUT SHELTER:areSheltersSufficient -> 200 label="Sufficient Shelters" version=1
+PUT SECURITY:vulnerableGroupsHaveAccess -> 200 label="Vulnerable Groups Access" version=1
+PUT WASH:waterSource -> 200 label="Water Sources" version=1 option[River/Stream].label="River / Stream"
+versions AFTER:  {"FOOD":{"s":1,"c":3},"WASH":{"s":1,"c":5},"SHELTER":{"s":1,"c":2},"SECURITY":{"s":1,"c":2},"HEALTH":{"s":1,"c":1},"POPULATION":{"s":1,"c":1}}
+PASS FOOD: contentVersion 1 -> 3 (expected +2: one bump per governed edit), structureVersion 1 -> 1 (expected unchanged)
+PASS WASH: contentVersion 1 -> 5 (expected +4: one bump per governed edit), structureVersion 1 -> 1 (expected unchanged)
+PASS SHELTER: contentVersion 1 -> 2 (expected +1: one bump per governed edit), structureVersion 1 -> 1 (expected unchanged)
+PASS SECURITY: contentVersion 1 -> 2 (expected +1: one bump per governed edit), structureVersion 1 -> 1 (expected unchanged)
+PASS HEALTH (untouched): 1/1 -> 1/1 (expected unchanged)
+PASS POPULATION (untouched): 1/1 -> 1/1 (expected unchanged)
+PASS WASH:waterSource option value "River/Stream" frozen, label "River / Stream"
+PASS FOOD:isFoodSufficient label = "Sufficient Food" (expected "Sufficient Food")
+PASS FOOD:hasInfantNutrition label = "Available Infant Nutrition" (expected "Available Infant Nutrition")
+PASS WASH:isWaterSufficient label = "Sufficient Water" (expected "Sufficient Water")
+PASS WASH:areLatrinesSufficient label = "Sufficient Latrines" (expected "Sufficient Latrines")
+PASS WASH:hasHandwashingFacilities label = "Available Handwashing Facilities" (expected "Available Handwashing Facilities")
+PASS SHELTER:areSheltersSufficient label = "Sufficient Shelters" (expected "Sufficient Shelters")
+PASS SECURITY:vulnerableGroupsHaveAccess label = "Vulnerable Groups Access" (expected "Vulnerable Groups Access")
+=== POLISH EXERCISE GREEN ===

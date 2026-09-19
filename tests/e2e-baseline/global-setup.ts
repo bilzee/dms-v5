@@ -9,9 +9,11 @@ import { seedCrossFieldRules } from '../../prisma/seed-rules'
 /**
  * Playwright globalSetup for the E2E baseline suite.
  *
- * 1. Forces DATABASE_URL/JWT_SECRET from .env.test (overriding ambient env)
- *    and hard-guards that the URL targets drms_test.
- * 2. Truncates drms_test and seeds roles + one user per golden-journey role
+ * 1. Forces DATABASE_URL/JWT_SECRET from .env.test (overriding ambient env),
+ *    then applies E2E_DATABASE_URL when set (P10-5: dedicated drms_e2e
+ *    database, enabling concurrent runs with the api suite on drms_test),
+ *    and hard-guards that the URL targets drms_test or drms_e2e.
+ * 2. Truncates the target database and seeds roles + one user per golden-journey role
  *    (including ADMIN for the registry-editor surface), the question
  *    registry + the 15 seeded cross-field rules (the rules-admin-authoring
  *    spec edits a seeded rule through the real admin UI), one entity, one
@@ -37,10 +39,17 @@ function forceEnvTestFile(): void {
 export default async function globalSetup(): Promise<void> {
   forceEnvTestFile()
 
+  // E2E_DATABASE_URL wins over .env.test so the suite can be pointed at the
+  // dedicated drms_e2e database (webServer env in playwright.baseline.config.ts
+  // applies the same selection for the dev server it spawns).
+  if (process.env.E2E_DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.E2E_DATABASE_URL
+  }
+
   const databaseUrl = process.env.DATABASE_URL || ''
-  if (!databaseUrl.includes('drms_test')) {
+  if (!/(drms_test|drms_e2e)(\?|$)/.test(databaseUrl)) {
     throw new Error(
-      `Refusing to run E2E baseline: DATABASE_URL must target drms_test (got: "${databaseUrl}").`
+      `Refusing to run E2E baseline: DATABASE_URL must target drms_test or drms_e2e (got: "${databaseUrl}"). `
     )
   }
 
@@ -140,7 +149,7 @@ export default async function globalSetup(): Promise<void> {
     })
 
     console.log(
-      `[e2e-baseline] seeded drms_test: ${roleNames.length} roles, ${Object.keys(BASELINE_USERS).length} users, question registry + 15 cross-field rules, 1 entity, 1 ACTIVE incident`
+      `[e2e-baseline] seeded ${databaseUrl.match(/drms_[a-z0-9]+/)?.[0] ?? databaseUrl}: ${roleNames.length} roles, ${Object.keys(BASELINE_USERS).length} users, question registry + 15 cross-field rules, 1 entity, 1 ACTIVE incident`
     )
   } finally {
     await db.$disconnect()

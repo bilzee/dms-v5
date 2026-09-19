@@ -1,0 +1,16 @@
+=== DQR P10-5 round-trip check against drms_e2e ===
+PASS FOOD:isFoodSufficient label = "Sufficient Food" (expected "Sufficient Food")
+PASS FOOD:hasInfantNutrition label = "Available Infant Nutrition" (expected "Available Infant Nutrition")
+PASS WASH:isWaterSufficient label = "Sufficient Water" (expected "Sufficient Water")
+PASS WASH:areLatrinesSufficient label = "Sufficient Latrines" (expected "Sufficient Latrines")
+PASS WASH:hasHandwashingFacilities label = "Available Handwashing Facilities" (expected "Available Handwashing Facilities")
+PASS SHELTER:areSheltersSufficient label = "Sufficient Shelters" (expected "Sufficient Shelters")
+PASS SECURITY:vulnerableGroupsHaveAccess label = "Vulnerable Groups Access" (expected "Vulnerable Groups Access")
+PASS WASH:waterSource option value "River/Stream" frozen, label "River / Stream" (expected "River / Stream")
+PASS HEALTH versions = 1/1 (expected 1/1 fresh-seed baseline)
+PASS FOOD versions = 1/1 (expected 1/1 fresh-seed baseline)
+PASS WASH versions = 1/1 (expected 1/1 fresh-seed baseline)
+PASS SHELTER versions = 1/1 (expected 1/1 fresh-seed baseline)
+PASS SECURITY versions = 1/1 (expected 1/1 fresh-seed baseline)
+PASS POPULATION versions = 1/1 (expected 1/1 fresh-seed baseline)
+=== ROUND-TRIP GREEN ===

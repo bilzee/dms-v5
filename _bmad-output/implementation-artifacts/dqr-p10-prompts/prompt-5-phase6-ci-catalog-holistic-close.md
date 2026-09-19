@@ -20,7 +20,7 @@ Prompt 5 of 5 — deliberately last: catalog polish is Tier A content churn that
 
 ### 1. E2E database separation — P4
 
-Give e2e its own database (`drms_e2e`, port-5436 or a second DB on the same instance): `playwright.baseline.config.ts` web-server env + `tests/helpers` e2e seed target the dedicated DB; `test:api` keeps `drms_test`. Verify `pnpm test:api` and `pnpm test:baseline:e2e` run **concurrently** — transcript → `dqr-p10-5-concurrent-gates.log`. Document in the README test section. Rollback-safe: scripts remain sequential if the env var is absent.
+Give e2e its own database (`drms_e2e`, port-5436 or a second DB on the same instance): `playwright.baseline.config.ts` web-server env + `tests/helpers` e2e seed target the dedicated DB; `test:api` keeps `drms_test`. Verify `npm run test:api` and `npm run test:baseline:e2e` run **concurrently** — transcript → `dqr-p10-5-concurrent-gates.log`. Document in the README test section. Rollback-safe: scripts remain sequential if the env var is absent.
 
 ## Scope — Part B: catalog polish (plan §7 6b)
 
