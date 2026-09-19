@@ -1552,7 +1552,7 @@ async function getEntityLocations(
           INNER JOIN donors d ON dc."donorId" = d.id
           WHERE dc."entityId" = ${entity.id}
             AND dc."incidentId" = ${incidentId}
-          ORDER BY dc."createdAt" DESC
+          ORDER BY dc."commitmentDate" DESC
         ` as unknown as Array<{
           id: string;
           donorName: string;
