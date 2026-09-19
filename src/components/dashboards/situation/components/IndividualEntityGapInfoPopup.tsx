@@ -5,184 +5,71 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle, AlertTriangle, AlertCircle, Info, X, BarChart3, UserCheck, Eye, Heart, Wheat, Droplets, Home, Shield } from '@/lib/icons';
+import type { SummaryQuestionMeta } from '@/lib/questions/gap-summary';
 
 interface IndividualEntityGapInfoPopupProps {
   isOpen: boolean;
   onClose: () => void;
   assessmentType?: 'health' | 'food' | 'wash' | 'shelter' | 'security';
+  /** P10-4 (5b) — live registry projection; GAP rows render the field grid. */
+  questions?: SummaryQuestionMeta[];
 }
 
-export function IndividualEntityGapInfoPopup({ 
-  isOpen, 
-  onClose, 
-  assessmentType = 'health'
+/** Presentation-only config (title/icon/colors stay static; fields are registry-driven). */
+const assessmentPresentation = {
+  health: {
+    title: 'Health Assessment',
+    icon: Heart,
+    color: 'text-red-600',
+    bgColor: 'bg-red-50',
+    borderColor: 'border-red-200'
+  },
+  food: {
+    title: 'Food Security',
+    icon: Wheat,
+    color: 'text-orange-600',
+    bgColor: 'bg-orange-50',
+    borderColor: 'border-orange-200'
+  },
+  wash: {
+    title: 'WASH (Water & Sanitation)',
+    icon: Droplets,
+    color: 'text-blue-600',
+    bgColor: 'bg-blue-50',
+    borderColor: 'border-blue-200'
+  },
+  shelter: {
+    title: 'Shelter Assessment',
+    icon: Home,
+    color: 'text-green-600',
+    bgColor: 'bg-green-50',
+    borderColor: 'border-green-200'
+  },
+  security: {
+    title: 'Security Assessment',
+    icon: Shield,
+    color: 'text-purple-600',
+    bgColor: 'bg-purple-50',
+    borderColor: 'border-purple-200'
+  }
+};
+
+export function IndividualEntityGapInfoPopup({
+  isOpen,
+  onClose,
+  assessmentType = 'health',
+  questions
 }: IndividualEntityGapInfoPopupProps) {
   if (!isOpen) return null;
 
-  const assessmentConfig = {
-    health: {
-      title: 'Health Assessment',
-      icon: Heart,
-      color: 'text-red-600',
-      bgColor: 'bg-red-50',
-      borderColor: 'border-red-200',
-      fields: [
-        {
-          name: 'Medical Supplies',
-          key: 'hasMedicalSupplies',
-          description: 'Availability of medicines, equipment, diagnostic tools, and protective equipment'
-        },
-        {
-          name: 'Trained Staff',
-          key: 'hasTrainedStaff',
-          description: 'Presence of qualified medical personnel and health workers'
-        },
-        {
-          name: 'Functional Clinic',
-          key: 'hasFunctionalClinic',
-          description: 'Operational healthcare facility with basic infrastructure'
-        },
-        {
-          name: 'Emergency Services',
-          key: 'hasEmergencyServices',
-          description: 'Emergency room, trauma care, and emergency medical response capability'
-        },
-        {
-          name: 'Medicine Supply',
-          key: 'hasMedicineSupply',
-          description: 'Availability of essential medicines and medical commodities'
-        },
-        {
-          name: 'Maternal & Child Services',
-          key: 'hasMaternalChildServices',
-          description: 'Prenatal, delivery, postnatal, and pediatric healthcare services'
-        }
-      ]
-    },
-    food: {
-      title: 'Food Security',
-      icon: Wheat,
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-50',
-      borderColor: 'border-orange-200',
-      fields: [
-        {
-          name: 'Food Sufficiency',
-          key: 'isFoodSufficient',
-          description: 'Enough food available to meet population needs'
-        },
-        {
-          name: 'Regular Meal Access',
-          key: 'hasRegularMealAccess',
-          description: 'Consistent access to regular meals throughout the day'
-        },
-        {
-          name: 'Infant Nutrition',
-          key: 'hasInfantNutrition',
-          description: 'Specialized nutrition support for infants and young children'
-        }
-      ]
-    },
-    wash: {
-      title: 'WASH (Water & Sanitation)',
-      icon: Droplets,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-50',
-      borderColor: 'border-blue-200',
-      fields: [
-        {
-          name: 'Water Sufficiency',
-          key: 'isWaterSufficient',
-          description: 'Adequate water quantity for drinking, cooking, and hygiene'
-        },
-        {
-          name: 'Clean Water Access',
-          key: 'hasCleanWaterAccess',
-          description: 'Access to safe, potable water that meets WHO standards'
-        },
-        {
-          name: 'Functional Latrines',
-          key: 'functionalLatrinesAvailable',
-          description: 'Working sanitation facilities that separate waste from human contact'
-        },
-        {
-          name: 'Latrine Sufficiency',
-          key: 'areLatrinesSufficient',
-          description: 'Adequate number of latrines based on population served'
-        },
-        {
-          name: 'Handwashing Facilities',
-          key: 'hasHandwashingFacilities',
-          description: 'Access to handwashing stations with soap and water'
-        }
-      ]
-    },
-    shelter: {
-      title: 'Shelter Assessment',
-      icon: Home,
-      color: 'text-green-600',
-      bgColor: 'bg-green-50',
-      borderColor: 'border-green-200',
-      fields: [
-        {
-          name: 'Shelter Sufficiency',
-          key: 'areSheltersSufficient',
-          description: 'Adequate number of shelters for affected population'
-        },
-        {
-          name: 'Safe Structures',
-          key: 'hasSafeStructures',
-          description: 'Structurally sound buildings that provide protection from elements'
-        },
-        {
-          name: 'Weather Protection',
-          key: 'provideWeatherProtection',
-          description: 'Protection from rain, wind, extreme temperatures, and environmental hazards'
-        },
-        {
-          name: 'Overcrowding',
-          key: 'areOvercrowded',
-          description: 'Appropriate space allocation per person in shelters'
-        }
-      ]
-    },
-    security: {
-      title: 'Security Assessment',
-      icon: Shield,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-50',
-      borderColor: 'border-purple-200',
-      fields: [
-        {
-          name: 'Safety from Violence',
-          key: 'isSafeFromViolence',
-          description: 'Protection from physical harm, violence, and security threats'
-        },
-        {
-          name: 'Security Presence',
-          key: 'hasSecurityPresence',
-          description: 'Availability of security personnel or law enforcement'
-        },
-        {
-          name: 'Protection Reporting',
-          key: 'hasProtectionReportingMechanism',
-          description: 'System for reporting protection concerns and accessing help'
-        },
-        {
-          name: 'Vulnerable Groups Access',
-          key: 'vulnerableGroupsHaveAccess',
-          description: 'Prioritized access to services for women, children, elderly, and persons with disabilities'
-        },
-        {
-          name: 'Lighting',
-          key: 'hasLighting',
-          description: 'Adequate lighting in communal areas and around facilities'
-        }
-      ]
-    }
-  };
+  const config = assessmentPresentation[assessmentType];
 
-  const config = assessmentConfig[assessmentType];
+  // P10-4 (5b) — the field list is the live registry projection (labels and
+  // gap meanings always match the current registry; new GAP questions appear
+  // here without code changes). CONTEXT questions never render.
+  const gapQuestions = (questions ?? [])
+    .filter((question) => question.category === 'GAP')
+    .sort((a, b) => a.order - b.order);
 
   return (
     <div className="fixed inset-0 bg-black flex items-center justify-center z-50 p-4">
@@ -398,16 +285,24 @@ export function IndividualEntityGapInfoPopup({
               </p>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {config.fields.map((field, index) => (
-                  <div key={field.key} className="bg-card rounded border border-blue-200 p-3">
-                    <div className="font-medium text-sm text-foreground mb-1">
-                      {field.name}
+                {gapQuestions.length > 0 ? (
+                  gapQuestions.map((question) => (
+                    <div key={question.key} className="bg-card rounded border border-blue-200 p-3">
+                      <div className="font-medium text-sm text-foreground mb-1">
+                        {question.label}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {question.gapMeaning || question.gapLabel || question.label}
+                      </p>
                     </div>
+                  ))
+                ) : (
+                  <div className="bg-card rounded border border-blue-200 p-3 md:col-span-2">
                     <p className="text-xs text-muted-foreground">
-                      {field.description}
+                      Gap indicator definitions are maintained in the question registry; no gap questions are currently published for this assessment type.
                     </p>
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>

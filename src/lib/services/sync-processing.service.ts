@@ -4,6 +4,7 @@ import { RapidAssessmentService } from '@/lib/services/rapid-assessment.service'
 import type { CreateRapidAssessmentInput } from '@/lib/validation/rapid-assessment'
 import type { OfflineSyncWarning } from '@/lib/questions/offline-answers'
 import { resolveSeverityPriority } from '@/lib/severity-inheritance'
+import { assertAssignmentForTargets } from '@/lib/services/entity-assignment.service'
 
 interface SyncChange {
   type: 'assessment' | 'response' | 'entity'
@@ -96,6 +97,29 @@ export class SyncProcessingService {
         }
       }
 
+      // P10-4 (4b) — a create without an incidentId must never fall back to
+      // the entity uuid (that wrote an entity id into the incident FK). It
+      // lands as a per-entry conflict + SyncConflict row — the batch itself
+      // stays 200/207 (never-reject applies to the batch, not the entry).
+      if (!data.incidentId || typeof data.incidentId !== 'string') {
+        await prisma.syncConflict.create({
+          data: {
+            entityType: 'assessment',
+            entityId: change.offlineId || change.entityUuid,
+            resolutionMethod: 'LAST_WRITE_WINS',
+            winningVersion: { rejected: 'missing-incidentId' } as any,
+            losingVersion: change.data as any,
+            coordinatorNotified: false
+          }
+        })
+        return {
+          offlineId: change.offlineId,
+          serverId: '',
+          status: 'conflict',
+          message: 'Assessment create rejected: incidentId is required (no incident reference was provided)'
+        }
+      }
+
       // P5: delegate to the offline ingestion path for full registry
       // processing — CURRENT-snapshot freeze, drift reconciliation with
       // warnings (never-reject), gap analysis + derived priority. Shape-level
@@ -116,7 +140,7 @@ export class SyncProcessingService {
             ? { mediaAttachments: data.mediaAttachments as string[] }
             : {}),
           entityId: (data.entityId as string) || change.entityUuid,
-          incidentId: (data.incidentId as string) || change.entityUuid,
+          incidentId: data.incidentId as string,
           answers:
             data.answers && typeof data.answers === 'object' && !Array.isArray(data.answers)
               ? (data.answers as Record<string, unknown>)
@@ -151,6 +175,30 @@ export class SyncProcessingService {
 
       if (existing.versionNumber > change.versionNumber) {
         return SyncProcessingService.handleConflict(change, existing)
+      }
+
+      // P10-4 (4d) — offline updates that re-point entityId/incidentId run
+      // the shared re-point authorizer. Denial is a per-entry conflict +
+      // SyncConflict row (never a batch-level 4xx), and the row is untouched.
+      const repointsEntity =
+        typeof data.entityId === 'string' && data.entityId !== '' && data.entityId !== existing.entityId
+      const repointsIncident =
+        typeof data.incidentId === 'string' &&
+        data.incidentId !== '' &&
+        data.incidentId !== existing.incidentId
+      if (repointsEntity || repointsIncident) {
+        try {
+          await assertAssignmentForTargets(userId, {
+            entityId: (data.entityId as string) || existing.entityId,
+            incidentId: (data.incidentId as string) || existing.incidentId || undefined
+          })
+        } catch (error) {
+          return SyncProcessingService.handleConflict(
+            change,
+            existing,
+            `Re-point rejected: ${error instanceof Error ? error.message : 'not authorized'}`
+          )
+        }
       }
 
       // P5: answers-carrying updates go through the never-reject ingestion
@@ -442,7 +490,7 @@ export class SyncProcessingService {
     }
   }
 
-  private static async handleConflict(change: SyncChange, existing: any): Promise<SyncResult> {
+  private static async handleConflict(change: SyncChange, existing: any, message?: string): Promise<SyncResult> {
     const conflict = await prisma.syncConflict.create({
       data: {
         entityType: change.type,
@@ -458,7 +506,9 @@ export class SyncProcessingService {
       offlineId: change.offlineId,
       serverId: existing.id,
       status: 'conflict',
-      message: `Version conflict detected: server has v${existing.versionNumber}, offline has v${change.versionNumber}`,
+      message:
+        message ??
+        `Version conflict detected: server has v${existing.versionNumber}, offline has v${change.versionNumber}`,
       conflictData: existing
     }
   }

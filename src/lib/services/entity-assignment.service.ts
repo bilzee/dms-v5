@@ -1,5 +1,45 @@
 import { prisma } from '@/lib/db/client';
 
+/** Targets of an assessment re-point (P10-4 4d). Either is optional. */
+export interface AssignmentTargets {
+  entityId?: string;
+  incidentId?: string;
+}
+
+/**
+ * P10-4 (4d) — shared re-point authorizer for assessment updates, used by BOTH
+ * the online PUT path and the offline sync update branch. COORDINATOR/ADMIN
+ * pass; any other user must hold an EntityAssignment row covering the target
+ * entity. `Incident` has no entity relation in the schema, so `incidentId`
+ * only triggers the check — the gate keys off `entityId` (callers pass the
+ * effective target entity). Throws Error('Not authorized to …'); the online
+ * route maps messages containing 'authorized' to 403, the offline branch
+ * converts the throw into a per-entry conflict (never-reject).
+ */
+export async function assertAssignmentForTargets(
+  userId: string,
+  targets: AssignmentTargets
+): Promise<void> {
+  const { entityId, incidentId } = targets;
+  if (!entityId && !incidentId) return;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { roles: { select: { role: { select: { name: true } } } } }
+  });
+  const roleNames = user?.roles.map((r) => r.role.name) ?? [];
+  if (roleNames.includes('COORDINATOR') || roleNames.includes('ADMIN')) return;
+
+  if (entityId) {
+    const assignment = await prisma.entityAssignment.findFirst({
+      where: { userId, entityId }
+    });
+    if (!assignment) {
+      throw new Error(`Not authorized to update assessments for entity ${entityId}`);
+    }
+  }
+}
+
 export interface EntityAssignmentService {
   /**
    * Check if a user is assigned to a specific entity

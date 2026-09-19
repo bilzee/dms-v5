@@ -98,13 +98,22 @@ export class AssessmentOfflineService {
 
       try {
         const existing = await offlineDB.getAssessment(id)
-        const entityId = assessmentData.entityId || existing?.decryptedData?.entityId || id
+        // P10-4 (4c) — the update producer enqueues the ASSESSMENT ROW id in
+        // the entityUuid slot: the consumer's update branch resolves the row
+        // by that id (`where: { id: change.entityUuid }`). Enqueuing the
+        // entityId made the update branch unreachable; entityId stays in the
+        // payload for the re-point authorizer.
+        const entityId = assessmentData.entityId || existing?.decryptedData?.entityId
 
         await syncEngine.addToQueue(
           'assessment',
           'update',
-          entityId,
-          { ...offlineUpdate, version: (existing?.decryptedData?.version || 1) + 1 },
+          id,
+          {
+            ...offlineUpdate,
+            ...(entityId ? { entityId } : {}),
+            version: (existing?.decryptedData?.version || 1) + 1
+          },
           5
         )
       } catch (queueError) {

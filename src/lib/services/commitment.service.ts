@@ -171,6 +171,47 @@ export class CommitmentService {
   }
 
   /**
+   * P10-4 (5a) — resolves the USER linked to a donor org. The Donor model has
+   * NO userId FK; the app's only donor→user linkage is the `users/me/donor`
+   * heuristic (contactEmail → organization → name → username), reused here in
+   * reverse. Returns null when no user matches (donor branch is skipped).
+   */
+  private async resolveDonorLinkedUserId(donor: {
+    id: string;
+    contactEmail?: string | null;
+    organization?: string | null;
+    name?: string | null;
+  }): Promise<string | null> {
+    if (donor.contactEmail) {
+      const byEmail = await prisma.user.findFirst({
+        where: { email: donor.contactEmail },
+        select: { id: true }
+      });
+      if (byEmail) return byEmail.id;
+    }
+    if (donor.organization) {
+      const byOrganization = await prisma.user.findFirst({
+        where: { organization: donor.organization },
+        select: { id: true }
+      });
+      if (byOrganization) return byOrganization.id;
+    }
+    if (donor.name) {
+      const byName = await prisma.user.findFirst({
+        where: { name: donor.name },
+        select: { id: true }
+      });
+      if (byName) return byName.id;
+      const byUsername = await prisma.user.findFirst({
+        where: { username: donor.name },
+        select: { id: true }
+      });
+      if (byUsername) return byUsername.id;
+    }
+    return null;
+  }
+
+  /**
    * Create a new commitment
    */
   async createCommitment(data: CreateCommitmentData, userId: string) {
@@ -202,6 +243,17 @@ export class CommitmentService {
       }
     });
 
+    // P10-4 (5a) — the signal engine's donor branch expects a recipient USER
+    // id; `data.donorId` is a Donor ORG id whose FK failure killed the later
+    // responder rows. Resolve the linked user (users/me/donor heuristic in
+    // reverse) or skip the donor branch with a log when unlinked.
+    const donorUserId = await this.resolveDonorLinkedUserId(donor);
+    if (!donorUserId) {
+      console.warn(
+        `[CommitmentService] donor ${data.donorId} has no linked user — skipping donor-branch signal for commitment ${commitment.id}`
+      );
+    }
+
     try {
       const { ActionSignalService } = await import('@/lib/services/action-signal.service');
       await ActionSignalService.evaluateAndGenerate({
@@ -209,7 +261,7 @@ export class CommitmentService {
         entityId: data.entityId,
         incidentId: data.incidentId,
         commitmentId: commitment.id,
-        donorId: data.donorId,
+        ...(donorUserId ? { donorId: donorUserId } : {}),
       });
     } catch (e) {
       console.error('[CommitmentService] signal hook error:', e);

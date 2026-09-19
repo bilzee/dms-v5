@@ -471,9 +471,11 @@ export function EntityAssessmentPanel({
       />
       
       {/* Individual Entity Gap Info Popup */}
+      {/* P10-4 (5b) — popup fields render from the live registry projection. */}
       <IndividualEntityGapInfoPopup
         isOpen={showIndividualEntityInfo}
         onClose={() => setShowIndividualEntityInfo(false)}
+        questions={questionMetadata?.HEALTH?.questions}
       />
     </Card>
   );

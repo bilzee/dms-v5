@@ -75,6 +75,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
   summary: Multi-select answers replayed from stale offline queues can arrive as JSON strings (`"[\"Malaria\"]"`) instead of arrays; only the live form guarantees array shape (`coerceArray`).
   evidence: The offline sync path (p5) owns replay serialization; `src/lib/questions/answers.ts` coerces at the form boundary but nothing at the transport/service boundary does. Fix belongs to the p5 offline queue replay work (normalize or reject string-encoded arrays there).
+  status: RESOLVED (2026-09-19, P10-4 4a) — normalization now lives at the transport boundary: exported `normalizeAnswerValues(answers, questionTypes)` in `src/lib/questions/offline-answers.ts` parses JSON-string MULTI_SELECT replays into arrays (idempotent), and `ingestOfflineAnswers` refactors onto it returning `unparsedKeys`. Parseable replays store as arrays with NO flag; unparseable strings persist VERBATIM plus an additive `gapAnalysis.answerNormalizationFlags` entry (written only when non-empty, mirroring `crossFieldViolations`). Pinned by `tests/unit/offline-answers.test.ts` (matrix) and `tests/api/sync-hardening.test.ts` (4a verbatim+flag / clean-unflagged through the real batch route); transcripts in `dqr-p10-4-sync-hardening.log`.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
   summary: The edit page's `fromAnswers(...)` read side is catalog-bound (`src/lib/questions/answers.ts` typed defaults), so reading an assessment whose answers reference renamed/removed registry keys renders blanks even though the snapshot on the row still has the old definitions.
@@ -92,26 +93,31 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p5-offline-sync-draft-migration.md`
   summary: Offline create falls back to `incidentId: (data.incidentId as string) || change.entityUuid`, so a payload without an incident id silently stores an ENTITY id in the incident column.
   evidence: Verbatim baseline line in `sync-processing.service.ts` predating the P5 diff (BH11/E3 at review); pre-P5 offline creates already wrote it, so tightening is a behavior change to the sync owner. Fix: drop the fallback or validate the id shape as an incident.
+  status: RESOLVED (2026-09-19, P10-4 4b) — the `|| change.entityUuid` fallback is dropped; a create without `data.incidentId` is a per-entry CONFLICT (never-reject preserved: batch stays 200/207) with a `SyncConflict` row (`winningVersion: {rejected:'missing-incidentId'}`) and NO assessment row written; sibling entries in the same batch still succeed. Pinned by `tests/api/sync-hardening.test.ts` (4b mixed-batch test).
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p5-offline-sync-draft-migration.md`
   summary: The offline update producer (`assessment-offline.service.ts`) enqueues changes keyed by `entityId`, but the sync update branch resolves rows by row-id `entityUuid` — no current producer can reach the update path.
   evidence: Pre-existing legacy wiring (O-3b at review): the queue stores `entityId` while `processOfflineChange` updates `findUnique({ where: { id: change.entityUuid } })`. Latent until a producer sends update changes; fix by enqueueing the assessment row id.
+  status: RESOLVED (2026-09-19, P10-4 4c) — `assessment-offline.service.ts updateAssessment` now enqueues the assessment ROW id in the entityUuid slot (entityId rides in the payload), and `sync/batch/route.ts` exempts assessment-update changes from the batch entity-uuid gate (their entityUuid slot is a row id; authorization is enforced per-entry downstream — ownership + re-point authorizer → conflict, never a batch 4xx). Pinned end-to-end through the real route by `tests/api/sync-hardening.test.ts` (4c producer-shaped update → answers/versionNumber/SYNCED update).
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p5-offline-sync-draft-migration.md`
   summary: Offline update accepts `data.entityId`/`data.incidentId` without re-validating the syncing user's entity assignment (only assessment ownership is checked).
   evidence: BH12 at review: mirrors the ONLINE update path, which also accepts re-pointed entity/incident ids without assignment checks — accepted parity, not a P5 regression. Fix belongs to a cross-cutting sync-authorization pass covering both paths.
+  status: RESOLVED (2026-09-19, P10-4 4d) — cross-cutting pass landed: shared `assertAssignmentForTargets(userId, {entityId?, incidentId?})` in `entity-assignment.service.ts` (COORDINATOR/ADMIN bypass; otherwise an EntityAssignment row must cover the target entityId) gates BOTH paths — online PUT re-points throw → 403 via the route's 'authorized' mapping; offline update re-points become per-entry conflicts ('Re-point rejected') + SyncConflict rows with the row untouched. Same-entity answer edits stay assessor-own (not re-gated). Pinned by `tests/api/rapid-assessment-update-authz.test.ts` (403/assignment/COORDINATOR/no-re-gate) and `tests/api/sync-hardening.test.ts` (4d offline conflict).
 
 ## From Review (2026-09-16, DQR P6)
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p6-notification-severity-inheritance.md`
   summary: `src/lib/services/commitment.service.ts:212` dispatches `donorId: data.donorId` (a Donor organization id) where the signal engine consumes `payload.donorId` as a recipient USER id — the donor branch of commitment signals FK-fails silently and kills subsequent responder rows in the same evaluator run.
   evidence: Pre-existing, outside the P6 diff (finding #19, defer route). The real API surface (`donors/[id]/commitments/route.ts:326`) passes a user id correctly; only the service-internal caller conflates ids. Fix belongs to the commitment/signal owner: pass the donor's linked user id (or resolve it) at dispatch.
+  status: RESOLVED (2026-09-19, P10-4 5a) — `CommitmentService.createCommitment` resolves the donor's linked USER id before dispatch via private `resolveDonorLinkedUserId` (the `users/me/donor` heuristic in reverse: contactEmail → organization → name → username — the Donor model has no userId FK); the engine now receives a valid user id, or donorId is omitted with a skip log when unlinked (responder rows unaffected). Pinned by `tests/api/commitment-donor-signal.test.ts` (linked: dispatch carries the user id + PARTIAL donor-branch signal for the linked user; unlinked: donorId omitted, no crash, no org-id leak).
 
 ## From Review (2026-09-16, DQR P7)
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p7-dashboard-summaries.md`
   summary: `IndividualEntityGapInfoPopup.tsx:22-183` still carries a hardcoded static field/explanation list (labels + meanings per assessment type) that will drift from the registry's live `gapLabel`/`gapMeaning` values.
   evidence: BH1 at review. The popup is static educational help copy explaining what each gap field means — it is NOT on the P7 summary computation path (summaries derive labels/meanings from the live registry projection, pinned by the new unit/api suites). Rewiring the popup to render from `questionMetadata` belongs with the p9 documentation/read-side pass.
+  status: RESOLVED (2026-09-19, P10-4 5b) — the hardcoded `assessmentConfig.fields` map is deleted; the popup takes `questions?: SummaryQuestionMeta[]` and renders GAP entries from the registry projection (name=label, description=gapMeaning→gapLabel fallback), with a neutral fallback line when metadata is empty/missing; `EntityAssessmentPanel` passes `questionMetadata?.HEALTH?.questions`. Static presentation config (title/icon/colors) and generic help sections unchanged — visual parity with `dqr-p7-dashboard.png` (see `dqr-p10-4-gap-popup.png`). Pinned by `tests/unit/components/IndividualEntityGapInfoPopup.test.tsx` (registry-added GAP question renders with no code changes; CONTEXT excluded; fallback).
 
 ## From Review (2026-09-17, DQR P9)
 

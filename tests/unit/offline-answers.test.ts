@@ -1,6 +1,8 @@
 import {
   ingestOfflineAnswers,
+  normalizeAnswerValues,
   snapshotQuestionKeys,
+  toAnswerNormalizationFlags,
   toOfflineSyncWarnings,
   type OfflineRegistryRow,
 } from '@/lib/questions/offline-answers'
@@ -112,6 +114,24 @@ describe('unit — ingestOfflineAnswers', () => {
     expect(numericArray.answers.commonHealthIssues).toBe('[1, 2]')
   })
 
+  test('P10-4 (4a): unparseable MULTI_SELECT replays surface in unparsedKeys', () => {
+    const flagged = ingestOfflineAnswers(
+      type,
+      { commonHealthIssues: 'not json', hasFunctionalClinic: true, areOvercrowded: true },
+      snapshot,
+      registryRows
+    )
+    expect(flagged.unparsedKeys).toEqual(['commonHealthIssues'])
+
+    const clean = ingestOfflineAnswers(
+      type,
+      { commonHealthIssues: '["Malaria"]', hasFunctionalClinic: true, areOvercrowded: true },
+      snapshot,
+      registryRows
+    )
+    expect(clean.unparsedKeys).toEqual([])
+  })
+
   test('removed: answered keys with an inactive registry row are retained + warned', () => {
     const result = ingestOfflineAnswers(
       type,
@@ -172,7 +192,7 @@ describe('unit — ingestOfflineAnswers', () => {
 
     for (const degenerate of [null, undefined]) {
       const empty = ingestOfflineAnswers(type, degenerate, degenerate, degenerate)
-      expect(empty).toEqual({ answers: {}, warnings: { added: [], removed: [], unknown: [] } })
+      expect(empty).toEqual({ answers: {}, warnings: { added: [], removed: [], unknown: [] }, unparsedKeys: [] })
     }
   })
 
@@ -180,6 +200,73 @@ describe('unit — ingestOfflineAnswers', () => {
     const answers = { hasFunctionalClinic: false, deactivatedQuestion: 1, mysteryKey: [], commonHealthIssues: [], areOvercrowded: true }
     expect(JSON.stringify(ingestOfflineAnswers(type, answers, snapshot, registryRows)))
       .toBe(JSON.stringify(ingestOfflineAnswers(type, answers, snapshot, registryRows)))
+  })
+})
+
+describe('unit — normalizeAnswerValues (P10-4 4a transport boundary)', () => {
+  const types = new Map<string, string>([
+    ['commonHealthIssues', 'MULTI_SELECT'],
+    ['hasFunctionalClinic', 'BOOLEAN'],
+  ])
+
+  test('MULTI_SELECT JSON-string replays normalize to clean string arrays', () => {
+    const result = normalizeAnswerValues(
+      { commonHealthIssues: '["Malaria","Measles"]', hasFunctionalClinic: true },
+      types
+    )
+    expect(result).toEqual({
+      answers: { commonHealthIssues: ['Malaria', 'Measles'], hasFunctionalClinic: true },
+      unparsedKeys: [],
+    })
+  })
+
+  test('unparseable / non-string-array MULTI_SELECT stays verbatim + flagged', () => {
+    for (const bad of ['not json', '"just a string"', '[1, 2]', '[]ok']) {
+      const result = normalizeAnswerValues({ commonHealthIssues: bad }, types)
+      expect(result.answers.commonHealthIssues).toBe(bad)
+      expect(result.unparsedKeys).toEqual(['commonHealthIssues'])
+    }
+  })
+
+  test('non-MULTI_SELECT strings and already-array values pass through untouched', () => {
+    const result = normalizeAnswerValues(
+      { hasFunctionalClinic: 'true', commonHealthIssues: ['Malaria'] },
+      types
+    )
+    expect(result).toEqual({
+      answers: { hasFunctionalClinic: 'true', commonHealthIssues: ['Malaria'] },
+      unparsedKeys: [],
+    })
+  })
+
+  test('null/undefined drop; keys outside the type map pass through unflagged; empty input derives empty', () => {
+    expect(normalizeAnswerValues({ a: null, b: undefined, c: 0 }, types)).toEqual({
+      answers: { c: 0 },
+      unparsedKeys: [],
+    })
+    expect(normalizeAnswerValues(null, types)).toEqual({ answers: {}, unparsedKeys: [] })
+    expect(normalizeAnswerValues(undefined, new Map())).toEqual({ answers: {}, unparsedKeys: [] })
+    const unknownKey = normalizeAnswerValues({ mystery: '[1]' }, types)
+    expect(unknownKey.answers.mystery).toBe('[1]')
+    expect(unknownKey.unparsedKeys).toEqual([])
+  })
+
+  test('idempotent: normalizing an already-normalized map is a no-op', () => {
+    const once = normalizeAnswerValues({ commonHealthIssues: '["Malaria"]' }, types)
+    const twice = normalizeAnswerValues(once.answers, types)
+    expect(twice).toEqual(once)
+  })
+})
+
+describe('unit — toAnswerNormalizationFlags (P10-4 4a additive gapAnalysis flags)', () => {
+  test('maps unparsed keys to flag rows; empty input derives empty', () => {
+    expect(toAnswerNormalizationFlags(['commonHealthIssues'])).toEqual([
+      {
+        key: 'commonHealthIssues',
+        message: expect.stringContaining('commonHealthIssues'),
+      },
+    ])
+    expect(toAnswerNormalizationFlags([])).toEqual([])
   })
 })
 

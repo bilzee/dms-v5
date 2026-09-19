@@ -35,7 +35,13 @@ export const POST = withAuth(async (
 
     const { changes } = validationResult.data;
 
+    // P10-4 (4c) — assessment updates key their entityUuid slot by the
+    // assessment ROW id (the consumer resolves rows by it), so the entity-uuid
+    // gate cannot authorize them here. Authorization is enforced per-entry
+    // downstream: ownership in updateOfflineAssessment, re-point targets via
+    // assertAssignmentForTargets → per-entry conflict (never-reject).
     const unauthorizedEntities = changes
+      .filter(change => change.type !== 'assessment' || change.action !== 'update')
       .filter(change => !entityIds.has(change.entityUuid))
       .map(change => change.entityUuid);
 

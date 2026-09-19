@@ -45,6 +45,15 @@ export interface OfflineIngestResult {
   /** The ingested answers map — every non-null value, verbatim (normalized MULTI_SELECTs included). */
   answers: Record<string, unknown>
   warnings: OfflineIngestWarnings
+  /** MULTI_SELECT keys whose replayed string could not be normalized (stored verbatim, flagged). */
+  unparsedKeys: string[]
+}
+
+/** Result of the shared MULTI_SELECT replay normalization (transport boundary). */
+export interface NormalizedAnswerValues {
+  answers: Record<string, unknown>
+  /** MULTI_SELECT keys whose string value was kept verbatim because it could not parse into a string array. */
+  unparsedKeys: string[]
 }
 
 /** Live registry row projection used for warning classification. */
@@ -83,23 +92,53 @@ function snapshotTypeMap(snapshot: SnapshotLike): Map<string, string> {
 }
 
 /**
- * Normalizes a JSON-string multi-select replay (p4 deferred BH-6):
- * `'["Malaria"]'` → `['Malaria']`. Unparseable or non-array payloads are
- * kept verbatim (never-reject — offline data wins).
+ * Parses a JSON-string multi-select replay (P10-4 / deferred BH-6):
+ * `'["Malaria"]'` → `['Malaria']`. Only a clean string-array replay
+ * normalizes; anything else (unparseable, non-array, or entries the form
+ * could not have produced) fails — filtering in place would silently
+ * discard captured data.
  */
-function normalizeMultiSelect(value: unknown): unknown {
-  if (typeof value !== 'string') return value
+function parseMultiSelectReplay(value: string): { ok: true; values: string[] } | { ok: false } {
   try {
     const parsed: unknown = JSON.parse(value)
-    // Only a clean string-array replay normalizes; anything else (unparseable,
-    // non-array, or entries the form could not have produced) stays verbatim —
-    // filtering in place would silently discard captured data.
-    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')
-      ? parsed
-      : value
+    if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')) {
+      return { ok: true, values: parsed }
+    }
+    return { ok: false }
   } catch {
-    return value
+    return { ok: false }
   }
+}
+
+/**
+ * Shared MULTI_SELECT replay normalization at the offline transport boundary
+ * (idempotent): every non-null answer is kept; MULTI_SELECT keys carrying a
+ * JSON string normalize to arrays, keys whose string cannot parse into a
+ * string array stay VERBATIM (never-reject) and are reported in
+ * `unparsedKeys` so the stored gapAnalysis can flag them.
+ */
+export function normalizeAnswerValues(
+  answers: Record<string, unknown> | null | undefined,
+  questionTypes: ReadonlyMap<string, string>
+): NormalizedAnswerValues {
+  const normalized: Record<string, unknown> = {}
+  const unparsedKeys: string[] = []
+  for (const [key, value] of Object.entries(answers ?? {})) {
+    // Never materialize undefined/null into storage (answers contract parity).
+    if (value === undefined || value === null) continue
+    if (questionTypes.get(key) === 'MULTI_SELECT' && typeof value === 'string') {
+      const replay = parseMultiSelectReplay(value)
+      if (replay.ok) {
+        normalized[key] = replay.values
+      } else {
+        normalized[key] = value
+        unparsedKeys.push(key)
+      }
+    } else {
+      normalized[key] = value
+    }
+  }
+  return { answers: normalized, unparsedKeys }
 }
 
 /**
@@ -119,15 +158,14 @@ export function ingestOfflineAnswers(
     if (row && typeof row.questionKey === 'string') rowByKey.set(row.questionKey, row)
   }
 
+  const { answers: normalizedAnswers, unparsedKeys } = normalizeAnswerValues(answers, types)
+
   const ingested: Record<string, unknown> = {}
   const removed: string[] = []
   const unknown: string[] = []
 
-  for (const [key, value] of Object.entries(answers ?? {})) {
-    // Never materialize undefined/null into storage (answers contract parity).
-    if (value === undefined || value === null) continue
-    const stored = types.get(key) === 'MULTI_SELECT' ? normalizeMultiSelect(value) : value
-    ingested[key] = stored
+  for (const [key, value] of Object.entries(normalizedAnswers)) {
+    ingested[key] = value
 
     const row = rowByKey.get(key)
     if (!row) unknown.push(key)
@@ -145,7 +183,21 @@ export function ingestOfflineAnswers(
   }
 
   void assessmentType
-  return { answers: ingested, warnings: { added, removed, unknown } }
+  return { answers: ingested, warnings: { added, removed, unknown }, unparsedKeys }
+}
+
+/** Stored gapAnalysis flag rows for unparseable MULTI_SELECT replays (additive, written only when non-empty). */
+export interface AnswerNormalizationFlag {
+  key: string
+  message: string
+}
+
+/** Builds the additive `answerNormalizationFlags` gapAnalysis entries. */
+export function toAnswerNormalizationFlags(unparsedKeys: readonly string[]): AnswerNormalizationFlag[] {
+  return unparsedKeys.map((key) => ({
+    key,
+    message: `Answer for "${key}" was captured offline as an unparseable multi-select string; it was stored verbatim.`,
+  }))
 }
 
 /** Builds the drift warning records for one assessment. */

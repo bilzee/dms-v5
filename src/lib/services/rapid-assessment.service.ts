@@ -10,7 +10,9 @@ import { buildAssessmentSchema } from '@/lib/validation/dynamic-assessment'
 import {
   ingestOfflineAnswers,
   toOfflineSyncWarnings,
+  toAnswerNormalizationFlags,
   type OfflineSyncWarning,
+  type AnswerNormalizationFlag,
 } from '@/lib/questions/offline-answers'
 import {
   analyzeGaps,
@@ -23,6 +25,7 @@ import type { QuestionSnapshot } from '@/lib/questions/question-snapshot'
 import { ApiError } from '@/types/api'
 import { QuestionRegistryService } from '@/lib/services/question-registry.service'
 import { evaluateRefinements, type CrossFieldViolation } from '@/lib/questions/rule-engine'
+import { assertAssignmentForTargets } from '@/lib/services/entity-assignment.service'
 
 /**
  * Rapid Assessment Service — Dynamic Question Registry edition (P4).
@@ -332,7 +335,7 @@ export class RapidAssessmentService {
       where: { assessmentType: type },
       select: { questionKey: true, isActive: true },
     })
-    const { answers: ingestedAnswers, warnings } = ingestOfflineAnswers(
+    const { answers: ingestedAnswers, warnings, unparsedKeys } = ingestOfflineAnswers(
       type,
       answers ?? {},
       questionSnapshot,
@@ -347,13 +350,23 @@ export class RapidAssessmentService {
     // REFINEMENT-only, additive key, written ONLY when non-empty so existing
     // gapAnalysis shapes stay untouched.
     const crossFieldViolations = await evaluateActiveRefinements(type, ingestedAnswers)
+    // P10-4 (4a) — unparseable MULTI_SELECT replays persist verbatim and are
+    // flagged (same additive pattern as crossFieldViolations).
+    const answerNormalizationFlags = toAnswerNormalizationFlags(unparsedKeys)
 
     // Derive gap analysis + priority against the frozen snapshot; answered
     // keys outside the snapshot self-derive as source-'unknown' rows.
     const gapAnalysis = await analyzeGapsFromSnapshot(type, questionSnapshot, ingestedAnswers)
     const priority = derivePriorityFromGaps(type, gapAnalysis)
-    const storedGapAnalysis =
-      crossFieldViolations.length > 0 ? { ...gapAnalysis, crossFieldViolations } : gapAnalysis
+    let storedGapAnalysis: GapAnalysis & {
+      crossFieldViolations?: CrossFieldViolation[]
+      answerNormalizationFlags?: AnswerNormalizationFlag[]
+    } = crossFieldViolations.length > 0
+      ? { ...gapAnalysis, crossFieldViolations }
+      : gapAnalysis
+    if (answerNormalizationFlags.length > 0) {
+      storedGapAnalysis = { ...storedGapAnalysis, answerNormalizationFlags }
+    }
 
     const rapidAssessment = await prisma.rapidAssessment.create({
       data: {
@@ -467,7 +480,7 @@ export class RapidAssessmentService {
       where: { assessmentType: assessmentType },
       select: { questionKey: true, isActive: true },
     })
-    const { answers: ingestedAnswers, warnings } = ingestOfflineAnswers(
+    const { answers: ingestedAnswers, warnings, unparsedKeys } = ingestOfflineAnswers(
       assessmentType,
       answers ?? {},
       snapshot,
@@ -478,10 +491,20 @@ export class RapidAssessmentService {
     // P10-2 — offline replay exemption (never-reject, plan §8): REFINEMENT
     // violations are stored as an informational gapAnalysis flag, never a 4xx.
     const crossFieldViolations = await evaluateActiveRefinements(assessmentType, ingestedAnswers)
+    // P10-4 (4a) — unparseable MULTI_SELECT replays persist verbatim and are
+    // flagged (same additive pattern as crossFieldViolations).
+    const answerNormalizationFlags = toAnswerNormalizationFlags(unparsedKeys)
     const gapAnalysis = await analyzeGapsFromSnapshot(assessmentType, snapshot, ingestedAnswers)
     const priority = derivePriorityFromGaps(assessmentType, gapAnalysis)
-    const storedGapAnalysis =
-      crossFieldViolations.length > 0 ? { ...gapAnalysis, crossFieldViolations } : gapAnalysis
+    let storedGapAnalysis: GapAnalysis & {
+      crossFieldViolations?: CrossFieldViolation[]
+      answerNormalizationFlags?: AnswerNormalizationFlag[]
+    } = crossFieldViolations.length > 0
+      ? { ...gapAnalysis, crossFieldViolations }
+      : gapAnalysis
+    if (answerNormalizationFlags.length > 0) {
+      storedGapAnalysis = { ...storedGapAnalysis, answerNormalizationFlags }
+    }
 
     const { verificationStatus, ...safeBaseData } = baseData as Omit<UpdateOfflineRapidAssessmentInput, 'type' | 'answers' | 'questionKeys'> & {
       verificationStatus?: UpdateOfflineRapidAssessmentInput['verificationStatus']
@@ -703,6 +726,7 @@ export class RapidAssessmentService {
         structureVersion: true,
         contentVersion: true,
         incidentId: true,
+        entityId: true,
       }
     })
     if (!existingAssessment) {
@@ -711,6 +735,22 @@ export class RapidAssessmentService {
 
     if (existingAssessment.assessorId !== updatedBy) {
       throw new Error('Not authorized to update this assessment')
+    }
+
+    // P10-4 (4d) — re-pointing the assessment at another entity/incident is
+    // a privileged edit: the caller must hold COORDINATOR/ADMIN or an entity
+    // assignment covering the TARGET entity (403 via the route's 'authorized'
+    // message mapping). Payloads that keep the stored targets are not
+    // re-gated.
+    const repointsEntity =
+      input.entityId !== undefined && input.entityId !== existingAssessment.entityId
+    const repointsIncident =
+      input.incidentId !== undefined && input.incidentId !== existingAssessment.incidentId
+    if (repointsEntity || repointsIncident) {
+      await assertAssignmentForTargets(updatedBy, {
+        entityId: input.entityId ?? existingAssessment.entityId,
+        incidentId: input.incidentId ?? existingAssessment.incidentId ?? undefined,
+      })
     }
 
     // P9 hardening — only when the payload RE-POINTS the assessment at
