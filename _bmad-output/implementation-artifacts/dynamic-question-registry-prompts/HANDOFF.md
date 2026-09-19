@@ -210,3 +210,159 @@ npm run build
 - Guard tests: `tests/api/submission-guard.test.ts`; bottom-up proof:
   `tests/e2e-baseline/registry-bottom-up.spec.ts`
 - Freeze export: `dqr-p9-registry-export.json` (sibling of this file's parent)
+
+---
+
+# P10 — Deferred-Work Consolidation
+
+**Plan:** `_bmad-output/implementation-artifacts/spec-dqr-p10-deferred-work-consolidation.md`
+(six phases, 7 deferred items). **Prompt set:**
+`_bmad-output/implementation-artifacts/dqr-p10-prompts/` (5 prompts). All
+seven deferred items from the plan's §1 map are closed with evidence; the
+deferral ledger is swept (see Deferrals remaining below for the honest
+residue).
+
+## The five prompts → commits
+
+| # | Commit(s) | Scope |
+|---|-----------|-------|
+| P10-1 | `5d6f496` | Snapshot-hydrated read side (`hydrateFromSnapshot` + drift rendering), registry hardening (per-entry cache TTL, out-of-tx chunked recompute), seed-derivation assertions, severity-PATCH docs |
+| P10-2 | `11837f8`, `11aa077` | `CrossFieldRule` schema + 15-row seed (both partitions), rule engine + zod AST, `/admin/rules*` API with governance + audit + version bumps, server-side REFINEMENT enforcement with sync exemption |
+| P10-3 | `bc97669`, `5fcbee4`, `047d67c` | Admin rule-editor panel in the registry editor; golden parity (96/96) then delete legacy `cross-field-rules.ts`; assessor form consumes payload rules |
+| P10-4 | `f870b35`, `3a351dc` | Offline sync hardening (replay normalization, incidentId strictness, producer row-id, re-point authorizer), commitment donor→user resolution, registry-driven gap popup |
+| P10-5 | Commit A + Commit B (this change) | E2E DB separation (`drms_e2e`), Tier A catalog polish + fold into `QUESTION_CATALOG`, final ledger sweep, this handoff |
+
+## State of the world (delta vs P9)
+
+- **Rules are data.** `CrossFieldRule` table (`cross_field_rules`) seeded with
+  the 15 legacy rules (both seed partitions + e2e global-setup).
+  `GET /questions?assessmentType=…` returns `rules: RegistryRule[]`; the
+  assessor form evaluates them live (`payloadSuperRefine(rules)` submit
+  gating + `evaluateRules` alerts); online `POST/PUT /rapid-assessments*`
+  enforce active REFINEMENT rules server-side (400 + `details[]`), closing
+  the P4 "accepted parity loss".
+- **Admin authoring.** "Cross-field rules" panel in `/admin/settings/questions`
+  (rule list with kind badges/chips/order/active toggle, editor dialog with
+  operand/comparator/token UI + live dry-run preview, `reason` governance,
+  audit timeline). A question cannot be deactivated while an active rule
+  references its key (400 `registry_invalid` listing the rules;
+  `/admin/questions/{id}/impact` surfaces them).
+- **Legacy module deleted.** `src/lib/questions/cross-field-rules.ts` is gone;
+  `src/lib/questions/rule-engine.ts` re-exports its three functions (same
+  signatures; seed constants in `rule-seed-data.ts`). Golden parity ran green
+  BEFORE deletion: 96/96 (`dqr-p10-3-parity-final.log`).
+- **Snapshot-hydrated read side.** `hydrateFromSnapshot` in
+  `src/lib/questions/answers.ts` (`fromAnswers` is now a catalog wrapper);
+  the six per-type situation readers + POPULATION aggregation hydrate from
+  each row's stored `questionSnapshot`; drifted keys render read-only on the
+  edit page (drift block) and view page ("Additional Registry Answers" card)
+  — `tests/e2e-baseline/assessment-drift.spec.ts`.
+- **Sync hardening.** `normalizeAnswerValues` (`src/lib/questions/offline-answers.ts`)
+  parses JSON-string MULTI_SELECT replays at the transport boundary
+  (unparseable → verbatim + `answerNormalizationFlags`); offline create
+  without `data.incidentId` → per-entry conflict, no row written; the update
+  producer enqueues the assessment row id (route exempts assessment-update
+  changes from the entity-uuid gate; per-entry ownership guard downstream);
+  shared `assertAssignmentForTargets` gates entityId/incidentId re-points on
+  BOTH online (403) and offline (per-entry conflict) paths.
+- **Commitment donor fix.** `CommitmentService.createCommitment` resolves the
+  donor's linked USER id (`resolveDonorLinkedUserId`; skip+log when unlinked)
+  — no more org-id/user-id conflation killing responder signal rows.
+- **Registry-driven gap popup.** `IndividualEntityGapInfoPopup.tsx` renders
+  GAP entries from the `questionMetadata` projection (hardcoded field map
+  deleted); `EntityAssessmentPanel` passes HEALTH metadata through.
+- **CI separation.** E2E owns `drms_e2e` via `E2E_DATABASE_URL`
+  (playwright webServer env + `tests/e2e-baseline/global-setup.ts` override;
+  guard widened to `drms_test|drms_e2e`); `npm run db:push:e2e` provisions
+  it; api keeps `drms_test`. Proven concurrent — api 263/263 on drms_test
+  while e2e 20/20 seeded drms_e2e, zero cross-truncation
+  (`dqr-p10-5-concurrent-gates.log`). Rollback-safe: no env var → drms_test,
+  sequential scripts unchanged.
+- **Polished catalog.** 8 Tier A label/option-label normalizations executed
+  through the governed admin editor API (8 PUTs, each with a reason →
+  contentVersion bumps + audit rows), then folded byte-identical into
+  `QUESTION_CATALOG` (`registry-validation.ts`) in the same change; option
+  `value` strings frozen (stored-answer shape preserved). Fresh re-seed
+  reproduces the polished wording at v1/1 (`dqr-p10-5-roundtrip.log`) — the
+  polish is the catalog baseline, not a runtime edit.
+
+## Gate results (P10)
+
+| Prompt | Gates run | Evidence artifact(s) |
+|--------|-----------|----------------------|
+| P10-1 | full chain green | `dqr-p10-1-context-evidence.log`, `dqr-p10-1-hardening.log` |
+| P10-2 | full chain green | `dqr-p10-2-rules-api.log`, `dqr-p10-2-parity-matrix.log` |
+| P10-3 | full chain green (post-review re-run) | `dqr-p10-3-gates-postreview.log`, `dqr-p10-3-parity-final.log` (96/96), `dqr-p10-3-rule-editor.png` |
+| P10-4 | full chain green (annotated re-runs) | `dqr-p10-4-sync-hardening.log` (incl. chain re-runs), `dqr-p10-4-new-tests-transcript.log`, `dqr-p10-4-gap-popup.png` |
+| P10-5 | full chain green + concurrent api+e2e green | `dqr-p10-5-catalog-polish.log`, `dqr-p10-5-roundtrip.log`, `dqr-p10-5-concurrent-gates.log`, `dqr-p10-5-ledger-sweep.log` |
+
+## Rulings → code map (P10 additions)
+
+| Binding ruling | Where it lives |
+|----------------|-----------------|
+| Never-reject absolute on `/sync/batch`: every P10 enforcement (rule rejection, incidentId strictness, re-point authz) lands as per-entry conflict/flag, never a batch 4xx/5xx | `sync-processing.service.ts` per-entry conflict machinery + `SyncConflict` rows; `gapAnalysis.crossFieldViolations` / `answerNormalizationFlags` informational flags; pinned by `tests/api/sync-hardening.test.ts`, `tests/api/offline-sync.test.ts` |
+| Rule replay exemption: offline replay exempt from REFINEMENT rejection; violations recorded, never blocking | offline ingestion path in `rapid-assessment.service.ts` / `sync-processing.service.ts`; pinned by sync-hardening + offline-sync suites |
+| Rule governance: ADMIN + `reason` required + `QuestionAuditLog` (`entityType: 'RULE'`) + `structureVersion` bump (contentVersion untouched); `ruleKey` immutable (400 `rule_key_immutable`) | `src/app/api/v1/admin/rules/**`, `QuestionRegistryService` rule CRUD + audit |
+| Question deactivation guard: 400 while an active rule references the key; impact endpoint lists referencing rules | `question-registry.service.ts` deactivation invariant block; `GET /admin/questions/{id}/impact` |
+| Snapshot hydration: the stored `questionSnapshot` is the read-side authority for drifted keys (historical rows render the values they were answered with) | `src/lib/questions/answers.ts` (`hydrateFromSnapshot`, `fromAnswers` wrapper), situation route readers, drift e2e |
+| E2E DB separation + rollback safety | `playwright.baseline.config.ts` (webServer env), `tests/e2e-baseline/global-setup.ts` (override + guard), `docs/development-guide.md` §6, `package.json` (`db:push:e2e`) |
+
+## Deploy notes (delta on the P9 runbook)
+
+1. `npx prisma db push` now also creates `cross_field_rules` — same single
+   step, no extra migration ordering.
+2. `npx prisma db seed` (both partitions) seeds the 15 baseline rules via
+   deterministic idempotent upserts (no version bumps); it MUST run after the
+   question seed — rule `referenceKeys` are pre-validated against the ACTIVE
+   questions of each type.
+3. Catalog: re-seeding a FRESH database restores the polished wording (it is
+   the `QUESTION_CATALOG` baseline now). Re-seeding an EXISTING database
+   reconciles rows toward the seed per policy — runtime registry/rule edits
+   revert (see the seed-policy deferral; `--with-sample-data` rules unchanged).
+4. CI/e2e environments: provision `drms_e2e` (`npm run db:push:e2e`) and set
+   `E2E_DATABASE_URL` to run e2e concurrently with the api suite
+   (`docs/development-guide.md` §6); without the env var everything stays
+   sequential on `drms_test`.
+
+## Plan §1 deferred items → evidence
+
+| # | Deferred item | Evidence (all RESOLVED in `deferred-work.md`) |
+|---|---------------|-----------------------------------------------|
+| 1 | CONTEXT "N/A" — catalog-bound `fromAnswers` read side (P4) | `src/lib/questions/answers.ts` `hydrateFromSnapshot` + stored-snapshot hydration in the situation readers (api tests pin post-seed keys render); drift e2e `tests/e2e-baseline/assessment-drift.spec.ts`; closed P10-1 |
+| 2 | P3 residue: severity-PATCH docs, seed derivation asserts, recompute tx scaling, global cache timestamp | `docs/api-contracts.md` §4.25 (response shape + rule endpoints); `tests/api/seed-partition.test.ts` derivation-matrix assertions; `question-registry.service.ts` out-of-tx chunked `recomputeAssessmentsForKey`; `gap-analysis.service.ts` per-entry TTL (`tests/unit/gap-analysis.test.ts`); closed P10-1/2 |
+| 3a | Cross-field rules hardcoded island → registry rule language + admin UI + migration (P4 decision) | `prisma/schema.prisma` `CrossFieldRule`; `rule-engine.ts` + `rule-seed-data.ts`; `prisma/seed-rules.ts` (15 rows, both partitions); `/admin/rules*` API; rules panel + `tests/e2e-baseline/rules-admin-authoring.spec.ts`; parity 96/96 then legacy deleted (`dqr-p10-3-parity-final.log`); closed P10-3 |
+| 3b | Multi-select offline replay arrives as JSON strings (P4) | `normalizeAnswerValues` in `src/lib/questions/offline-answers.ts`; `tests/unit/offline-answers.test.ts` + `tests/api/sync-hardening.test.ts`; closed P10-4 |
+| 3c | `test:api`/e2e share `drms_test` (P4) | dedicated `drms_e2e` via `E2E_DATABASE_URL`; concurrent 263/263 api + 20/20 e2e green (`dqr-p10-5-concurrent-gates.log`); closed P10-5 |
+| 4 | P5 trio: `incidentId \|\| entityUuid` fallback, producer keyed by entityId, no re-validation on update | fallback dropped → per-entry conflict (no row); producer enqueues row id + route exemption + ownership guard; `assertAssignmentForTargets` (`entity-assignment.service.ts`) on both paths (`tests/api/rapid-assessment-update-authz.test.ts`, `tests/api/sync-hardening.test.ts`); closed P10-4 |
+| 5 | `commitment.service.ts` donorId org-vs-user conflation (P6) | `resolveDonorLinkedUserId` (skip+log unlinked); `tests/api/commitment-donor-signal.test.ts`; closed P10-4 |
+| 6 | `IndividualEntityGapInfoPopup.tsx` hardcoded gap explanations (P7) | popup renders GAP entries from `questionMetadata` (`src/components/dashboards/situation/components/IndividualEntityGapInfoPopup.tsx`); `tests/unit/components/IndividualEntityGapInfoPopup.test.tsx` proves registry-added questions appear with no code changes; closed P10-4 |
+| 7 | Catalog label/option-value polish (P9) | 8 governed PUTs + byte-identical fold into `QUESTION_CATALOG`; re-seed round-trip at v1/1 (`dqr-p10-5-catalog-polish.log`, `dqr-p10-5-roundtrip.log`); closed P10-5 |
+
+## Plan §9 risks → mitigation status
+
+| Risk | Landed? | Evidence |
+|------|---------|----------|
+| Rule AST too narrow for future rules | Yes — AST is additive JSON; new operand kinds extend without schema migration | `rule-engine.ts` zod AST schema (`Operand` union); no migration needed to add e.g. ratio |
+| Parity drift during migration to rule engine | Yes — golden old-vs-new test green BEFORE deletion; legacy module removed only after | `dqr-p10-3-parity-final.log` (96/96), commit `5fcbee4` |
+| Snapshot hydration changes dashboard JSON shape | Yes — additive keys only; api suite pins existing keys and stayed green | api suite unchanged-green through P10-1..P10-5 |
+| 4b rejects previously-accepted offline creates | Yes — per-entry conflict + `SyncConflict` row preserves data for manual resolution (this section is the release note) | `tests/api/sync-hardening.test.ts` mixed-batch test (batch stays 200/207) |
+| Phase 6b content churn reverts on re-seed | Yes — final wording folded into `QUESTION_CATALOG` in the same change; round-trip proven | `dqr-p10-5-catalog-polish.log`, `dqr-p10-5-roundtrip.log` |
+
+## Deferrals remaining
+
+- **2026-06-08 Brand Customization group** (6 items) — the only pre-DQR
+  survivor, untouched by this program.
+- **8 post-plan review findings (2026-09-18/19, P10-1..P10-4 reviews)** —
+  surfaced after the plan froze, outside every prompt's scope; each is
+  annotated `OPEN (re-confirmed 2026-09-19, P10-5 final sweep)` in
+  `deferred-work.md` with its owning pass:
+  sibling catalog-bound readers (read-side pass); seed `isActive`/rule-content
+  drift reconciliation (seed-policy pass, covers BOTH seeds); rules missing
+  from `GET /admin/questions/export` (registry-portability pass);
+  `seed-essential.ts` rule wiring unverified (accepted residual risk);
+  `rules-admin-authoring.spec.ts` durable mutations (settle when new
+  POPULATION baseline specs land); assessment-delete id semantics (latent
+  until a delete producer exists); `CommitmentService` has no production
+  callers (service-consolidation pass); `updateAssessment` online-first 405 —
+  `apiPost` lacks PATCH support (API-client pass).
+- The P9 follow-ups listed above remain open and unchanged.

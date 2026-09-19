@@ -1,0 +1,9 @@
+
+--- INVARIANT CHECKS (post-sweep) ---
+entries marked OPEN (re-confirmed 2026-09-19) [expect 8]: 8
+update: RESOLVED lines [expect 3 = 2 PARTIALLY RESOLVED closures + 1 superseded OPEN]: 3
+note: the P4 read-side entry's intermediate 'status: OPEN (browser-confirmed 2026-09-17)' is superseded by its 'update: RESOLVED (2026-09-18, P10-1)' line;
+note: every 2026-09-15/16/17 group entry terminates RESOLVED per the status map above;
+note: 2026-06-08 Brand Customization group (6 entries) intentionally untouched;
+
+=== LEDGER_SWEEP_GREEN ===

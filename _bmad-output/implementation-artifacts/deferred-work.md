@@ -86,6 +86,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p4-dynamic-assessment-form.md`
   summary: `test:api` (jest, drms_test@5435) and `test:baseline:e2e` (Playwright, port 3100) share the `drms_test` database; running them concurrently truncates rows under each other.
   evidence: Both suites truncate/assert against `drms_test` by design (separate npm scripts, sequential in local runs); no CI pipeline exists yet. Fix belongs to CI pipeline setup: serialize the suites (or give e2e its own DB) when the pipeline is added.
+  status: RESOLVED (2026-09-19, P10-5) — e2e now owns the dedicated `drms_e2e` database on the same localhost:5435 instance, selected by `E2E_DATABASE_URL` (playwright webServer env + `tests/e2e-baseline/global-setup.ts` override, guard widened to `drms_test|drms_e2e`); `test:api` keeps `drms_test` via `.env.test`. Proven concurrent: e2e 20/20 seeding drms_e2e in the background while api ran 263/263 on drms_test in the foreground, both green with zero cross-truncation (`dqr-p10-5-concurrent-gates.log`). Rollback-safe: without the env var e2e falls back to drms_test and the sequential scripts are unchanged; provisioning + concurrency recipe documented in `docs/development-guide.md` §6 (`npm run db:push:e2e`).
 
 
 ## From Review (2026-09-16, DQR P5)
@@ -124,6 +125,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p9-hardening-holistic-gate-close.md`
   summary: Catalog wording/option-value polish — seeded catalog rows with inconsistent label registers (noun phrase vs question, e.g. `Functional Clinic`) and choice options whose `value`/`label` pairs are not normalized (`'River/Stream'`, `'Water trucks'` vs Title Case labels).
   evidence: Blind-hunter findings at P9 review, traced to the pre-existing P1 catalog (`src/lib/questions/registry-validation.ts` QUESTION_CATALOG) — outside the P9 diff. Renaming labels is Tier A content churn (bumps every type's `contentVersion`, reverts on re-seed per the reconciliation policy in `docs/question-authoring-guide.md`) with zero behavioral effect; bundle with a deliberate catalog-authoring pass if wanted. The authoring guide's Appendix A now documents the target registers.
+  status: RESOLVED (2026-09-19, P10-5) — the 8 label/option-label normalizations (noun-phrase register per Appendix A) were executed as a deliberate Tier A pass through the governed admin editor API — 8 PUTs, each with a `reason`, bumping `contentVersion` + writing audit rows (`dqr-p10-5-catalog-polish.log`) — then folded byte-identical into `QUESTION_CATALOG` in the same change, with option `value` strings frozen (the `River/Stream` value keeps its stored-answer shape; only its label became `River / Stream`). Fresh re-seed into a pristine `drms_e2e` reproduces the polished wording at structureVersion/contentVersion 1/1 — the polish is now the catalog baseline, not a runtime edit (`dqr-p10-5-roundtrip.log`); api/unit/e2e suites unchanged-green.
 
 
 ## From Review (2026-09-18, DQR P10-1)
@@ -131,14 +133,17 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p1-read-side-hardening.md`
   summary: `docs/operation-manual-ui.html` — a third UI operation manual that is an unreferenced planning orphan: zero inbound references anywhere in `_bmad-output/` or `docs/`, content stale at birth (predates the P4 dynamic form), dead scroll-spy code, and a TOC null-deref.
   evidence: BH12/BH13/BH14 + EC7 at review — pre-existing untracked planning artifact (`git status` shows it staged alongside this story's tree but nothing caused by the P10-1 diff); excluded from this story's commit. Fix belongs to a docs owner: delete it or fold its still-true content into the p9 documentation pass (`docs/question-authoring-guide.md` / api-contracts).
+  status: RESOLVED (2026-09-19, P10-5) — deleted (it was never committed, so the tree is simply clean of it); its still-true registry content already lives in `docs/question-authoring-guide.md` and `docs/api-contracts.md` from the p9 pass.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p1-read-side-hardening.md`
   summary: `_bmad-output/implementation-artifacts/dqr-p10-prompts/prompt-5-*.md` mixes pnpm and npm commands in its gate chain, so a verbatim run would install a second package-manager lockfile and diverge from the repo's npm-based gates.
   evidence: BH15 at review — pre-existing planning input, not this story's diff. Fix belongs to the P10-5 execution pass: normalize the prompt's commands to the npm scripts the earlier prompts use (`npm run lint && npm run type-check && ...`).
+  status: RESOLVED (2026-09-19, P10-5) — the prompt's concurrent-verification commands are normalized to `npm run test:api` / `npm run test:baseline:e2e` (the only pnpm occurrences in the prompt set), and the P10-5 execution ran every gate through the npm scripts; no pnpm lockfile was introduced.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p1-read-side-hardening.md`
   summary: Nine sibling latest-assessment readers elsewhere in the situation route remain catalog-bound (`fromAnswers`), so post-seed snapshot keys render "N/A" on those older read paths even though the seven P10-1 readers (six per-type + POPULATION aggregation) now hydrate from the stored snapshot.
   evidence: VG-F4 at review — pre-existing read paths untouched by this story's frozen scope (the spec's Code Map lists only `findLatestTypedAssessment` + the POPULATION reader). Fix belongs to a follow-up read-side pass: route those readers through `hydrateAnswersFromRow` exactly as the P10-1 readers do.
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding outside the P10 frozen scope; stays a documented deferral for a follow-up read-side pass.
 
 
 ## From Review (2026-09-18, DQR P10-2)
@@ -147,14 +152,17 @@
   summary: Seed drift-update unconditionally writes `isActive: true` on rule rows (`prisma/seed-rules.ts` diff comparator), so a re-seed resurrects an admin-deactivated rule with no version bump or governed audit — the DB silently diverges from the admin's governance record.
   evidence: Finding 10 (ECH4/BH2) at review, verified real — but `prisma/seed-questions.ts:113` carries the identical comparator for the 55 questions, and plan §4.3 binds "registry baseline like the 55 questions"; the reconciliation-over-governance policy predates this story. Fix belongs to a deliberate seed-policy pass covering BOTH seeds (e.g. skip isActive reconciliation on existing rows, or record it as a governed REACTIVATE audit + structure bump), not a rules-only carve-out.
   update: RE-CONFIRMED at P10-3 review (EC-3, 2026-09-18) with raised stakes — the cutover inverted ownership (the live form now evaluates DB rule rows, not the hardcoded module), so a re-seed against a non-truncated DB now also reverts admin-authored rule CONTENT (message/expression drift branch overwrites) that the assessor form enforces. Same route stands: ownership-aware seeding policy for both seeds, not a rules-only carve-out.
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding outside the P10 frozen scope; stays a documented deferral for a deliberate seed-policy pass covering BOTH seeds.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
   summary: `GET /admin/questions/export` omits cross-field rules, so an export-based registry migration (export → import into a fresh deployment) silently loses admin-authored rules and re-seeding yields only the 15 baseline rows.
   evidence: Finding 11 (BH11) at review — the export route predates P10-2 and was outside this story's frozen scope; dedicated DB backups are unaffected. Fix belongs to a registry-portability pass: extend the export payload with `rules` (+ an import counterpart) and pin with a round-trip test.
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding outside the P10 frozen scope; stays a documented deferral for a registry-portability pass.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p2-rule-registry-backend.md`
   summary: `prisma/seed-essential.ts` rule wiring has no executable verification — only `prisma/seed.ts` (both partitions) is pinned by `tests/api/seed-partition.test.ts` child-process runs; a regression that drops `seedCrossFieldRules` from the essential partition would pass every suite.
   evidence: Finding 12 (VG-V4, pre-verified) at review — `seedCrossFieldRules` itself is pinned (15-row count + drift behavior via the seed.ts runs and `tests/unit/rule-engine.test.ts` seed completeness), so residual risk is the one call site in `seed-essential.ts` only; a third child-process seed run was judged to outweigh that residual risk. Revisit if the essential partition gains rule-dependent behavior.
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding; accepted residual risk (one call site), stays a documented deferral.
 
 
 ## From Review (2026-09-18, DQR P10-3)
@@ -162,6 +170,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p3-rule-admin-ui-cutover.md`
   summary: `tests/e2e-baseline/rules-admin-authoring.spec.ts` leaves persistent mutations in the shared baseline DB (the authored 5000-cap rule stays ACTIVE; the seeded `population-under5-plus-pregnant-exceeds-total` message is permanently rewritten), unlike the suite's usual truncate-per-run hygiene maintained by global-setup re-seeding.
   evidence: BH-13 at review, maybe-false today — no current baseline spec collides (gates green; assessment-drift stays under 5000 and does not assert the seeded message text), but any future POPULATION spec that drives a sum above 5000 or asserts the seeded message would break non-deterministically. Settle when adding new POPULATION baseline specs: audit their assertions against these two durable rows, or add a cleanup step to this spec.
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding (maybe-false today, gates green); stays a documented deferral to settle when new POPULATION baseline specs land.
 
 
 ## From Review (2026-09-19, DQR P10-4)
@@ -169,12 +178,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p4-sync-hardening-signals-popup.md`
   summary: Assessment `delete` sync changes remain id-conflated — the batch route still gates deletes on `entityUuid` being an assigned ENTITY id while the consumer resolves deletes by that slot as an assessment ROW id, so any future delete producer is mis-gated at the route or mis-resolved in the consumer (the exact mismatch 4c fixed for updates).
   evidence: BH at review, pre-existing — no assessment-delete producer exists client-side (assessment-offline.service exposes create/update only), and the spec's Never scoped 4c to updates ("Create/delete/entity changes keep the original gate"). Fix belongs to the pass that first ships a delete producer: pick one id semantics for the slot (row id like updates + route exemption + per-entry owner guard, mirroring the G1 pattern).
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding; latent until a delete producer exists, stays a documented deferral.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p4-sync-hardening-signals-popup.md`
   summary: `CommitmentService.createCommitment` — where the 5a donor-linked-user fix landed — has no production callers; the live commitment surface (`src/app/api/v1/donors/[id]/commitments/route.ts`) creates rows via Prisma directly and already dispatches its signal with `donorId: user.id`, so the service's corrected semantics are correct-but-unreachable until callers adopt it.
   evidence: VG-O2 at review, verified by grep (only client-side mutations call the API; no src file invokes the service method). Fix belongs to a service-consolidation pass: route the live endpoint through `CommitmentService.createCommitment` (or port the resolveDonorLinkedUserId skip+log semantics into the route) so both creation paths share one donor-branch dispatch contract.
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding; correct-but-unreachable service path, stays a documented deferral for a service-consolidation pass.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-dqr-p10-p4-sync-hardening-signals-popup.md`
   summary: `AssessmentOfflineService.updateAssessment`'s online-first attempt always 405s — it calls `apiPost(url, { _method: 'PATCH' })` but `apiPost` only issues POST and the rapid-assessments route exports GET/PUT/DELETE, so every client assessment update silently flows through the offline queue (making the offline producer the only functioning update channel).
   evidence: VG-O3 at review, pre-existing (the apiPost call predates this story; the diff touched only its catch branch). Fix belongs to an API-client pass: add PATCH support to `apiPost` honoring `_method` (or switch the call to a PUT-shaped helper) and pin the online-first path with a test.
+  status: OPEN (re-confirmed 2026-09-19, P10-5 final sweep) — post-plan review finding; pre-existing 405 on the online-first attempt (offline queue is the working channel), stays a documented deferral for an API-client pass.
 
