@@ -85,8 +85,7 @@ export function GapIndicator({
   const sizeClasses = sizeConfig[size];
   
   const IconComponent = hasGap ? severityConfig[severity].icon : CheckCircle;
-  
-  const dotClasses = getDotColor('severity', severity);
+
   const badgeClasses = getBadgeClasses('severity', severity);
 
   if (!hasGap) {
@@ -126,14 +125,6 @@ export function GapIndicator({
       config.animation && "gap-2",
       className
     )}>
-      <div className={cn(
-        "rounded-full shadow-md",
-        dotClasses,
-        "border-2",
-        config.animation,
-        sizeClasses.dot
-      )} aria-hidden="true" />
-      
       <IconComponent className={cn(
         "flex-shrink-0",
         textColor,

@@ -109,10 +109,9 @@ const fieldUnits = {
  * Renders one assessment-type card from RANKED registry-derived gap rows
  * (never a standing enumeration of hardcoded fields):
  * - Aggregated ("All Entities") mode: `gapSummary` from the situation route —
- *   ranked rows with "N of M" spread chips, an expandable
+ *   ranked rows with spread-count chips, an expandable
  *   `+{hidden} more · {count} {SEV}` overflow chip (all overflow rows are
- *   carried in `rows`), and a `Severities as of registry v{contentVersion}`
- *   stamp.
+ *   carried in `rows`), and a computation-timestamp stamp.
  * - Individual-entity mode: `gapSummary` built client-side from the STORED
  *   gapAnalysis joined with `questions` metadata; same ranking/limit/chip,
  *   spread locked to 1, no stamp. Context box from CONTEXT metadata + values.
@@ -211,21 +210,21 @@ export function AssessmentCategorySummary({
   const renderGapRow = (row: CategoryGapRow, showSpread: boolean) => (
     <div key={row.key} className="py-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm text-muted-foreground flex-1 min-w-0 truncate" title={row.label}>
+        <span
+          className="text-sm text-muted-foreground flex-1 min-w-0 truncate"
+          title={row.meaning || row.label}
+        >
           {row.label}
         </span>
         <div className="flex items-center gap-2 flex-shrink-0">
           {showSpread && row.total > 0 && (
             <span className="text-[11px] text-muted-foreground bg-muted px-2 py-1 rounded">
-              {row.spread} of {row.total}
+              {row.spread}
             </span>
           )}
           <GapIndicator hasGap severity={row.severity} size="sm" />
         </div>
       </div>
-      {row.meaning && (
-        <p className="text-xs text-muted-foreground mt-0.5 pl-1">{row.meaning}</p>
-      )}
     </div>
   );
 
@@ -281,7 +280,7 @@ export function AssessmentCategorySummary({
     const computedAt = new Date(gapSummary.stamp.computedAt).toLocaleString();
     return (
       <p className="text-[10px] text-muted-foreground mt-3" data-testid="gap-summary-stamp">
-        Severities as of registry v{gapSummary.stamp.contentVersion} · {computedAt}
+        {computedAt}
       </p>
     );
   };
@@ -371,11 +370,6 @@ export function AssessmentCategorySummary({
               {assessment.assessorName}
             </div>
           )}
-          {assessment.verificationStatus && (
-            <Badge variant="outline" className="text-xs">
-              {assessment.verificationStatus}
-            </Badge>
-          )}
           {isAggregated && typeof assessment.totalEntities === 'number' && (
             <div className="flex items-center gap-1">
               <Users className="h-3 w-3" />
@@ -391,10 +385,7 @@ export function AssessmentCategorySummary({
           // overflow chip, and the registry stamp.
           <div className="space-y-2">
             {gapSummary?.hasGaps && (
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-foreground">Gap Analysis (All Entities)</h4>
-                <span className="text-xs text-muted-foreground">Select entity for details</span>
-              </div>
+              <h4 className="text-sm font-medium text-foreground mb-2">Gap Analysis (All Entities)</h4>
             )}
             {renderRankedRows(true)}
             {renderStamp()}

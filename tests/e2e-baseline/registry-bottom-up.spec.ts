@@ -24,8 +24,7 @@ import { loginViaUi } from './helpers'
  *  *    GET /api/v1/notifications — the UI bell has no testids).
  *  * 4. COORDINATOR's situation dashboard (All Entities view) renders the
  *  *    health card from the stored questionSnapshot: the gap ranked CRITICAL
- *  *    under its EDITED phrase, with the `Severities as of registry v…`
- *  *    stamp.
+ *  *    under its EDITED phrase, with its computation-timestamp stamp.
  */
 
 const NEW_LABEL = 'Working Health Clinic (P9)'
@@ -200,7 +199,7 @@ test.describe('registry bottom-up — admin edit surfaces everywhere', () => {
 
     const stamp = page.getByTestId('gap-summary-stamp')
     await expect(stamp).toBeVisible()
-    await expect(stamp).toHaveText(/Severities as of registry v2\b/)
+    await expect(stamp).not.toHaveText(/registry/)
 
     // The health card ranks the fixture gap under its EDITED phrase — the
     // admin leg's gapLabel, resolved from the stored snapshot

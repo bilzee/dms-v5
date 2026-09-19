@@ -15,7 +15,7 @@ import {
 /**
  * Unit — AssessmentCategorySummary (P7 review VG2): pins the rendering
  * contract the pure gap-summary tests can't see — ranked registry-labeled
- * rows, "N of M" spread chips, the expandable "+N more · {n} {SEV}" overflow
+ * rows, spread-count chips, the expandable "+N more · {n} {SEV}" overflow
  * chip, the collapsed zero-gap variant, and the registry stamp.
  */
 
@@ -116,22 +116,24 @@ describe('unit — AssessmentCategorySummary (P7 rendering contract)', () => {
     // Hidden at limit 2 — the overflow row must NOT render collapsed.
     expect(screen.queryByText('No trained staff')).not.toBeInTheDocument()
 
-    // Spread chips: "2 of 2" (top row, both entities) and "1 of 2".
-    expect(screen.getByText('2 of 2')).toBeInTheDocument()
-    expect(screen.getByText('1 of 2')).toBeInTheDocument()
+    // Spread chips carry the gapped-entity count alone — the total is already
+    // shown by the card header's "N entities" line.
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.getByText('1')).toBeInTheDocument()
 
     // Chip copy per plan §5: "+N more · {count} {SEV}".
     expect(screen.getByRole('button', { name: '+1 more · 1 MEDIUM' })).toBeInTheDocument()
 
-    // Meaning line from gapMeaning renders under the top row.
+    // Meaning from gapMeaning surfaces as the row label's tooltip, not subtext.
+    expect(screen.getByTitle('No operational clinic at this location')).toBeInTheDocument()
     expect(
-      screen.getByText('No operational clinic at this location')
-    ).toBeInTheDocument()
+      screen.queryByText('No operational clinic at this location')
+    ).not.toBeInTheDocument()
 
-    // Stamp: registry contentVersion + computation timestamp.
-    expect(screen.getByTestId('gap-summary-stamp')).toHaveTextContent(
-      'Severities as of registry v3'
-    )
+    // Stamp: computation timestamp only (no registry-version wording).
+    const stamp = screen.getByTestId('gap-summary-stamp')
+    expect(stamp).not.toHaveTextContent(/registry/)
+    expect(stamp).toHaveTextContent(/\d/)
   })
 
   test('overflow chip expands all carried rows and collapses back', async () => {
