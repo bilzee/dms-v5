@@ -20,13 +20,20 @@ fi
 # Run database migrations
 echo ""
 echo "=== Running Database Migrations ==="
-npx prisma migrate deploy
-if [ $? -eq 0 ]; then
-    echo "✅ Migrations completed successfully"
-else
-    echo "⚠️  Migrations failed - falling back to db push"
-    npx prisma db push --accept-data-loss || echo "❌ Schema push also failed"
+if ! npx prisma migrate deploy; then
+    echo "❌ Migrations failed - aborting startup (schema left untouched)"
+    exit 1
 fi
+echo "✅ Migrations completed successfully"
+
+# Seed question registry / baseline rules (idempotent)
+echo ""
+echo "=== Seeding Question Registry ==="
+if ! npx prisma db seed; then
+    echo "❌ Registry seeding failed - aborting startup"
+    exit 1
+fi
+echo "✅ Registry seed completed"
 
 # Start the application
 echo ""
