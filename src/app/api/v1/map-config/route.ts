@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { withAuth } from '@/lib/auth/middleware';
 import { successResponse, errorResponse, handleApiError } from '@/lib/api/response';
 import { getMapConfig, saveMapConfig, getDefaultMapConfig } from '@/lib/services/map-config.service';
+import { isBasemapStyleId } from '@/lib/map/basemap';
 
 export const GET = withAuth(async (request: NextRequest) => {
   try {
@@ -20,7 +21,7 @@ export const PUT = withAuth(async (request: NextRequest, context) => {
 
   try {
     const body = await request.json();
-    const { activePreset, center, zoom, presets } = body;
+    const { activePreset, center, zoom, presets, basemapStyle } = body;
 
     const updates: Record<string, unknown> = {};
     if (activePreset !== undefined) updates.activePreset = activePreset;
@@ -37,6 +38,12 @@ export const PUT = withAuth(async (request: NextRequest, context) => {
       updates.zoom = zoom;
     }
     if (presets !== undefined) updates.presets = presets;
+    if (basemapStyle !== undefined) {
+      if (!isBasemapStyleId(basemapStyle)) {
+        return errorResponse('Invalid basemap style.', 400);
+      }
+      updates.basemapStyle = basemapStyle;
+    }
 
     const saved = await saveMapConfig(updates);
     return successResponse(saved);

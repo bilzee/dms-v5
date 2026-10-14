@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db/client';
+import { DEFAULT_BASEMAP_STYLE, isBasemapStyleId, type BasemapStyleId } from '@/lib/map/basemap';
 
 export interface MapPreset {
   id: string;
@@ -11,6 +12,7 @@ export interface MapConfig {
   activePreset: string;
   center: [number, number];
   zoom: number;
+  basemapStyle: BasemapStyleId;
   presets: MapPreset[];
 }
 
@@ -39,6 +41,7 @@ const DEFAULT_CONFIG: MapConfig = {
   activePreset: 'borno',
   center: [11.8311, 13.1511],
   zoom: 9,
+  basemapStyle: DEFAULT_BASEMAP_STYLE,
   presets: DEFAULT_PRESETS,
 };
 
@@ -66,6 +69,10 @@ export async function getMapConfig(): Promise<MapConfig> {
   const centerLat = parseFloat(map.get('centerLat') || String(DEFAULT_CONFIG.center[0]));
   const centerLng = parseFloat(map.get('centerLng') || String(DEFAULT_CONFIG.center[1]));
   const zoom = parseInt(map.get('zoom') || String(DEFAULT_CONFIG.zoom), 10);
+  const basemapStyleRaw = map.get('basemapStyle');
+  const basemapStyle: BasemapStyleId = isBasemapStyleId(basemapStyleRaw)
+    ? basemapStyleRaw
+    : DEFAULT_CONFIG.basemapStyle;
 
   let presets = DEFAULT_CONFIG.presets;
   const customPresetsRaw = map.get('customPresets');
@@ -76,7 +83,7 @@ export async function getMapConfig(): Promise<MapConfig> {
     } catch {}
   }
 
-  const config: MapConfig = { activePreset, center: [centerLat, centerLng], zoom, presets };
+  const config: MapConfig = { activePreset, center: [centerLat, centerLng], zoom, basemapStyle, presets };
 
   cachedConfig = config;
   cacheExpiry = Date.now() + CACHE_TTL_MS;
@@ -98,6 +105,9 @@ export async function saveMapConfig(config: Partial<MapConfig>): Promise<MapConf
   }
   if (config.zoom !== undefined) {
     upserts.push({ section: 'map-config', key: 'zoom', value: String(config.zoom) });
+  }
+  if (config.basemapStyle !== undefined) {
+    upserts.push({ section: 'map-config', key: 'basemapStyle', value: config.basemapStyle });
   }
 
   const customPresets = (config.presets || current.presets).filter(

@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from '@/lib/api'
+import { DEFAULT_BASEMAP_STYLE } from '@/lib/map/basemap'
 
 interface MapConfig {
   activePreset: string
   center: [number, number]
   zoom: number
+  basemapStyle: string
 }
 
 const DEFAULT_CENTER: [number, number] = [11.8311, 13.1511]
@@ -31,5 +33,6 @@ export function useMapConfig() {
   return {
     center: data?.center ?? DEFAULT_CENTER,
     zoom: data?.zoom ?? DEFAULT_ZOOM,
+    basemapStyle: data?.basemapStyle ?? DEFAULT_BASEMAP_STYLE,
   }
 }

@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { apiGet, apiPut, apiDelete } from '@/lib/api'
 import { toast } from 'sonner'
-import { MapPin, Save, RotateCcw, Check, Globe, Eye, LayoutDashboard, ExternalLink } from '@/lib/icons'
+import { MapPin, Save, RotateCcw, Check, Globe, Eye, LayoutDashboard, ExternalLink, Layers } from '@/lib/icons'
+import { BASEMAP_STYLES, DEFAULT_BASEMAP_STYLE, type BasemapStyleId } from '@/lib/map/basemap'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 
@@ -37,6 +38,7 @@ interface MapConfig {
   activePreset: string
   center: [number, number]
   zoom: number
+  basemapStyle: string
   presets: MapPreset[]
 }
 
@@ -79,6 +81,7 @@ export default function MapSettingsPage() {
   const [centerLat, setCenterLat] = useState('')
   const [centerLng, setCenterLng] = useState('')
   const [zoom, setZoom] = useState('')
+  const [basemapStyle, setBasemapStyle] = useState<string>(DEFAULT_BASEMAP_STYLE)
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -91,6 +94,7 @@ export default function MapSettingsPage() {
         setCenterLat(String(data.center[0]))
         setCenterLng(String(data.center[1]))
         setZoom(String(data.zoom))
+        setBasemapStyle(data.basemapStyle || DEFAULT_BASEMAP_STYLE)
         setDirty(false)
       }
     } catch {
@@ -107,6 +111,11 @@ export default function MapSettingsPage() {
     setCenterLat(String(preset.center[0]))
     setCenterLng(String(preset.center[1]))
     setZoom(String(preset.zoom))
+    setDirty(true)
+  }
+
+  const handleStyleSelect = (id: BasemapStyleId) => {
+    setBasemapStyle(id)
     setDirty(true)
   }
 
@@ -142,6 +151,7 @@ export default function MapSettingsPage() {
         activePreset: selectedPreset,
         center: [lat, lng],
         zoom: z,
+        basemapStyle,
       })
 
       if (result.success) {
@@ -329,6 +339,10 @@ export default function MapSettingsPage() {
                     <span className="text-muted-foreground">Preset:</span>{' '}
                     {config?.presets.find(p => p.id === selectedPreset)?.name || 'Custom'}
                   </div>
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground">Style:</span>{' '}
+                    {BASEMAP_STYLES[basemapStyle as BasemapStyleId]?.label || basemapStyle}
+                  </div>
                 </div>
               </div>
 
@@ -342,6 +356,43 @@ export default function MapSettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5" />
+              Base Map Style
+            </CardTitle>
+            <CardDescription>
+              Choose the visual style used by all maps in the system
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {Object.values(BASEMAP_STYLES).map((style) => (
+                <button
+                  key={style.id}
+                  type="button"
+                  onClick={() => handleStyleSelect(style.id)}
+                  className={`text-left p-4 rounded-lg border-2 transition-colors ${
+                    basemapStyle === style.id
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50'
+                  }`
+                }
+                >
+                  <div className="font-medium flex items-center gap-2">
+                    {style.label}
+                    {basemapStyle === style.id && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
+                  <div className="text-sm text-muted-foreground mt-1">{style.description}</div>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
               <Eye className="h-5 w-5" />
               Map Preview
             </CardTitle>
@@ -350,7 +401,7 @@ export default function MapSettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <MapPreview center={previewCenter} zoom={previewZoom} />
+            <MapPreview center={previewCenter} zoom={previewZoom} basemapStyleId={basemapStyle} />
           </CardContent>
         </Card>
 

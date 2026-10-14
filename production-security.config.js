@@ -34,7 +34,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires inline styles
       "img-src 'self' data: https:", // Allow images from HTTPS and data URIs
       "font-src 'self'",
-      "connect-src 'self'",
+      "connect-src 'self' https://tiles.openfreemap.org", // MapLibre vector tiles/styles/fonts
       "media-src 'self'",
       "object-src 'none'",
       "base-uri 'self'",
