@@ -1,27 +1,14 @@
 'use client';
 
-import React, { useEffect, useMemo } from 'react';
-import L from 'leaflet';
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-  useMap,
-  CircleMarker,
-} from 'react-leaflet';
+import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/lib/api';
 import { useMapConfig } from '@/hooks/useMapConfig';
-import { Badge } from '@/components/ui/badge';
-import '@/components/dashboards/situation/map-styles.css';
-
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
+import { MapLibreView } from '@/components/maps/MapLibreView';
+import { EntityGeoJsonLayer } from '@/components/maps/EntityGeoJsonLayer';
+import type { EntityMapPoint } from '@/components/maps/EntityGeoJsonLayer';
+import { MapPopup } from '@/components/maps/MapPopup';
+import { useFlyTo } from '@/components/maps/useFlyTo';
 
 const PRIORITY_COLORS: Record<string, string> = {
   CRITICAL: '#ef4444',
@@ -53,21 +40,6 @@ function getCoords(entity: MapEntity): { lat: number; lng: number } | null {
   return { lat, lng };
 }
 
-function FlyToEntity({ entityId, entities }: { entityId: string | null; entities: MapEntity[] }) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!entityId) return;
-    const entity = entities.find(e => e.id === entityId);
-    if (!entity) return;
-    const coords = getCoords(entity);
-    if (!coords) return;
-    map.flyTo([coords.lat, coords.lng], 13, { duration: 0.8 });
-  }, [entityId, entities, map]);
-
-  return null;
-}
-
 interface ActionQueueMapPanelProps {
   activeEntityIds: string[];
   entityPriorities?: Record<string, EntityPriorityInfo>;
@@ -75,64 +47,85 @@ interface ActionQueueMapPanelProps {
   onEntitySelect?: (entityId: string) => void;
 }
 
-function EntityMarker({
-  entity,
-  priority,
-  isSelected,
-  onSelect,
+function MapContent({
+  entities,
+  entityPriorities,
+  selectedEntityId,
+  onEntitySelect,
 }: {
-  entity: MapEntity;
-  priority: EntityPriorityInfo | undefined;
-  isSelected: boolean;
-  onSelect: () => void;
+  entities: MapEntity[];
+  entityPriorities?: Record<string, EntityPriorityInfo>;
+  selectedEntityId: string | null;
+  onEntitySelect?: (entityId: string) => void;
 }) {
-  const coords = getCoords(entity);
-  if (!coords) return null;
+  const [popupEntityId, setPopupEntityId] = useState<string | null>(null);
 
-  const highestPriority = priority?.highestPriority || 'MEDIUM';
-  const color = PRIORITY_COLORS[highestPriority] || '#6b7280';
+  const points = useMemo<EntityMapPoint[]>(() => {
+    return entities.map(entity => {
+      const coords = getCoords(entity)!;
+      return {
+        id: entity.id,
+        lng: coords.lng,
+        lat: coords.lat,
+        severity: entityPriorities?.[entity.id]?.highestPriority || 'MEDIUM',
+      };
+    });
+  }, [entities, entityPriorities]);
 
-  if (isSelected) {
-    return (
-      <Marker position={[coords.lat, coords.lng]} eventHandlers={{ click: onSelect }}>
-        <Popup>
+  const selectedCoords = useMemo(() => {
+    if (!selectedEntityId) return null;
+    const selected = entities.find(e => e.id === selectedEntityId);
+    if (!selected) return null;
+    const coords = getCoords(selected);
+    if (!coords) return null;
+    return { lng: coords.lng, lat: coords.lat, zoom: 13 };
+  }, [selectedEntityId, entities]);
+
+  useFlyTo(selectedCoords);
+
+  const popupEntity = popupEntityId ? entities.find(e => e.id === popupEntityId) : null;
+  const popupPoint = popupEntityId ? points.find(p => p.id === popupEntityId) : null;
+  const popupPriority = popupEntity ? entityPriorities?.[popupEntity.id] : undefined;
+  const popupColor =
+    PRIORITY_COLORS[popupPriority?.highestPriority || 'MEDIUM'] || '#6b7280';
+
+  return (
+    <>
+      <EntityGeoJsonLayer
+        id="action-queue-entities"
+        points={points}
+        severityColors={PRIORITY_COLORS}
+        selectedId={selectedEntityId}
+        clusterMaxZoom={12}
+        onSelect={point => {
+          onEntitySelect?.(point.id);
+          setPopupEntityId(point.id);
+        }}
+      />
+      {popupEntity && popupPoint && (
+        <MapPopup
+          longitude={popupPoint.lng}
+          latitude={popupPoint.lat}
+          onClose={() => setPopupEntityId(null)}
+        >
           <div className="text-sm">
-            <strong>{entity.name}</strong>
+            <strong>{popupEntity.name}</strong>
             <br />
-            <span style={{ color }}>{highestPriority}</span> · {entity.type}
-            {priority && (
+            <span style={{ color: popupColor }}>
+              {popupPriority?.highestPriority || 'MEDIUM'}
+            </span>{' '}
+            · {popupEntity.type}
+            {popupPriority && (
               <>
                 <br />
-                {priority.signalCount} signal{priority.signalCount !== 1 ? 's' : ''}
+                {popupPriority.signalCount} signal
+                {popupPriority.signalCount !== 1 ? 's' : ''}
               </>
             )}
           </div>
-        </Popup>
-      </Marker>
-    );
-  }
-
-  return (
-    <CircleMarker
-      center={[coords.lat, coords.lng]}
-      radius={10}
-      pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 2 }}
-      eventHandlers={{ click: onSelect }}
-    >
-      <Popup>
-        <div className="text-sm">
-          <strong>{entity.name}</strong>
-          <br />
-          <span style={{ color }}>{highestPriority}</span> · {entity.type}
-          {priority && (
-            <>
-              <br />
-              {priority.signalCount} signal{priority.signalCount !== 1 ? 's' : ''}
-            </>
-          )}
-        </div>
-      </Popup>
-    </CircleMarker>
+        </MapPopup>
+      )}
+    </>
   );
 }
 
@@ -184,45 +177,15 @@ export function ActionQueueMapPanel({
   }
 
   return (
-    <div className="h-full w-full">
-      <MapContainer
-        center={configCenter}
-        zoom={configZoom}
-        className="h-full w-full rounded-lg"
-        zoomControl={false}
-        attributionControl={false}
-      >
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <FlyToEntity entityId={selectedEntityId ?? null} entities={entitiesWithCoords} />
-        {entitiesWithCoords.map(entity => (
-          <EntityMarker
-            key={entity.id}
-            entity={entity}
-            priority={entityPriorities?.[entity.id]}
-            isSelected={entity.id === selectedEntityId}
-            onSelect={() => onEntitySelect?.(entity.id)}
-          />
-        ))}
-        {selectedEntityId && (() => {
-          const selected = entitiesWithCoords.find(e => e.id === selectedEntityId);
-          if (!selected) return null;
-          const coords = getCoords(selected);
-          if (!coords) return null;
-          return (
-            <CircleMarker
-              center={[coords.lat, coords.lng]}
-              radius={16}
-              pathOptions={{
-                color: '#3b82f6',
-                fillColor: '#3b82f6',
-                fillOpacity: 0.15,
-                weight: 2,
-                dashArray: '4 4',
-              }}
-            />
-          );
-        })()}
-      </MapContainer>
+    <div className="h-full w-full rounded-lg">
+      <MapLibreView center={configCenter} zoom={configZoom} className="h-full w-full">
+        <MapContent
+          entities={entitiesWithCoords}
+          entityPriorities={entityPriorities}
+          selectedEntityId={selectedEntityId ?? null}
+          onEntitySelect={onEntitySelect}
+        />
+      </MapLibreView>
     </div>
   );
 }
