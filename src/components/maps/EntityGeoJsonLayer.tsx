@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Layer, Source, useMap } from 'react-map-gl/maplibre';
+import type { FeatureCollection, Point } from 'geojson';
 import type { GeoJSONSource, MapLayerMouseEvent } from 'maplibre-gl';
 
 export interface EntityMapPoint {
@@ -9,6 +10,7 @@ export interface EntityMapPoint {
   lng: number;
   lat: number;
   severity?: string;
+  properties?: Record<string, unknown>;
 }
 
 export interface EntityGeoJsonLayerProps {
@@ -18,18 +20,20 @@ export interface EntityGeoJsonLayerProps {
   defaultColor?: string;
   selectedId?: string | null;
   onSelect?: (point: EntityMapPoint) => void;
+  onHover?: (point: EntityMapPoint | null) => void;
+  cluster?: boolean;
   clusterRadius?: number;
   clusterMaxZoom?: number;
 }
 
-function buildFeatureCollection(points: EntityMapPoint[]): GeoJSON.FeatureCollection {
+function buildFeatureCollection(points: EntityMapPoint[]): FeatureCollection {
   return {
     type: 'FeatureCollection',
     features: points.map(p => ({
       type: 'Feature' as const,
       id: p.id,
       geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
-      properties: { id: p.id, severity: p.severity ?? 'MEDIUM' },
+      properties: { id: p.id, severity: p.severity ?? 'MEDIUM', ...(p.properties ?? {}) },
     })),
   };
 }
@@ -41,6 +45,8 @@ export function EntityGeoJsonLayer({
   defaultColor = '#6b7280',
   selectedId = null,
   onSelect,
+  onHover,
+  cluster = true,
   clusterRadius = 50,
   clusterMaxZoom = 14,
 }: EntityGeoJsonLayerProps) {
@@ -51,6 +57,8 @@ export function EntityGeoJsonLayer({
   pointsRef.current = points;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onHoverRef = useRef(onHover);
+  onHoverRef.current = onHover;
 
   const severityColorExpr = useMemo(() => {
     const expr: any[] = ['match', ['get', 'severity']];
@@ -89,10 +97,23 @@ export function EntityGeoJsonLayer({
       source
         .getClusterExpansionZoom(Number(clusterId))
         .then(zoom => {
-          const coordinates = (feature.geometry as GeoJSON.Point).coordinates;
+          const coordinates = (feature.geometry as Point).coordinates;
           map.easeTo({ center: [coordinates[0], coordinates[1]], zoom });
         })
         .catch(() => undefined);
+    };
+
+    const handlePointHover = (e: MapLayerMouseEvent) => {
+      const feature = e.features?.[0];
+      if (!feature) return;
+      const entityId = feature.properties?.id as string | undefined;
+      if (!entityId) return;
+      const point = pointsRef.current.find(p => p.id === entityId);
+      if (point) onHoverRef.current?.(point);
+    };
+
+    const handlePointHoverEnd = () => {
+      onHoverRef.current?.(null);
     };
 
     const handleMouseEnter = () => {
@@ -103,64 +124,74 @@ export function EntityGeoJsonLayer({
     };
 
     map.on('click', pointsLayerId, handlePointClick);
-    map.on('click', clusterLayerId, handleClusterClick);
+    if (cluster) map.on('click', clusterLayerId, handleClusterClick);
     map.on('mouseenter', pointsLayerId, handleMouseEnter);
-    map.on('mouseenter', clusterLayerId, handleMouseEnter);
+    if (cluster) map.on('mouseenter', clusterLayerId, handleMouseEnter);
     map.on('mouseleave', pointsLayerId, handleMouseLeave);
-    map.on('mouseleave', clusterLayerId, handleMouseLeave);
+    if (cluster) map.on('mouseleave', clusterLayerId, handleMouseLeave);
+    map.on('mousemove', pointsLayerId, handlePointHover);
+    map.on('mouseout', pointsLayerId, handlePointHoverEnd);
 
     return () => {
       map.off('click', pointsLayerId, handlePointClick);
-      map.off('click', clusterLayerId, handleClusterClick);
+      if (cluster) map.off('click', clusterLayerId, handleClusterClick);
       map.off('mouseenter', pointsLayerId, handleMouseEnter);
-      map.off('mouseenter', clusterLayerId, handleMouseEnter);
+      if (cluster) map.off('mouseenter', clusterLayerId, handleMouseEnter);
       map.off('mouseleave', pointsLayerId, handleMouseLeave);
-      map.off('mouseleave', clusterLayerId, handleMouseLeave);
+      if (cluster) map.off('mouseleave', clusterLayerId, handleMouseLeave);
+      map.off('mousemove', pointsLayerId, handlePointHover);
+      map.off('mouseout', pointsLayerId, handlePointHoverEnd);
       map.getCanvas().style.cursor = '';
     };
-  }, [mapRef, id, pointsLayerId, clusterLayerId]);
+  }, [mapRef, id, pointsLayerId, clusterLayerId, cluster]);
 
   return (
     <Source
       id={id}
       type="geojson"
       data={data}
-      cluster
+      cluster={cluster}
       clusterRadius={clusterRadius}
       clusterMaxZoom={clusterMaxZoom}
     >
-      <Layer
-        id={clusterLayerId}
-        type="circle"
-        filter={['has', 'point_count']}
-        paint={{
-          'circle-color': [
-            'step',
-            ['get', 'point_count'],
-            '#22c55e',
-            11,
-            '#3b82f6',
-            21,
-            '#eab308',
-            51,
-            '#ef4444',
-          ],
-          'circle-radius': 18,
-          'circle-stroke-width': 3,
-          'circle-stroke-color': '#ffffff',
-        }}
-      />
-      <Layer
-        id={clusterCountLayerId}
-        type="symbol"
-        filter={['has', 'point_count']}
-        layout={{
-          'text-field': ['get', 'point_count_abbreviated'],
-          'text-font': ['Noto Sans Regular'],
-          'text-size': 13,
-        }}
-        paint={{ 'text-color': '#ffffff' }}
-      />
+      {/* NOTE: <Layer> elements must be direct children of <Source> — Source injects
+          the `source` prop via cloneElement, which does not traverse Fragments. */}
+      {cluster && (
+        <Layer
+          id={clusterLayerId}
+          type="circle"
+          filter={['has', 'point_count']}
+          paint={{
+            'circle-color': [
+              'step',
+              ['get', 'point_count'],
+              '#22c55e',
+              11,
+              '#3b82f6',
+              21,
+              '#eab308',
+              51,
+              '#ef4444',
+            ],
+            'circle-radius': 18,
+            'circle-stroke-width': 3,
+            'circle-stroke-color': '#ffffff',
+          }}
+        />
+      )}
+      {cluster && (
+        <Layer
+          id={clusterCountLayerId}
+          type="symbol"
+          filter={['has', 'point_count']}
+          layout={{
+            'text-field': ['get', 'point_count_abbreviated'],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': 13,
+          }}
+          paint={{ 'text-color': '#ffffff' }}
+        />
+      )}
       <Layer
         id={selectedLayerId}
         type="circle"

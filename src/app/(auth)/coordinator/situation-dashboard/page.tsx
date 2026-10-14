@@ -32,7 +32,7 @@ const fetchIncidentData = async (incidentId: string) => {
  * - Left Panel: Incident Overview (Story 7.2) - IMPLEMENTED
  * - Center Panel: Divided into two sections:
  *   - Upper Center: Entity Assessment (Story 7.3) - IMPLEMENTED
- *   - Lower Center: Interactive Leaflet Map from entity-incident-map - NEW
+ *   - Lower Center: Interactive Map (MapLibre) from entity-incident-map - NEW
  * - Right Panel: Aggregate Metrics (moved from left panel)
  * 
  * The map dynamically updates based on the selected incident from the left panel.

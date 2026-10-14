@@ -69,15 +69,6 @@
   }
 }
 
-/* Leaflet CSS - import globally for proper loading */
-@import 'leaflet/dist/leaflet.css';
-
-/* Custom Leaflet marker styles */
-.custom-div-icon {
-  background: transparent !important;
-  border: none !important;
-}
-
 /* PWA-specific styles */
 @media (display-mode: standalone) {
   body {

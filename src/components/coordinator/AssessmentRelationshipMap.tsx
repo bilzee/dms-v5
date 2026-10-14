@@ -5,13 +5,15 @@
  * 
  * Interactive map visualization showing entity-incident relationships through assessments.
  * Features priority-based color coding, assessment type filtering, timeline controls,
- * and cluster visualization for performance with large datasets.
+ * rendered via MapLibre (OpenFreeMap) with priority-based color coding.
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useMapConfig } from '@/hooks/useMapConfig';
-import { MapContainer, TileLayer, CircleMarker, LayerGroup } from 'react-leaflet';
+import { MapLibreView } from '@/components/maps/MapLibreView';
+import { EntityGeoJsonLayer } from '@/components/maps/EntityGeoJsonLayer';
+import type { EntityMapPoint } from '@/components/maps/EntityGeoJsonLayer';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,17 +33,6 @@ import { useEntityActions } from '@/stores/dashboardLayout.store';
 import { useEntityAssessments, useRelationshipStatistics, useRelationships as useRelationshipsHook } from '@/hooks/useRelationships';
 import { apiGet } from '@/lib/api';
 import { getAuthToken } from '@/lib/auth/token-utils';
-
-// Fix Leaflet default markers
-import L from 'leaflet';
-
-// Fix default markers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
 
 interface AssessmentRelationshipMapProps {
   incidentId?: string;
@@ -72,11 +63,15 @@ const ASSESSMENT_TYPE_SYMBOLS = {
   POPULATION: '👥',
 } as const;
 
+// Stable empty default so the prop identity doesn't change every render
+// (an unstable default combined with the sync effect below caused an update loop)
+const EMPTY_PRIORITY_FILTER: Priority[] = [];
+
 export function AssessmentRelationshipMap({
   incidentId,
   entityId,
   showTimeline = true,
-  priorityFilter = [],
+  priorityFilter = EMPTY_PRIORITY_FILTER,
   onEntitySelect,
   onIncidentSelect,
   onAssessmentSelect,
@@ -90,8 +85,6 @@ export function AssessmentRelationshipMap({
     end: null,
   });
   const { center: configCenter, zoom: configZoom } = useMapConfig();
-  const [zoomLevel, setZoomLevel] = useState(configZoom);
-  const [mapCenter, setMapCenter] = useState<[number, number]>(configCenter);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [hoveredEntityId, setHoveredEntityId] = useState<string | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -147,15 +140,7 @@ export function AssessmentRelationshipMap({
   }, [isMaximized]);
 
   // Effect to handle map resize when maximized state changes
-  useEffect(() => {
-    // Small delay to ensure DOM has updated
-    const timer = setTimeout(() => {
-      // Trigger Leaflet resize event if map exists
-      window.dispatchEvent(new Event('resize'));
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, [isMaximized]);
+  // react-map-gl auto-resizes via ResizeObserver — no manual invalidation needed
 
   // Effect to handle hover state management between original and overlay maps
   useEffect(() => {
@@ -166,8 +151,13 @@ export function AssessmentRelationshipMap({
   }, [isMaximized]);
 
   // Synchronize filter state with props
+  // Guard against unstable prop identity (e.g. default `[]`) causing an update loop
   useEffect(() => {
-    setSelectedPriorities(priorityFilter);
+    setSelectedPriorities(prev =>
+      prev.length === priorityFilter.length && prev.every((p, i) => p === priorityFilter[i])
+        ? prev
+        : priorityFilter
+    );
   }, [priorityFilter]);
 
   // Query parameters
@@ -202,9 +192,6 @@ export function AssessmentRelationshipMap({
           throw new Error(result.error || 'Failed to fetch entities')
         }
 
-        console.log('Dashboard API response:', result.data);
-        console.log('Number of entities received:', result.data?.entityAssessments?.length || 0);
-        
         // Use entityAssessments from dashboard API (same as EntitySelector)
         if (result.data.entityAssessments) {
           return result.data.entityAssessments.map((entity: any) => ({
@@ -301,62 +288,44 @@ export function AssessmentRelationshipMap({
   };
 
   // Map marker creation
-  const createMarkerForRelationship = (relationship: EntityIncidentRelationship) => {
+  const toMapPoint = (relationship: any): EntityMapPoint | null => {
     const entity = relationship.entity;
-    const coordinates = entity.coordinates as any;
-    
-    // console.log('Creating marker for entity:', entity.name, 'coordinates:', coordinates);
-    
+    const coordinates = entity?.coordinates;
+
     if (!coordinates?.lat || !coordinates?.lng) {
-      // console.log('No valid coordinates for entity:', entity.name);
       return null;
     }
 
-    // Use Entity Severity only - no fallback colors
-    const entitySeverity = null; // Entity model doesn't have severity field
-    const markerColor = null;
+    const severity = entity.severity || entity.gapSummary?.overallPriority;
 
-    console.log(`Creating CircleMarker at [${coordinates.lat}, ${coordinates.lng}] with severity ${entitySeverity || 'no severity'} for ${entity.name}`);
-    console.log('Entity severity:', entitySeverity);
-    console.log('Marker color:', markerColor);
+    return {
+      id: relationship.entityId,
+      lng: coordinates.lng,
+      lat: coordinates.lat,
+      severity: severity || 'UNASSESSED',
+      properties: { incidentId: relationship.incidentId },
+    };
+  };
 
-    // Always render marker, but with transparent fill if no severity
+  const filteredPoints = useMemo(
+    () => (filteredRelationships ?? []).map(toMapPoint).filter((p: EntityMapPoint | null): p is EntityMapPoint => p !== null),
+    [filteredRelationships]
+  );
 
-    return (
-      <CircleMarker
-        key={`${relationship.entityId}-${relationship.incidentId}`}
-        center={[coordinates.lat, coordinates.lng]}
-        radius={12}
-        pathOptions={{
-          fillColor: markerColor || '#9ca3af',
-          color: '#666666', // Gray border for entities without severity
-          weight: 3,
-          opacity: 1,
-          fillOpacity: markerColor ? 0.8 : 0, // Transparent fill if no severity
-        }}
-        eventHandlers={{
-          mouseover: () => {
-            // Show details in left panel on hover
-            setHoveredEntityId(relationship.entityId);
-          },
-          mouseout: () => {
-            // Hide details when not hovering
-            setHoveredEntityId(null);
-          },
-          click: () => {
-            // console.log(`Clicked on entity: ${entity.name}`);
-            setSelectedEntityId(relationship.entityId);
-            
-            // Update the dropdown selection in the EntitySelector
-            setSelectedEntity(relationship.entityId);
-            
-            // Call the callback props for any external handling
-            onEntitySelect?.(relationship.entityId);
-            onIncidentSelect?.(relationship.incidentId);
-          },
-        }}
-      />
-    );
+  const allPoints = useMemo(
+    () => (detailedRelationships ?? []).map(toMapPoint).filter((p: EntityMapPoint | null): p is EntityMapPoint => p !== null),
+    [detailedRelationships]
+  );
+
+  const handlePointClick = (point: EntityMapPoint) => {
+    setSelectedEntityId(point.id);
+
+    // Update the dropdown selection in the EntitySelector
+    setSelectedEntity(point.id);
+
+    // Call the callback props for any external handling
+    onEntitySelect?.(point.id);
+    onIncidentSelect?.(point.properties?.incidentId as string);
   };
 
   if (isLoading) {
@@ -484,24 +453,21 @@ export function AssessmentRelationshipMap({
               )}
             </div>
 
-            {/* Right Panel: Leaflet Map (70% width) */}
+            {/* Right Panel: MapLibre Map (70% width) */}
             <div className="flex-[7] relative">
               <div className="h-full w-full border-2 border-border rounded-lg overflow-hidden">
-                <MapContainer
-                  center={mapCenter}
-                  zoom={zoomLevel}
-                  style={{ height: '100%', width: '100%' }}
-                  className="z-10"
-                >
-                  <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                <MapLibreView center={configCenter} zoom={configZoom} className="h-full w-full">
+                  <EntityGeoJsonLayer
+                    id="relationship-entities"
+                    points={filteredPoints}
+                    severityColors={ENTITY_SEVERITY_COLORS}
+                    defaultColor="#9ca3af"
+                    selectedId={selectedEntityId}
+                    cluster={false}
+                    onSelect={handlePointClick}
+                    onHover={point => setHoveredEntityId(point ? point.id : null)}
                   />
-                  
-                  <LayerGroup>
-                    {filteredRelationships?.map(createMarkerForRelationship).filter(Boolean)}
-                  </LayerGroup>
-                </MapContainer>
+                </MapLibreView>
                 
                 {/* Statistics Overlay with Maximize Button */}
                 {relationships?.data && (
@@ -708,24 +674,18 @@ export function AssessmentRelationshipMap({
 
                 {/* Right Panel: Map */}
                 <div className="flex-[7] relative">
-                  <MapContainer
-                    center={mapCenter}
-                    zoom={zoomLevel}
-                    className="w-full h-full rounded-lg"
-                    whenReady={() => {
-                      // Map is ready - invalidateSize called automatically
-                    }}
-                  >
-                    <TileLayer
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  <MapLibreView center={configCenter} zoom={configZoom} className="w-full h-full rounded-lg">
+                    <EntityGeoJsonLayer
+                      id="relationship-entities"
+                      points={allPoints}
+                      severityColors={ENTITY_SEVERITY_COLORS}
+                      defaultColor="#9ca3af"
+                      selectedId={selectedEntityId}
+                      cluster={false}
+                      onSelect={handlePointClick}
+                      onHover={point => setHoveredEntityId(point ? point.id : null)}
                     />
-                    
-                    {/* Map markers */}
-                    <LayerGroup>
-                      {detailedRelationships?.map(createMarkerForRelationship).filter(Boolean)}
-                    </LayerGroup>
-                  </MapContainer>
+                  </MapLibreView>
                   
                   {/* Statistics Overlay in maximized view */}
                   {relationships?.data && (

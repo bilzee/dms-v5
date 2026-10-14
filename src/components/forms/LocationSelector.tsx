@@ -1,19 +1,11 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
+import { useState } from 'react';
+import { Marker } from 'react-map-gl/maplibre';
 import { Button } from '@/components/ui/button';
-import { MapPin, Crosshair, Maximize2 } from '@/lib/icons';
+import { Crosshair, Maximize2 } from '@/lib/icons';
 import { useMapConfig } from '@/hooks/useMapConfig';
-
-// Fix Leaflet default markers for SSR
-import L from 'leaflet';
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
+import { MapLibreView } from '@/components/maps/MapLibreView';
 
 interface LocationSelectorProps {
   onLocationSelect: (latitude: number, longitude: number) => void;
@@ -23,55 +15,26 @@ interface LocationSelectorProps {
   };
 }
 
-interface LocationMarkerProps {
-  position: [number, number];
-  onLocationSelect: (latitude: number, longitude: number) => void;
-  onPositionChange: (position: [number, number]) => void;
-}
-
-function LocationMarker({ position, onLocationSelect, onPositionChange }: LocationMarkerProps) {
-  const map = useMapEvents({
-    click: (e: L.LeafletMouseEvent) => {
-      const { lat, lng } = e.latlng;
-      const newPosition: [number, number] = [lat, lng];
-      onPositionChange(newPosition);
-      onLocationSelect(lat, lng);
-    },
-  });
-
-  return (
-    <Marker
-      position={position}
-      eventHandlers={{
-        click: () => {
-          onLocationSelect(position[0], position[1]);
-        },
-      }}
-    />
-  );
-}
-
 export function LocationSelector({ onLocationSelect, initialCoordinates }: LocationSelectorProps) {
   const { center: configCenter } = useMapConfig();
   const coords = initialCoordinates ?? { latitude: configCenter[0], longitude: configCenter[1] };
   const [position, setPosition] = useState<[number, number]>([coords.latitude, coords.longitude]);
+  // Only geolocation re-centers the map (Leaflet setView parity) — map clicks must not pan
+  const [flyCenter, setFlyCenter] = useState<[number, number] | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const mapRef = useRef<L.Map>(null);
 
   const handleCurrentLocation = () => {
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords;
+        geoPosition => {
+          const { latitude, longitude } = geoPosition.coords;
           setPosition([latitude, longitude]);
           onLocationSelect(latitude, longitude);
-          
+
           // Center map on current location
-          if (mapRef.current) {
-            mapRef.current.setView([latitude, longitude], 13);
-          }
+          setFlyCenter([latitude, longitude]);
         },
-        (error) => {
+        error => {
           console.error('Error getting current location:', error);
         }
       );
@@ -108,24 +71,25 @@ export function LocationSelector({ onLocationSelect, initialCoordinates }: Locat
         </div>
       </div>
 
-      <div className={isFullscreen ? "fixed inset-0 z-50" : "h-96 w-full rounded-lg overflow-hidden"}>
-        <MapContainer
-          ref={mapRef}
-          center={position}
+      <div className={isFullscreen ? 'fixed inset-0 z-50' : 'h-96 w-full rounded-lg overflow-hidden'}>
+        <MapLibreView
+          center={flyCenter ?? [coords.latitude, coords.longitude]}
           zoom={13}
-          style={{ height: '100%', width: '100%' }}
+          className="h-full w-full"
+          onMapClick={(lat, lng) => {
+            setPosition([lat, lng]);
+            onLocationSelect(lat, lng);
+          }}
         >
-          <TileLayer
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          <Marker
+            latitude={position[0]}
+            longitude={position[1]}
+            onClick={e => {
+              e.originalEvent.stopPropagation();
+              onLocationSelect(position[0], position[1]);
+            }}
           />
-          
-          <LocationMarker
-            position={position}
-            onLocationSelect={onLocationSelect}
-            onPositionChange={setPosition}
-          />
-        </MapContainer>
+        </MapLibreView>
       </div>
 
       <div className="text-xs text-muted-foreground text-center">
