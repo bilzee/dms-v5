@@ -202,7 +202,11 @@ async function main() {
   // Create sample entities
   console.log('🏢 Creating sample entities...')
   
-  // Delete existing entities to avoid conflicts (in order of dependency)
+  // Delete existing entities to avoid conflicts (in order of dependency).
+  // Signals/notifications reference entities by FK and are derived state —
+  // cleared first so a re-run (e.g. container restart) cannot fail the wipe.
+  await prisma.notification.deleteMany({})
+  await prisma.actionSignal.deleteMany({})
   await prisma.donorCommitment.deleteMany({})
   await prisma.entityAssignment.deleteMany({})
   await prisma.rapidResponse.deleteMany({})

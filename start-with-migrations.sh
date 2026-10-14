@@ -35,6 +35,18 @@ if ! npx prisma db seed; then
 fi
 echo "✅ Registry seed completed"
 
+# Optional full simulation world (users, incidents, assessments, responses,
+# commitments, deliveries, signals, notifications) — UI-flow parity.
+if [ "$SEED_SIMULATION" = "1" ]; then
+    echo ""
+    echo "=== Seeding Simulation World ==="
+    if ! npx tsx prisma/seed-simulation.ts; then
+        echo "❌ Simulation seeding failed - aborting startup"
+        exit 1
+    fi
+    echo "✅ Simulation world seeded"
+fi
+
 # Start the application
 echo ""
 echo "=== Starting Next.js Server ==="
